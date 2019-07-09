@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+	<!-- Latest compiled and minified CSS -->
+	<link rel="stylesheet" href="css/bootstrap.min.css">
+	<link rel="stylesheet" href="css/bootstrap-datepicker3.standalone.min.css">
+	<link rel="stylesheet" href="css/bootstrap-select.min.css">
+	<link rel="stylesheet" href="css/bootstrap2-toggle.min.css">
+	<link rel="stylesheet" href="css/jquery.timepicker.min.css">
+
+	<!-- Optional theme -->
+	<link rel="stylesheet" href="css/bootstrap-theme.min.css">
+
+	<!-- Main theme -->
+	<link rel="stylesheet" href="css/tabs.css">
+	<link rel="stylesheet" href="css/style.css">
+
+	<!-- Latest compiled and minified JavaScript -->
+	<script src="js/jquery.min.js"></script>
+	<script src="js/bootstrap.min.js"></script>
+	<script src="js/bootstrap-datepicker.min.js"></script>
+	<script src="js/bootstrap-select.min.js"></script>
+	<script src="js/bootstrap2-toggle.min.js"></script>
+	<script src="js/jquery.timepicker.min.js"></script>
+
+	<!-- Load D3 -->
+	<script src='js/d3.v4.min.js'></script>
+
+</head>
+<body>
+
+	<div id="body-container">
+
+	<div class="bigspacer"></div>
+	<div class="row">
+		<div class="col-md-2">
+			<div style="margin-left:2em;">
+			<div class="bighead" style="font-size:34px;"> Oxford Nanopore</div>
+			<div class="bigspacer"></div>
+			<img src="img/minion-diagram-no_labels.png" style="width:100%;"></img>
+			<div class="bigspacer"></div>
+			<hr>
+			<div class="smallhead"> Upload file:</div>
+			<div class="bigspacer"></div>
+			<input type="file" id="uploader"></input>
+			<div class="bigspacer"></div>
+			<div class="form-group">
+				<div class="smallhead"> Color by:</div>
+				<div class="bigspacer"></div>
+				<div class="input-group update-text dropdown-group">
+					<span class="input-group-btn">
+						<div class="btn-group">
+							<button class="btn dropdown-toggle btn-success" type="button" id="attributeList" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+								<span>select</span>
+							</button>
+							<div id="attributeDropdown" class="dropdown-menu" aria-labelledby="attributeList">
+							</div> <!-- dropdown-menu -->
+						</div> <!-- btn-group -->
+					</span> <!-- input-group-btn -->
+					<div class="input-group-btn btn-input">
+						<span id="text-attribute" class="form-control wrap-text text-nowrap" value=""></span>
+					</div> <!-- btn-input -->
+				</div> <!-- input-group -->
+			</div> <!-- form-group -->
+
+			<div style="display:none;">
+				<hr>
+				<div class="smallhead"> Download</div>
+				<div class="bigspacer"></div>
+				<div id="download_links">
+					<div class="column_element">
+						<span class="param_text"><a id="download_svg" class="download_link" type="button" href="#">Download SVG</a></span>
+					</div>
+					<div class="column_element">
+						<span class="param_text"><a id="download_png" class="download_link" type="button" href="#">Download PNG</a></span>
+					</div>
+				</div>
+			</div>
+			<div style="display:none;">
+				<hr>
+				<div class="smallhead"> Run stats</div>
+				<div class="bigspacer"></div>
+				<div class="note"> Elapsed time:</div>
+				<div id="timer" class="smallhead"></div>
+				<div class="bigspacer"></div>
+				<div class="note"> Number of reads:</div>
+				<div id="numReads" class="smallhead"></div>
+				<div style="display:none;">
+					<div class="bigspacer"></div>
+					<div class="note"> Active channels:</div>
+					<div id="numChannels" class="smallhead"></div>
+					<div class="bigspacer"></div>
+					<div class="note"> Reads per second:</div>
+					<div id="readsPerSec" class="smallhead"></div>
+				</div>
+				<hr>
+				<div class="smallhead"> Designed by:</div>
+				<div class="bigspacer"></div>
+				<div class="note"> <a href="mailto:thomas.mehoke@jhuapl.edu">Thomas Mehoke</a></div>
+			</div>
+		</div>
+		</div> <!-- col -->
+		<div class="col-md-10">
+			<div class="row">
+				<div style="display:none;">
+					<div class="col-md-2">
+						<div class="smallhead"> Nanopore channels</div>
+						<div class="smallspacer"></div>
+						<div id="svgWrapperLegend"></div>
+					</div> <!-- col -->
+					<div class="col-md-4">
+						<div id="svgWrapperChannel"></div>
+					</div> <!-- col -->
+					<div class="col-md-3">
+						<div class="smallhead"> Barcodes</div>
+						<div class="bigspacer"></div>
+						<div id="svg_barcode_layout"></div>
+					</div> <!-- col -->
+					<div class="col-md-2">
+						<div class="smallhead"> Legend</div>
+						<div class="bigspacer"></div>
+						<div id="svg_barcode_legend"></div>
+					</div> <!-- col -->
+				</div>
+				<div class="col-md-5">
+				</div> <!-- col -->
+			</div> <!-- row -->
+			<div class="tab">
+				<button class="tablinks note" onclick="openTab(event, 'runStats')" disabled>Run stats</button>
+				<button class="tablinks note" onclick="openTab(event, 'sampleStats')" id="defaultOpen">Sample stats</button>
+				<button class="tablinks note" onclick="openTab(event, 'outputData')" disabled>Data output</button>
+			</div> <!-- tab -->
+			<div class="smallspacer"></div>
+			<div class="tabs">
+				<div id="runStats" class="tabcontent">
+					<div class="row" style="margin-right:2em;">
+						<div class="col-md-4">
+							<div class="smallhead"> Cumulative reads</div>
+							<div class="smallspacer"></div>
+							<div id="svgWrapperCumulative"></div>
+						</div> <!-- col -->
+						<div class="col-md-4">
+							<div class="smallhead"> Read length</div>
+							<div class="smallspacer"></div>
+							<div id="svgWrapperReadLength"></div>
+						</div> <!-- col -->
+						<div class="col-md-4">
+							<div class="smallhead"> Active channels</div>
+							<div class="smallspacer"></div>
+							<div id="svgWrapperActive"></div>
+						</div> <!-- col -->
+					</div> <!-- row -->
+					<hr>
+					<div class="row" style="margin-right:2em;">
+						<div class="col-md-4">
+							<div class="smallhead"> Reads per second</div>
+							<div class="smallspacer"></div>
+							<div id="svgWrapperReadsPerSecond"></div>
+						</div> <!-- col -->
+						<div class="col-md-4">
+<!--							<div class="smallhead"> Time between reads on same channel</div> -->
+							<div class="smallspacer"></div>
+							<div id="svgWrapperChannelIntermission"></div>
+						</div> <!-- col -->
+						<div class="col-md-4">
+							<div class="smallhead"> Reads per active channel per minute</div>
+							<div class="smallspacer"></div>
+							<div id="svgWrapperReadsPerActive2"></div>
+						</div> <!-- col -->
+					</div> <!-- row -->
+					<div style="display:none;">
+						<hr>
+						<div class="row" style="margin-right:2em;">
+							<div class="col-md-4">
+								<div class="smallhead"> Reads per active channel</div>
+								<div class="smallspacer"></div>
+								<div id="svgWrapperReadsPerActive"></div>
+							</div> <!-- col -->
+						</div> <!-- row -->
+					</div>
+				</div> <!-- tabcontent -->
+				<div id="sampleStats" class="tabcontent">
+					<div class="bigspacer"></div>
+					<div class="row">
+						<div class="col-md-1">
+							<div class="row">
+								<div class="bigspacer"></div>
+								<div class="form-group">
+									<div class="note"> Jump to:</div>
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-info" type="button" id="jumpBacteria" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Bacteria</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-info" type="button" id="jumpViruses" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Viruses</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-info" type="button" id="jumpEukaryota" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Eukaryota</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-info" type="button" id="jumpFungi" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Fungi</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-info" type="button" id="jumpArchaea" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Archaea</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+									<div class="smallspacer"></div>
+									<div class="input-group update-text dropdown-group">
+										<span class="input-group-btn">
+											<div class="btn-group">
+												<button class="btn btn-default" type="button" id="jumpReset" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+													<span>Reset</span>
+												</button>
+											</div> <!-- btn-group -->
+										</span> <!-- input-group-btn -->
+									</div> <!-- input-group -->
+								</div> <!-- form-group -->
+							</div> <!-- row -->
+						</div> <!-- col -->
+						<div class="col-md-8">
+							<div class="smallhead"> Phylogenetic distribution</div>
+							<div class="bigspacer"></div>
+							<div id="svg_wrapper"></div>
+						</div> <!-- col -->
+						<div class="col-md-3">
+							<div class="smallhead"> Legend</div>
+							<div class="bigspacer"></div>
+							<div id="legend_wrapper"></div>
+						</div> <!-- col -->
+					</div> <!-- row -->
+				</div> <!-- tabcontent -->
+				<div id="outputData" class="tabcontent">
+					<table class="table">
+					</table>
+				</div> <!-- tabcontent -->
+			</div> <!-- tabs -->
+		</div> <!-- col -->
+	</div> <!-- row -->
+</div> <!-- col -->
+
+<!--</div> -->
+</div>
+
+<script src='js/index.js'></script>
+</body>
+</html>
