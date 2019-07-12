@@ -51,7 +51,7 @@ usage() {
 	echo -e "   -h      show this message"
 	echo -e "   -i      kraken report + fullstring (from ${YELLOW}krakenreport_fullstring.sh${NC})"
 	echo -e "   -s      taxonomic levels to summarize (default: ${CYAN}summarize all in taxonomy${NC})"
-	echo -e "   -i      output file (default: ${CYAN}STDOUT${NC})"
+	echo -e "   -o      output file (default: ${CYAN}STDOUT${NC})"
 	echo -e ""
 }
 
