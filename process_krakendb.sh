@@ -196,7 +196,7 @@ get_fullstring() {
 	nodes="$2"
 
 	gawk '{
-		gsub(/\t\|\t/, "@", $0);
+		gsub(/\t\|(\t)?/, "@", $0);
 		split($0, a, "@");
 		if(NR == FNR) {
 			LIST[a[1]];
