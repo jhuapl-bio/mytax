@@ -63,7 +63,7 @@ Create joined.full in your taxonomy folder
 from names.dmp and nodes.dmp as follows:
 
 	gawk '{
-		gsub(/\t\|\t/, "@", $0);
+		gsub(/\t\|(\t)?/, "@", $0);
 		split($0, a, "@");
 		if(NR == FNR) {
 			LIST[a[1]];
