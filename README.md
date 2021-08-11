@@ -10,7 +10,7 @@ Clone this repo with:
 
 Symbolically link all shell scripts into your path, for example with:
 
-`find mytax -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
+`find mytax/src -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
 
 # Dependencies
 
