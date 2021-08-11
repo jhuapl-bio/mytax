@@ -22,15 +22,22 @@ RUN conda env create -f /opt/environment.yml
 
 WORKDIR /opt/software/mytax
 COPY src /opt/software/mytax
+COPY databases /opt/databases
 RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz
-RUN ls
 RUN tar -xvzf minikraken_20171019_4GB.tgz 
-RUN mv minikraken_20171013_4GB minikraken && rm  minikraken_20171019_4GB.tgz
+RUN mkdir -p /opt/databases && \
+    mv minikraken_20171013_4GB /opt/databases/minikraken && \
+    rm minikraken_20171019_4GB.tgz
+RUN find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done 
 RUN conda activate mytax && bash process_krakendb.sh -k minikraken
-RUN echo end
-RUN conda activate mytax && \
-    find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done && \ 
-    bash build_flukraken.sh -k flukraken
+
+
+
+# RUN conda activate mytax && \
+#     bash build_flukraken.sh -k flukraken && \
+#     rm -r flukraken/library flukraken/raw flukraken/database.jdb* && \
+#     tar c flukraken | gzip -c | tee flukraken.tar.gz && \
+#     rm -rf flukraken
 COPY sunburst /opt/software/mytax/sunburst
 
 # The code to run when container is started:

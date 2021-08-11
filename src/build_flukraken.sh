@@ -110,10 +110,10 @@ logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
 BASE=flukraken-$(date "+%F")
-
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hk:w:t:dl:x:" OPTION
+while getopts "hk:w:t:d:l:x:r:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -122,8 +122,9 @@ do
 		t) TAXONOMY=$OPTARG ;;
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
-		d) download="true" ;;
+		d) download=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -292,7 +293,7 @@ build_taxonomy.sh \
 	-x " |  "
 
 #===================================================================================================
-# Create Kraken database
+# Create Kraken or Centrifuge database
 #===================================================================================================
 
 #-------------------------------------------------
@@ -303,6 +304,7 @@ build_krakendb.sh \
 	-2 "$offset2" \
 	-l "$logfile" \
 	-w "$workdir" \
+	-c "$CMD" \
 	-x " |  "
 
 #-------------------------------------------------

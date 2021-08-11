@@ -16,3 +16,4 @@ dependencies:
   - perl=5.26.2
   - readline=8.0
   - kraken=1.1
+  - centrifuge=1.0.3

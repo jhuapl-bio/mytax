@@ -52,6 +52,7 @@ usage() {
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
 	echo -e "   -k      kraken database directory"
+	echo -e "   -c      Classifier to use: [kraken, centrifuge]"
 	echo -e "   -r      reference FASTA file"
 	echo -e "   -t      taxonomy (default: ${CYAN}taxonomy sub-folder in kraken database directory${NC})"
 	echo -e "   -2      offset for taxon IDs for new metadata taxonomy levels (default: ${CYAN}2000000000${NC})"
@@ -94,10 +95,10 @@ FTP="ftp://ftp.ncbi.nih.gov"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hk:r:t:2:l:w:x:" OPTION
+while getopts "hk:r:t:2:l:w:x:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -108,6 +109,7 @@ do
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -210,15 +212,28 @@ fix_references.sh \
 	-l "$logfile" \
 	-w "$workdir" \
 	-x "$prefix |  "
-
-#-------------------------------------------------
-# Build kraken database
-echo_log "------ building kraken database ------"
-kraken-build \
-	--build \
-	--db "$BASE" \
-	--threads 1 | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
-
+# -------------------------------------------------
+if [[ $CMD == 'kraken' ]]; then
+	# Build kraken database
+	echo_log "------ building kraken database ------"
+	kraken-build \
+		--build \
+		--db "$BASE" \
+		--threads 1 | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
+else 
+	echo_log "------ building centrifuge database ------"
+	while read -r line; do
+		echo $line;
+	done <<< $( grep 'gi' $BASE/taxonomy/names.dmp )
+	exit 1
+	centrifuge-build \
+		-p 1 \
+		--conversion-table $BASE/seqid2taxid.map
+		--taxonomy-tree $BASE/taxonomy/nodes.dmp \
+		--name-table $BASE/taxonomy/names.dmp \
+		$REFERENCES \
+		abv | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
+fi 
 #-------------------------------------------------
 # Process Kraken database
 echo_log "------ processing kraken database ------"
