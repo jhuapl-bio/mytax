@@ -9,10 +9,10 @@ jobs:
     name: Build and push Docker image for pre-release
     runs-on: ubuntu-latest
     steps:
-
       - name: Check out the repo
         uses: actions/checkout@v2
-
+        with:
+          lfs: true
       - name: Push to Docker Hub
         uses: docker/build-push-action@v1
         with:
@@ -22,3 +22,4 @@ jobs:
           tag_with_ref: true
           tag_with_sha: true
           tags: prerelease
+          lfs: true
