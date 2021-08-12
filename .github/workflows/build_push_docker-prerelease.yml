@@ -16,10 +16,10 @@ jobs:
       - name: Push to Docker Hub
         uses: docker/build-push-action@v1
         with:
-          name: ${{ secrets.DOCKERHUB_REPOSITORY }}
+          name: jhuaplbio/basestack_mytax
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: ${{ secrets.DOCKERHUB_REPOSITORY }}
+          repository: jhuaplbio/basestack_mytax
           tag_with_ref: true
           tag_with_sha: true
           tags: prerelease
