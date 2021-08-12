@@ -115,7 +115,7 @@ CMD="kraken"
 SKIPS=()
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hk:w:t:d:l:x:r:c:" OPTION
+while getopts "hk:w:t:d:l:x:r:c:s:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -127,11 +127,11 @@ do
 		d) download=$OPTARG ;;
 		x) prefix=$OPTARG ;;
 		c) CMD=$OPTARG ;;
+		s) SKIPS=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
-echo $SKIPS
-exit 1
+
 #---------------------------------------------------------------------------------------------------
 # check input arguments
 if [[ -z "$BASE" ]]; then
@@ -262,10 +262,10 @@ if [[ "$download" == "true" ]] && [[ ! " ${SKIPS[@]} " =~ "download" ]]; then
 		-c "$CMD" \
 		-x " |  "
 
-	TAXONOMY="$BASE/taxonomy"
-	REFERENCES="$BASE/raw/influenza.fna"
+	
 fi
-
+TAXONOMY="$BASE/taxonomy"
+REFERENCES="$BASE/raw/influenza.fna"
 #===================================================================================================
 # Build metadata table for custom taxonomy
 #===================================================================================================
