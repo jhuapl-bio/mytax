@@ -256,6 +256,7 @@ if [[ "$download" == "true" ]]; then
 		-w "$workdir" \
 		-l "$logfile" \
 		-w "$workdir" \
+		-c "$CMD" \
 		-x " |  "
 
 	TAXONOMY="$BASE/taxonomy"
@@ -274,6 +275,7 @@ if [[ "$download" == "true" ]]; then
 		-o "$BASE/raw/annotation_IVR.dat" \
 		-l "$logfile" \
 		-w "$workdir" \
+		-c "$CMD" \
 		-x " |  "
 fi
 
@@ -289,9 +291,9 @@ build_taxonomy.sh \
 	-1 "$offset1" \
 	-2 "$offset2" \
 	-l "$logfile" \
+	-c "$CMD" \
 	-w "$workdir" \
 	-x " |  "
-
 #===================================================================================================
 # Create Kraken or Centrifuge database
 #===================================================================================================

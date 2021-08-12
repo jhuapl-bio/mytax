@@ -58,6 +58,7 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "    -h     show this message"
+	echo -e "    -c      classifier [kraken, centrifuge]"
 	echo -e "    -i     input IVR metadata file (influenza_na.dat)"
 	echo -e "    -f     input IVR FASTA file (influenza.fna)"
 	echo -e "    -o     output metadata table for taxonomy creation"
@@ -80,7 +81,7 @@ logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
 outliers="KT777860" # comma-separated list of known outliers to exclude from classification
-
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # taxid selections
 # These are the taxon IDs that we will be saving from the NCBI taxonomy.
@@ -96,7 +97,7 @@ inf_D=("PB2" "PB1" "P3" "HE" "NP" "M" "NS")
 
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hi:f:o:l:w:x:" OPTION
+while getopts "hi:f:o:l:w:x:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -106,6 +107,7 @@ do
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -247,9 +249,12 @@ gawk -F $'\t' \
 	printf("id\troot_taxid\ttype\tsegment\tsubtype\thost\tyear\tstrain\n");
 } {
 	if(NR==FNR) {
-		split($1, h, " ");
+		beginning = gensub(/^>/, "", "g", $1);
+		split(beginning, h, " ");
 		split(h[1], acc, "|");
-		header[acc[4]] = substr(h[1], 2);
+		acc_id = h[1]
+		header[acc[4]] = acc_id;
+		header[acc[1]] = acc_id;
 	} else {
 		if(!($1 in OUTLIERLIST) && $11 == "c" && $3 ~ /^[0-9]+$/ && $4 ~ /^(H[0-9]+)?(N[0-9]+)?$/ && $6 ~ /^[12][0-9]{3}(\/[01][0-9])?(\/[0-3][0-9])?$/){
 			if($8 ~ "Influenza A" && length($4) > 0 || $8 ~ "Influenza B" || $8 ~ "Influenza C" || $8 ~ "Influenza D") {

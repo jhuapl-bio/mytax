@@ -90,9 +90,9 @@ summarize_kmers="false"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-
+CMD="kraken"
 # parse input arguments
-while getopts "hk:l:w:sx:" OPTION
+while getopts "hk:l:w:sx:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -101,6 +101,7 @@ do
 		w) tempdir=$OPTARG ;;
 		s) summarize_kmers="true" ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -113,17 +114,7 @@ if ! [[ -d "$BASE" ]]; then
 	exit 2
 fi
 
-# make sure kraken database has the required files
-if ! [[ -s "$BASE/database.kdb" ]]; then
-	echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.kdb${NC}" >&2
-	usage
-	exit 2
-fi
-if ! [[ -s "$BASE/database.idx" ]]; then
-	echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.idx${NC}" >&2
-	usage
-	exit 2
-fi
+#Make sure that base names and nodes.dmp files are present
 if ! [[ -s "$BASE/taxonomy/names.dmp" ]]; then
 	echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}taxonomy/names.dmp${NC}" >&2
 	usage
@@ -259,8 +250,18 @@ get_fullstring "$BASE/taxonomy/names.dmp" "$BASE/taxonomy/nodes.dmp" | sort -k1,
 #---------------------------------------------------------------------------------------------------
 # check that summary is needed
 
-if [[ "$summarize_kmers" == "true" ]]; then
-
+if [[ "$summarize_kmers" == "true" ]] && [ $CMD != 'centrifuge' ]; then
+	# make sure kraken database has the required files
+	if ! [[ -s "$BASE/database.kdb" ]]; then
+		echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.kdb${NC}" >&2
+		usage
+		exit 2
+	fi
+	if ! [[ -s "$BASE/database.idx" ]]; then
+		echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.idx${NC}" >&2
+		usage
+		exit 2
+	fi
 	# dump all k-mers in database
 	echo_log "  Extracting all k-mers in database"
 	jellyfish dump "$BASE/database.jdb" > "$BASE/database.jdb.dump"

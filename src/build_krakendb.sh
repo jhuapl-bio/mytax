@@ -212,6 +212,7 @@ fix_references.sh \
 	-l "$logfile" \
 	-w "$workdir" \
 	-x "$prefix |  "
+
 # -------------------------------------------------
 if [[ $CMD == 'kraken' ]]; then
 	# Build kraken database
@@ -222,17 +223,15 @@ if [[ $CMD == 'kraken' ]]; then
 		--threads 1 | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
 else 
 	echo_log "------ building centrifuge database ------"
-	while read -r line; do
-		echo $line;
-	done <<< $( grep 'gi' $BASE/taxonomy/names.dmp )
-	exit 1
+	cat $BASE/taxonomy/names.dmp | \
+		gawk -F '\t[|]\t' 'BEGIN{OFS="\t"}{print $2,$1}'  > $BASE/seqid2taxid.map
 	centrifuge-build \
 		-p 1 \
-		--conversion-table $BASE/seqid2taxid.map
+		--conversion-table $BASE/seqid2taxid.map \
 		--taxonomy-tree $BASE/taxonomy/nodes.dmp \
 		--name-table $BASE/taxonomy/names.dmp \
 		$REFERENCES \
-		abv | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
+		flucentrifuge | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
 fi 
 #-------------------------------------------------
 # Process Kraken database
@@ -242,6 +241,7 @@ process_krakendb.sh \
 	-l "$logfile" \
 	-w "$workdir" \
 	-s \
+	-c $CMD \
 	-x "$prefix |  "
 
 #-------------------------------------------------

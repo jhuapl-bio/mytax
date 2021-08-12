@@ -20,16 +20,18 @@ COPY ./environment.yml /opt/environment.yml
 
 RUN conda env create -f /opt/environment.yml
 
-WORKDIR /opt/software/mytax
-COPY src /opt/software/mytax
 COPY databases /opt/databases
+WORKDIR /opt/databases
 RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz
 RUN tar -xvzf minikraken_20171019_4GB.tgz 
 RUN mkdir -p /opt/databases && \
     mv minikraken_20171013_4GB /opt/databases/minikraken && \
     rm minikraken_20171019_4GB.tgz
-RUN find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done 
-RUN conda activate mytax && bash process_krakendb.sh -k minikraken
+RUN find /opt/databases -name "*tar.gz" -exec tar -xvzf {} \;
+# WORKDIR /opt/software/mytax
+# COPY src /opt/software/mytax
+# RUN find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done 
+# RUN conda activate mytax && bash process_krakendb.sh -k /opt/databases/minikraken
 
 
 
@@ -38,7 +40,7 @@ RUN conda activate mytax && bash process_krakendb.sh -k minikraken
 #     rm -r flukraken/library flukraken/raw flukraken/database.jdb* && \
 #     tar c flukraken | gzip -c | tee flukraken.tar.gz && \
 #     rm -rf flukraken
-COPY sunburst /opt/software/mytax/sunburst
+# COPY sunburst /opt/software/mytax/sunburst
 
 # The code to run when container is started:
 # ENTRYPOINT ["bash", "./entrypoint.sh"]
