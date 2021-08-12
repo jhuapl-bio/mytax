@@ -57,6 +57,7 @@ usage() {
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
 	echo -e "   -k      directory to build kraken database"
+	echo -e "   -s      pipelines to skip [download, taxonomy, metadata, build ]"
 	echo -e "   -w      temporary directory (default: ${CYAN}/tmp${NC})"
 	echo -e ""
 if [[ 1 -eq 2 ]]; then
@@ -111,6 +112,7 @@ tempdir="/tmp"
 prefix=""
 BASE=flukraken-$(date "+%F")
 CMD="kraken"
+SKIPS=()
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
 while getopts "hk:w:t:d:l:x:r:c:" OPTION
@@ -128,7 +130,8 @@ do
 		?) usage; exit ;;
 	esac
 done
-
+echo $SKIPS
+exit 1
 #---------------------------------------------------------------------------------------------------
 # check input arguments
 if [[ -z "$BASE" ]]; then
@@ -249,7 +252,7 @@ echo_log "------ building flu-kraken database ------"
 # Download data from IVR
 #===================================================================================================
 
-if [[ "$download" == "true" ]]; then
+if [[ "$download" == "true" ]] && [[ ! " ${SKIPS[@]} " =~ "download" ]]; then
 
 	download_IVR.sh \
 		-k "$BASE" \
@@ -267,8 +270,7 @@ fi
 # Build metadata table for custom taxonomy
 #===================================================================================================
 
-if [[ "$download" == "true" ]]; then
-
+if [[ "$download" == "true" ]] && [[ ! " ${SKIPS[@]} " =~ "metadata" ]]; then
 	build_IVR_metadata.sh \
 		-i "$BASE/raw/influenza_na.dat" \
 		-f "$BASE/raw/influenza.fna" \
@@ -285,29 +287,32 @@ fi
 
 #-------------------------------------------------
 # Create flu-specific taxonomy
-build_taxonomy.sh \
-	-i "$BASE/raw/annotation_IVR.dat" \
-	-t "$TAXONOMY" \
-	-1 "$offset1" \
-	-2 "$offset2" \
-	-l "$logfile" \
-	-c "$CMD" \
-	-w "$workdir" \
-	-x " |  "
+if [[ ! " ${SKIPS[@]} " =~ "taxonomy" ]]; then
+	build_taxonomy.sh \
+		-i "$BASE/raw/annotation_IVR.dat" \
+		-t "$TAXONOMY" \
+		-1 "$offset1" \
+		-2 "$offset2" \
+		-l "$logfile" \
+		-c "$CMD" \
+		-w "$workdir" \
+		-x " |  "
+fi
 #===================================================================================================
 # Create Kraken or Centrifuge database
 #===================================================================================================
 
 #-------------------------------------------------
 # Fix FASTA headers to include new taxids
-build_krakendb.sh \
-	-k "$BASE" \
-	-r "$REFERENCES" \
-	-2 "$offset2" \
-	-l "$logfile" \
-	-w "$workdir" \
-	-c "$CMD" \
-	-x " |  "
-
+if [[ ! " ${SKIPS[@]} " =~ "build" ]]; then
+	build_krakendb.sh \
+		-k "$BASE" \
+		-r "$REFERENCES" \
+		-2 "$offset2" \
+		-l "$logfile" \
+		-w "$workdir" \
+		-c "$CMD" \
+		-x " |  "
+fi
 #-------------------------------------------------
 echo_log "${GREEN}Done${NC} (${YELLOW}"$(basename $0)"${NC})"

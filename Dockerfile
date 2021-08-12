@@ -22,9 +22,9 @@ RUN conda env create -f /opt/environment.yml
 
 COPY databases /opt/databases
 WORKDIR /opt/databases
-RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz
-RUN tar -xvzf minikraken_20171019_4GB.tgz 
-RUN mkdir -p /opt/databases && \
+RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz && \
+    tar -xvzf minikraken_20171019_4GB.tgz && \
+    mkdir -p /opt/databases && \
     mv minikraken_20171013_4GB /opt/databases/minikraken && \
     rm minikraken_20171019_4GB.tgz
 # RUN find /opt/databases -name "*tar.gz" -exec tar -xvzf {} \;
