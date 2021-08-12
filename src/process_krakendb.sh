@@ -1,19 +1,11 @@
 #!/bin/bash
 
 #---------------------------------------------------------------------------------------------------
-# script: build_flukraken.sh
+# script: process_krakendb.sh
 # author: Thomas Mehoke (thomas.mehoke@jhuapl.edu)
 # source: https://github.com/tmehoke/mytax
 
-# This script downloads and builds a custom influenza Kraken
-# classification database with a mytax taxonomy with the following levels:
-#  flu type
-#  segment
-#  subtype (A type only)
-#  host
-#  HA clade
-#  year
-#  strain
+# This script processes a Kraken database to add a fullstring file and a k-mer summary.
 
 #---------------------------------------------------------------------------------------------------
 # LICENSE AND DISCLAIMER
@@ -56,20 +48,11 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
-	echo -e "   -k      directory to build kraken database"
-	echo -e "   -w      temporary directory (default: ${CYAN}/tmp${NC})"
+	echo -e "   -k      kraken database (directory)"
+	echo -e "   -l      logfile (default: ${CYAN}none${NC})"
+	echo -e "   -s      summarize k-mers"
+	echo -e "   -w      temporary directory (default: ${CYAN}/tmp${NC}"
 	echo -e ""
-if [[ 1 -eq 2 ]]; then
-	echo -e "  either specify"
-	echo -e ""
-	echo -e "   -d      download from IVR"
-	echo -e ""
-	echo -e "  or"
-	echo -e ""
-	echo -e "   -r      reference FASTA"
-	echo -e "   -t      taxonomy"
-	echo -e ""
-fi
 }
 
 gawk_install() {
@@ -102,55 +85,45 @@ kraken_install() {
 	echo -e "" >&2
 }
 #---------------------------------------------------------------------------------------------------
-# set default values here
-offset1=1000000000
-offset2=2000000000
-download="true"
+# set default values
+summarize_kmers="false"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-BASE=flukraken-$(date "+%F")
-
-#---------------------------------------------------------------------------------------------------
+CMD="kraken"
 # parse input arguments
-while getopts "hk:w:t:dl:x:" OPTION
+while getopts "hk:l:w:sx:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
 		k) BASE=$OPTARG ;;
-		r) REFERENCES=$OPTARG ;;
-		t) TAXONOMY=$OPTARG ;;
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
-		d) download="true" ;;
+		s) summarize_kmers="true" ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
 
 #---------------------------------------------------------------------------------------------------
 # check input arguments
-if [[ -z "$BASE" ]]; then
-	echo -e "${RED}Error: specify a kraken database with -k${NC}" >&2
+if ! [[ -d "$BASE" ]]; then
+	echo -e "${RED}Error: specify a kraken directory with -k${NC}" >&2
 	usage
 	exit 2
 fi
 
-if [[ -d "$BASE" ]]; then
-	echo -e "${YELLOW}Warning: output directory \"$BASE\" already exists.${NC}" >&2
+#Make sure that base names and nodes.dmp files are present
+if ! [[ -s "$BASE/taxonomy/names.dmp" ]]; then
+	echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}taxonomy/names.dmp${NC}" >&2
+	usage
+	exit 2
 fi
-
-if [[ "$download" == "false" ]]; then
-	if ! [[ -d "$TAXONOMY" ]]; then
-		echo -e "${RED}Error: must specify a taxonomy with -t if not downloading with -d${NC}" >&2
-		usage
-		exit 2
-	fi
-	if ! [[ -e "$REFERENCES" ]]; then
-		echo -e "${RED}Error: must specify a reference FASTA file with -r if not downloading with -d${NC}" >&2
-		usage
-		exit 2
-	fi
+if ! [[ -s "$BASE/taxonomy/nodes.dmp" ]]; then
+	echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}taxonomy/nodes.dmp${NC}" >&2
+	usage
+	exit 2
 fi
 
 #---------------------------------------------------------------------------------------------------
@@ -184,10 +157,6 @@ if [[ -z "$kraken_version" ]]; then
 	exit 2
 fi
 
-#---------------------------------------------------------------------------------------------------
-# set up log file
-logfile="$BASE/build_flukraken.log"
-
 #===================================================================================================
 # DEFINE FUNCTIONS
 #===================================================================================================
@@ -211,99 +180,127 @@ echo_log() {
 }
 
 #---------------------------------------------------------------------------------------------------
+# get fullstring representation of a taxonomy entry
+get_fullstring() {
+
+	names="$1"
+	nodes="$2"
+
+	gawk '{
+		gsub(/\t\|(\t)?/, "@", $0);
+		split($0, a, "@");
+		if(NR == FNR) {
+			LIST[a[1]];
+			if(a[4] == "scientific name") {
+				name[a[1]] = a[2];
+			}
+		} else {
+			parent[a[1]] = a[2];
+			level[a[1]] = a[3];
+		}
+	} END {
+		for(TAXID in LIST) {
+			out = sprintf("%s;%s(%s)", TAXID, name[TAXID], level[TAXID]);
+			if(TAXID > 1) {
+				PARENT = parent[TAXID];
+				out = sprintf("%s;%s(%s)|%s", PARENT, name[PARENT], level[PARENT], out);
+				while(PARENT > 1) {
+					PARENT = parent[PARENT];
+					out = sprintf("%s;%s(%s)|%s", PARENT, name[PARENT], level[PARENT], out);
+				}
+			}
+			printf("%s\t%s\t%s\t%s\t%s\n", TAXID, parent[TAXID], name[TAXID], level[TAXID], out);
+		}
+	}' "$names" "$nodes"
+}
+#---------------------------------------------------------------------------------------------------
 
 #===================================================================================================
 # MAIN BODY
 #===================================================================================================
 
-# create output directory
-mkdir -m 775 -p "$BASE"
-
 echo_log "====== Call to ${YELLOW}"$(basename $0)"${NC} from ${GREEN}"$(hostname)"${NC} ======"
 
-# create directory to hold temporary files
 runtime=$(date +"%Y%m%d%H%M%S%N")
-workdir="$tempdir/$(basename $BASE)-$runtime"
+workdir="$tempdir/process_krakendb-$runtime"
 mkdir -m 775 -p "$workdir"
 
-echo_log "recording software version numbers"
-echo_log "  gawk version: $(gawk --version | head -n1)"
-echo_log "  jellyfish version: $(jellyfish --version | head -n1)"
-echo_log "  kraken version: $(kraken --version | head -n1)"
-
-if ! [[ -s $(which gawk) && -s $(which jellyfish) && -s $(which kraken) ]]; then
-	echo "Error: required packages are not installed" >&2
-	usage
-	exit 2
+if [[ -z "$prefix" ]]; then
+	echo_log "recording software version numbers"
+	echo_log "  gawk version: $gawk_version"
+	echo_log "  jellyfish version: $jellyfish_version"
+	echo_log "  kraken version: $kraken_version"
+	echo_log "input arguments"
+	echo_log "  kraken directory: ${CYAN}$BASE${NC}"
+	echo_log "  working directory: ${CYAN}$workdir${NC}"
+	echo_log "  threads: ${CYAN}1${NC}"
+	echo_log "output arguments"
+	echo_log "  log file: ${CYAN}$logfile${NC}"
 fi
+echo_log "------ procesing kraken database ------"
 
-echo_log "input arguments"
-echo_log "  working directory: ${CYAN}$workdir${NC}"
-echo_log "  threads: ${CYAN}1${NC}"
-echo_log "output arguments"
-echo_log "  kraken directory: ${CYAN}$BASE${NC}"
-echo_log "------ building flu-kraken database ------"
+#---------------------------------------------------------------------------------------------------
+# create joined.full taxonomy file for future reporting
+echo_log "  Creating joined taxonomy files"
 
-#===================================================================================================
-# Download data from IVR
-#===================================================================================================
+# add line for unclassified taxid before adding all of the non-zero taxids
+echo -e "0\t0\tunclassified\tno rank\t0;unclassified(no rank)" > "$BASE/taxonomy/joined.full"
+get_fullstring "$BASE/taxonomy/names.dmp" "$BASE/taxonomy/nodes.dmp" | sort -k1,1 >> "$BASE/taxonomy/joined.full"
 
-if [[ "$download" == "true" ]]; then
+#---------------------------------------------------------------------------------------------------
+# check that summary is needed
 
-	download_IVR.sh \
-		-k "$BASE" \
-		-w "$workdir" \
-		-l "$logfile" \
-		-w "$workdir" \
-		-x " |  "
+if [[ "$summarize_kmers" == "true" ]] && [ $CMD != 'centrifuge' ]; then
+	# make sure kraken database has the required files
+	if ! [[ -s "$BASE/database.kdb" ]]; then
+		echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.kdb${NC}" >&2
+		usage
+		exit 2
+	fi
+	if ! [[ -s "$BASE/database.idx" ]]; then
+		echo -e "${RED}Error: specified kraken directory does not contain the required file: ${CYAN}database.idx${NC}" >&2
+		usage
+		exit 2
+	fi
+	# dump all k-mers in database
+	echo_log "  Extracting all k-mers in database"
+	jellyfish dump "$BASE/database.jdb" > "$BASE/database.jdb.dump"
 
-	TAXONOMY="$BASE/taxonomy"
-	REFERENCES="$BASE/raw/influenza.fna"
+	#---------------------------------------------------------------------------------------------------
+	# classify all dumped k-mers through same database
+	echo_log "  Classifying all k-mers"
+	kraken --db "$BASE" --fasta-input "$BASE/database.jdb.dump" > "$BASE/database.jdb.dump.kraken"
+
+	#---------------------------------------------------------------------------------------------------
+	# summarize classified k-mers by rank
+	echo_log "  Summarizing k-mers by taxonomic rank"
+	gawk -F $'\t' '{
+		a[$3] += 1;
+	} END {
+		for(i in a) {
+			printf("%s\t%s\n", i, a[i]);
+		}
+	}' "$BASE/database.jdb.dump.kraken" > "$BASE/database.jdb.dump.kraken.summary.unique"
+
+	sort -n "$BASE/database.jdb.dump.kraken.summary.unique" > "$BASE/temp" && mv "$BASE/temp" "$BASE/database.jdb.dump.kraken.summary.unique"
+
+	gawk -F $'\t' '{
+		if(NR == FNR) {
+			level[$1] = $2;
+		} else {
+			printf("%s\t%s\t%s\n", $1, level[$1], $2);
+		}
+	}' <(cut -f1,5 "$BASE/taxonomy/nodes.dmp") "$BASE/database.jdb.dump.kraken.summary.unique" > "$BASE/temp" && mv "$BASE/temp" "$BASE/database.jdb.dump.kraken.summary.unique"
+
+	gawk -F $'\t' '{
+		a[$2] += $3;
+	} END {
+		for(i in a) {
+			printf("%s\t%s\n", i, a[i]);
+		}
+	}' "$BASE/database.jdb.dump.kraken.summary.unique" > "$BASE/summary.unique"
 fi
-
-#===================================================================================================
-# Build metadata table for custom taxonomy
-#===================================================================================================
-
-if [[ "$download" == "true" ]]; then
-
-	build_IVR_metadata.sh \
-		-i "$BASE/raw/influenza_na.dat" \
-		-f "$BASE/raw/influenza.fna" \
-		-o "$BASE/raw/annotation_IVR.dat" \
-		-l "$logfile" \
-		-w "$workdir" \
-		-x " |  "
-fi
-
-#===================================================================================================
-# Build flu-specific taxonomy
-#===================================================================================================
-
-#-------------------------------------------------
-# Create flu-specific taxonomy
-build_taxonomy.sh \
-	-i "$BASE/raw/annotation_IVR.dat" \
-	-t "$TAXONOMY" \
-	-1 "$offset1" \
-	-2 "$offset2" \
-	-l "$logfile" \
-	-w "$workdir" \
-	-x " |  "
-
-#===================================================================================================
-# Create Kraken database
-#===================================================================================================
-
-#-------------------------------------------------
-# Fix FASTA headers to include new taxids
-build_krakendb.sh \
-	-k "$BASE" \
-	-r "$REFERENCES" \
-	-2 "$offset2" \
-	-l "$logfile" \
-	-w "$workdir" \
-	-x " |  "
 
 #-------------------------------------------------
 echo_log "${GREEN}Done${NC} (${YELLOW}"$(basename $0)"${NC})"
+

@@ -10,7 +10,7 @@ Clone this repo with:
 
 Symbolically link all shell scripts into your path, for example with:
 
-`find mytax -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
+`find mytax/src -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
 
 # Dependencies
 
@@ -26,7 +26,7 @@ Symbolically link all shell scripts into your path, for example with:
 
 ## Building example
 
-This pipeline is built from a central set of scripts.
+This pipeline is built from a central set of scripts located in the `src` directory
 
 Build flu-kraken example with:
 

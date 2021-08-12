@@ -1,14 +1,19 @@
 #!/bin/bash
 
 #---------------------------------------------------------------------------------------------------
-# script: build_krakendb.sh
+# script: build_flukraken.sh
 # author: Thomas Mehoke (thomas.mehoke@jhuapl.edu)
 # source: https://github.com/tmehoke/mytax
 
-# This script:
-#   fixes a reference FASTA list to include custom mytax taxids
-#   builds a Kraken database
-#   performs post-processing tasks on Kraken database
+# This script downloads and builds a custom influenza Kraken
+# classification database with a mytax taxonomy with the following levels:
+#  flu type
+#  segment
+#  subtype (A type only)
+#  host
+#  HA clade
+#  year
+#  strain
 
 #---------------------------------------------------------------------------------------------------
 # LICENSE AND DISCLAIMER
@@ -51,12 +56,20 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
-	echo -e "   -k      kraken database directory"
-	echo -e "   -r      reference FASTA file"
-	echo -e "   -t      taxonomy (default: ${CYAN}taxonomy sub-folder in kraken database directory${NC})"
-	echo -e "   -2      offset for taxon IDs for new metadata taxonomy levels (default: ${CYAN}2000000000${NC})"
-	echo -e "             Note: this value should be larger than any existing NCBI taxon ID"
+	echo -e "   -k      directory to build kraken database"
+	echo -e "   -w      temporary directory (default: ${CYAN}/tmp${NC})"
 	echo -e ""
+if [[ 1 -eq 2 ]]; then
+	echo -e "  either specify"
+	echo -e ""
+	echo -e "   -d      download from IVR"
+	echo -e ""
+	echo -e "  or"
+	echo -e ""
+	echo -e "   -r      reference FASTA"
+	echo -e "   -t      taxonomy"
+	echo -e ""
+fi
 }
 
 gawk_install() {
@@ -90,39 +103,56 @@ kraken_install() {
 }
 #---------------------------------------------------------------------------------------------------
 # set default values here
-FTP="ftp://ftp.ncbi.nih.gov"
+offset1=1000000000
+offset2=2000000000
+download="true"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-
+BASE=flukraken-$(date "+%F")
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hk:r:t:2:l:w:x:" OPTION
+while getopts "hk:w:t:d:l:x:r:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
 		k) BASE=$OPTARG ;;
 		r) REFERENCES=$OPTARG ;;
 		t) TAXONOMY=$OPTARG ;;
-		2) offset2=$OPTARG ;;
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
+		d) download=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
 
 #---------------------------------------------------------------------------------------------------
 # check input arguments
+if [[ -z "$BASE" ]]; then
+	echo -e "${RED}Error: specify a kraken database with -k${NC}" >&2
+	usage
+	exit 2
+fi
 
-# make sure taxonomy is formatted properly (or exists in $BASE)
+if [[ -d "$BASE" ]]; then
+	echo -e "${YELLOW}Warning: output directory \"$BASE\" already exists.${NC}" >&2
+fi
 
-
-# make sure reference FASTA headers are formatted properly (or do we have a lookup?)
-
-
-# make sure Kraken can run
-
+if [[ "$download" == "false" ]]; then
+	if ! [[ -d "$TAXONOMY" ]]; then
+		echo -e "${RED}Error: must specify a taxonomy with -t if not downloading with -d${NC}" >&2
+		usage
+		exit 2
+	fi
+	if ! [[ -e "$REFERENCES" ]]; then
+		echo -e "${RED}Error: must specify a reference FASTA file with -r if not downloading with -d${NC}" >&2
+		usage
+		exit 2
+	fi
+fi
 
 #---------------------------------------------------------------------------------------------------
 # check required software is installed
@@ -155,6 +185,10 @@ if [[ -z "$kraken_version" ]]; then
 	exit 2
 fi
 
+#---------------------------------------------------------------------------------------------------
+# set up log file
+logfile="$BASE/build_flukraken.log"
+
 #===================================================================================================
 # DEFINE FUNCTIONS
 #===================================================================================================
@@ -183,51 +217,97 @@ echo_log() {
 # MAIN BODY
 #===================================================================================================
 
+# create output directory
+mkdir -m 775 -p "$BASE"
+
 echo_log "====== Call to ${YELLOW}"$(basename $0)"${NC} from ${GREEN}"$(hostname)"${NC} ======"
 
 # create directory to hold temporary files
 runtime=$(date +"%Y%m%d%H%M%S%N")
-workdir="$tempdir/build_krakendb-$runtime"
+workdir="$tempdir/$(basename $BASE)-$runtime"
 mkdir -m 775 -p "$workdir"
 
-if [[ -z "$prefix" ]]; then
-	echo_log "recording software version numbers"
-	echo_log "  gawk version: $gawk_version"
-	echo_log "input arguments"
-	echo_log "  Kraken database directory: ${CYAN}$BASE${NC}"
-	echo_log "  working directory: ${CYAN}$workdir${NC}"
-	echo_log "  threads: ${CYAN}1${NC}"
-	echo_log "output arguments"
-	echo_log "  log file: ${CYAN}$logfile${NC}"
+echo_log "recording software version numbers"
+echo_log "  gawk version: $(gawk --version | head -n1)"
+echo_log "  jellyfish version: $(jellyfish --version | head -n1)"
+echo_log "  kraken version: $(kraken --version | head -n1)"
+
+if ! [[ -s $(which gawk) && -s $(which jellyfish) && -s $(which kraken) ]]; then
+	echo "Error: required packages are not installed" >&2
+	usage
+	exit 2
 fi
+
+echo_log "input arguments"
+echo_log "  working directory: ${CYAN}$workdir${NC}"
+echo_log "  threads: ${CYAN}1${NC}"
+echo_log "output arguments"
+echo_log "  kraken directory: ${CYAN}$BASE${NC}"
+echo_log "------ building flu-kraken database ------"
+
+#===================================================================================================
+# Download data from IVR
+#===================================================================================================
+
+if [[ "$download" == "true" ]]; then
+
+	download_IVR.sh \
+		-k "$BASE" \
+		-w "$workdir" \
+		-l "$logfile" \
+		-w "$workdir" \
+		-c "$CMD" \
+		-x " |  "
+
+	TAXONOMY="$BASE/taxonomy"
+	REFERENCES="$BASE/raw/influenza.fna"
+fi
+
+#===================================================================================================
+# Build metadata table for custom taxonomy
+#===================================================================================================
+
+if [[ "$download" == "true" ]]; then
+
+	build_IVR_metadata.sh \
+		-i "$BASE/raw/influenza_na.dat" \
+		-f "$BASE/raw/influenza.fna" \
+		-o "$BASE/raw/annotation_IVR.dat" \
+		-l "$logfile" \
+		-w "$workdir" \
+		-c "$CMD" \
+		-x " |  "
+fi
+
+#===================================================================================================
+# Build flu-specific taxonomy
+#===================================================================================================
+
+#-------------------------------------------------
+# Create flu-specific taxonomy
+build_taxonomy.sh \
+	-i "$BASE/raw/annotation_IVR.dat" \
+	-t "$TAXONOMY" \
+	-1 "$offset1" \
+	-2 "$offset2" \
+	-l "$logfile" \
+	-c "$CMD" \
+	-w "$workdir" \
+	-x " |  "
+#===================================================================================================
+# Create Kraken or Centrifuge database
+#===================================================================================================
+
 #-------------------------------------------------
 # Fix FASTA headers to include new taxids
-echo_log "------ fixing reference FASTA ------"
-fix_references.sh \
+build_krakendb.sh \
 	-k "$BASE" \
 	-r "$REFERENCES" \
 	-2 "$offset2" \
 	-l "$logfile" \
 	-w "$workdir" \
-	-x "$prefix |  "
-
-#-------------------------------------------------
-# Build kraken database
-echo_log "------ building kraken database ------"
-kraken-build \
-	--build \
-	--db "$BASE" \
-	--threads 1 | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
-
-#-------------------------------------------------
-# Process Kraken database
-echo_log "------ processing kraken database ------"
-process_krakendb.sh \
-	-k "$BASE" \
-	-l "$logfile" \
-	-w "$workdir" \
-	-s \
-	-x "$prefix |  "
+	-c "$CMD" \
+	-x " |  "
 
 #-------------------------------------------------
 echo_log "${GREEN}Done${NC} (${YELLOW}"$(basename $0)"${NC})"

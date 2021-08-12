@@ -51,6 +51,7 @@ usage() {
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
 	echo -e "   -k      directory to build kraken database"
+	echo -e "   -c      classifier used [kraken, centrifuge]"
 	echo -e "   -w      working directory (default: ${CYAN}/tmp${NC})"
 	echo -e ""
 }
@@ -70,10 +71,10 @@ FTP="ftp://ftp.ncbi.nih.gov"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hk:l:w:x:" OPTION
+while getopts "hk:l:w:x:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -81,6 +82,7 @@ do
 		l) logfile=$OPTARG ;;
 		w) tempdir=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -186,8 +188,8 @@ wget -q "$FTP/genomes/INFLUENZA/influenza_na.dat.gz" -O "$workdir/influenza_na.d
 gzip -d "$workdir/influenza.fna.gz" --stdout > "$BASE/raw/influenza.fna"
 gzip -d "$workdir/influenza_na.dat.gz" --stdout > "$BASE/raw/influenza_na.dat"
 
-# remove line breaks and potential carriage returns from FASTA file
-fasta_rmlinebreaks_2col "$BASE/raw/influenza.fna" > "$BASE/raw/influenza-fixed.2col"
+
+
 
 #-------------------------------------------------
 # Grab full NCBI taxonomy
@@ -199,5 +201,16 @@ wget -q "$FTP/pub/taxonomy/taxdump.tar.gz" -O "$workdir/taxdump.tar.gz"
 
 tar --directory "$BASE/taxonomy" -xzf "$workdir/taxdump.tar.gz"
 
+
+if [ $CMD == 'centrifuge' ]; then
+	cat "$BASE/raw/influenza.fna" | awk -F '|' 'BEGIN{OFS="|"}{if($0 ~ /^>/){ print ">"$(NF-1) } else {print $_} }' > $BASE/"tmp.txt"
+	mv $BASE/"tmp.txt" "$BASE/raw/influenza.fna"	
+fi
+
+
+# remove line breaks and potential carriage returns from FASTA file
+fasta_rmlinebreaks_2col "$BASE/raw/influenza.fna" > "$BASE/raw/influenza-fixed.2col"
+
 #-------------------------------------------------
+
 echo_log "${GREEN}Done${NC} (${YELLOW}"$(basename $0)"${NC})"

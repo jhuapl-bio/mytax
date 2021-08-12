@@ -1,0 +1,19 @@
+name: mytax
+channels:
+  - conda-forge
+  - bioconda
+  - anaconda
+  - defaults
+dependencies:
+  - gawk=5.1.0
+  - gettext=0.19.8.1
+  - jellyfish=1.1.12
+  - libcxx=10.0.0
+  - libffi=3.3
+  - libiconv=1.16
+  - make=4.3
+  - ncurses=6.2
+  - perl=5.26.2
+  - readline=8.0
+  - kraken=1.1
+  - centrifuge=1.0.3

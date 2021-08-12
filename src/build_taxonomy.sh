@@ -48,6 +48,7 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
+	echo -e "   -c      classifier [kraken, centrifuge]"
 	echo -e "   -i      input metadata table"
 	echo -e "             Format specifications:"
 	echo -e "               (to be specified)"
@@ -78,10 +79,10 @@ offset2=2000000000
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-
+CMD="kraken"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hi:t:w:1:2:l:x:" OPTION
+while getopts "hi:t:w:1:2:l:x:c:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -92,6 +93,7 @@ do
 		2) offset2=$OPTARG ;;
 		l) logfile=$OPTARG ;;
 		x) prefix=$OPTARG ;;
+		c) CMD=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -339,7 +341,7 @@ gawk -F $'\t' \
 	if(1==0){ print "Print names and nodes arrays to files"; }
 
 	for(taxid in names) {
-
+		
 		if(taxid+0 > OFFSET1) {
 
 			if(1==0){ print "Print taxid attribute values to names and nodes file"; }
@@ -348,7 +350,7 @@ gawk -F $'\t' \
 			printf("%s\t|\t%s\t|\t%s\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\n", taxid, nodes[taxid]["parent"], nodes[taxid]["label"]) >> NODES;
 
 			if(taxid+0 > OFFSET2) {
-				printf("%s\t|\t%s\t|\t\t|\t%s\t|\n", taxid, fasta_header[taxid], "fasta_header") >> NAMES;
+				printf("%s\t|\t%s\t|\t\t|\t%s\t|\n", taxid, fasta_header[taxid], "scientific name") >> NAMES;
 			}
 
 			if(1==0){ print "Print parent attribute values at each level to names file"; }
