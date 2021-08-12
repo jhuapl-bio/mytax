@@ -350,7 +350,7 @@ gawk -F $'\t' \
 			printf("%s\t|\t%s\t|\t%s\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\t\t|\n", taxid, nodes[taxid]["parent"], nodes[taxid]["label"]) >> NODES;
 
 			if(taxid+0 > OFFSET2) {
-				printf("%s\t|\t%s\t|\t\t|\t%s\t|\n", taxid, fasta_header[taxid], "scientific name") >> NAMES;
+				printf("%s\t|\t%s\t|\t\t|\t%s\t|\n", taxid, fasta_header[taxid], "fasta_header") >> NAMES;
 			}
 
 			if(1==0){ print "Print parent attribute values at each level to names file"; }
