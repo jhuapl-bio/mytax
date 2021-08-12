@@ -14,20 +14,20 @@ RUN apt-get update && apt-get install git -y \
     && apt-get autoclean \
     && rm -rf /var/lib/apt/lists/* /var/log/dpkg.log 
 
-ENV PATH /opt/conda/bin:$PATH
-RUN conda config --set ssl_verify no
-COPY ./environment.yml /opt/environment.yml
+# ENV PATH /opt/conda/bin:$PATH
+# RUN conda config --set ssl_verify no
+# COPY ./environment.yml /opt/environment.yml
 
-RUN conda env create -f /opt/environment.yml
+# RUN conda env create -f /opt/environment.yml
 
-COPY databases /opt/databases
-WORKDIR /opt/databases
-RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz
-RUN tar -xvzf minikraken_20171019_4GB.tgz 
-RUN mkdir -p /opt/databases && \
-    mv minikraken_20171013_4GB /opt/databases/minikraken && \
-    rm minikraken_20171019_4GB.tgz
-RUN find /opt/databases -name "*tar.gz" -exec tar -xvzf {} \;
+# COPY databases /opt/databases
+# WORKDIR /opt/databases
+# RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz
+# RUN tar -xvzf minikraken_20171019_4GB.tgz 
+# RUN mkdir -p /opt/databases && \
+#     mv minikraken_20171013_4GB /opt/databases/minikraken && \
+#     rm minikraken_20171019_4GB.tgz
+# RUN find /opt/databases -name "*tar.gz" -exec tar -xvzf {} \;
 # WORKDIR /opt/software/mytax
 # COPY src /opt/software/mytax
 # RUN find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done 
