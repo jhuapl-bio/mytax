@@ -27,6 +27,7 @@ RUN wget http://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz && \
     mkdir -p /opt/databases && \
     mv minikraken_20171013_4GB /opt/databases/minikraken && \
     rm minikraken_20171019_4GB.tgz
+
 # RUN find /opt/databases -name "*tar.gz" -exec tar -xvzf {} \;
 WORKDIR /opt/software/mytax
 COPY src /opt/software/mytax
