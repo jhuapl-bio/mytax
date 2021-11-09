@@ -74,25 +74,20 @@ kraken-report --db $kraken1db  data/sample.out | tee  data/sample.report
 
 
 # first, download ncbi taxdump
-python3 src/generate_hierarchy.py \
--o $PWD/data/ \       
--report /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.report \
--out /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.out  \
--download \
--taxdump data/nodes.dmp  
+python3 src/generate_hierarchy.py -o $PWD/data/ --report data/sample.report --out data/sample.out  -download -taxdump data/nodes.dmp
 
 
  # Next, generate the hierarchy json file
 python3 src/generate_hierarchy.py \
--o $PWD/data/sample_metagenome.json \
--report /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.report \
--out /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.out  \
+-o $PWD/data/sample.fullstring \
+--report data/sample.report \
+--out data/sample.out  \
 -taxdump data/taxdump/nodes.dmp
 
 
 #Get the json for mytax sunburst plot 
 
-bash krakenreport2json.sh -i data/sample_metagenome.json -o data/test.json
+bash krakenreport2json.sh -i data/sample.fullstring -o data/sample.json
 
 
 

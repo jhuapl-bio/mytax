@@ -17,8 +17,8 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 parser = argparse.ArgumentParser(description = "Get fasta files from uniprot batch query script tsv file. Fasta files only from EMBL")
 parser.add_argument('-o', required = True, type=str,  help = 'Output file of data tsv format')
-parser.add_argument('-out', required = True,  type = str, help = 'Kraken  Report Out File')
-parser.add_argument('-report', required = True,  type = str, help = 'Kraken Report File')
+parser.add_argument('--out', required = True,  type = str, help = 'Kraken  Report Out File')
+parser.add_argument('--report', required = True,  type = str, help = 'Kraken Report File')
 parser.add_argument('-d', required = False,  type = str, default="\t", help = 'Delimiter for file')
 parser.add_argument('-taxdump', required = False,  type = str, default=None, help = 'Specify taxdump file e.g. nodes dmp which is a mapping in col 1 of taxid and rank in col 3')
 parser.add_argument('-taxmapCols', required = False,  type = int, nargs="+", default=[1,3], help = 'Specify columns to map taxid (first entry) to rank (second). Will be minimum 2 values. Default: [1,3] starting index 1')
@@ -27,8 +27,6 @@ parser.add_argument('-download', dest="download", required = False, action='stor
 
 args = parser.parse_args()
 outmap = dict()
-df_out = pd.read_csv(vars(args)['out'], sep="\t", names=['state', 'id', 'taxid', 'readLength', 'kmers'])
-df_report = pd.read_csv(vars(args)['report'], sep="\t", names=["coverage", "number_covered", "number_assigned", "rank_code", "taxid", "name"])
 
 def read_report(file, tax_map):
     filehandle = open(file, 'r')
@@ -144,7 +142,9 @@ def main():
             file.close()
         print("Downloaded, exiting...")
 
-    
+    df_out = pd.read_csv(vars(args)['out'], sep="\t", names=['state', 'id', 'taxid', 'readLength', 'kmers'])
+    df_report = pd.read_csv(vars(args)['report'], sep="\t", names=["coverage", "number_covered", "number_assigned", "rank_code", "taxid", "name"])
+
     # tax = pd.read_csv(vars(args)['taxdump'], delimiter=r"vars(args)['taxd']", header=None)
     tax_map = dict()
     if vars(args)['taxdump']:
