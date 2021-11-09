@@ -55,6 +55,51 @@ The single script `build_flukraken.sh` functions as an outer wrapper for the inf
 	process_krakendb.sh -> post-processes database for visualization pipeline (not included in this repo yet)
 ```
 
+## Running process script on kraken/kraken2 report and outfiles
+
+```
+
+# Activate the env 
+
+conda activate mytax 
+
+
+# create the kraken output first, (report and outfile)
+
+## Kraken 1 
+
+
+kraken --db $kraken1db --output data/sample.out data/sample.fastq &&\
+kraken-report --db $kraken1db  data/sample.out | tee  data/sample.report
+
+
+# first, download ncbi taxdump
+python3 src/generate_hierarchy.py \
+-o $PWD/data/ \       
+-report /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.report \
+-out /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.out  \
+-download \
+-taxdump data/nodes.dmp  
+
+
+ # Next, generate the hierarchy json file
+python3 src/generate_hierarchy.py \
+-o $PWD/data/sample_metagenome.json \
+-report /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.report \
+-out /Users/merribb1/Desktop/test-data/metagenome/sample_metagenome.fastq.out  \
+-taxdump data/taxdump/nodes.dmp
+
+
+#Get the json for mytax sunburst plot 
+
+bash krakenreport2json.sh -i data/sample_metagenome.json -o data/test.json
+
+
+
+```
+
+The resulting file can then imported into the sunburst plot at `sunburst/index.html` rendered with a simple `http.server` protocol 
+
 # License and copyright
 
 Copyright (c) 2019 Thomas Mehoke
