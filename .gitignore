@@ -1,5 +1,8 @@
 
 data/*
 databases/*
-!test-data/BC0[1-9].fastq
+test-data/*
+!test-data/BC0*.fastq
 !test-data/sample.fastq
+tmp/*
+taxdump
