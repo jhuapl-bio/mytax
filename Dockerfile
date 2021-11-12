@@ -41,9 +41,10 @@ RUN find . -name "*.sh" | while read fn; do ln -s $PWD/$fn /usr/local/bin; done
 # # Define Flukraken by building from source with jellyfish 
 RUN source /opt/conda/etc/profile.d/conda.sh && conda activate mytax && \
     bash /opt/software/mytax/build_flukraken.sh -k /opt/databases/flukraken2
+
 ## Get Centrifuge database
-RUN wget https://genome-idx.s3.amazonaws.com/centrifuge/p_compressed%2Bh%2Bv.tar.gz -O /opt/databases/centrifuge.tgz && \
-    mkdir -p /opt/databases/centrifuge && tar -xvzf /opt/databases/centrifuge.tgz --directory /opt/databases/centrifuge/
+# RUN wget https://genome-idx.s3.amazonaws.com/centrifuge/p_compressed%2Bh%2Bv.tar.gz -O /opt/databases/centrifuge.tgz && \
+#     mkdir -p /opt/databases/centrifuge && tar -xvzf /opt/databases/centrifuge.tgz --directory /opt/databases/centrifuge/
 
 
 # Install Centrifuge
