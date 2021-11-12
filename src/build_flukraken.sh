@@ -2,7 +2,7 @@
 
 #---------------------------------------------------------------------------------------------------
 # script: build_flukraken.sh
-# author: Thomas Mehoke (thomas.mehoke@jhuapl.edu)
+# author: Brian Merritt (brian.merritt@jhuapl.edu)
 # source: https://github.com/tmehoke/mytax
 
 # This script downloads and builds a custom influenza Kraken
@@ -18,7 +18,7 @@
 #---------------------------------------------------------------------------------------------------
 # LICENSE AND DISCLAIMER
 #
-# Copyright (c) 2019 Thomas Mehoke
+# Copyright (c) 2021 Brian Merritt
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -81,18 +81,8 @@ gawk_install() {
 	echo -e "              for more information" >&2
 	echo -e "" >&2
 }
-jellyfish_install() {
-	echo -e "" >&2
-	echo -e "       ${RED}Please make sure jellyfish version 1 is installed.${NC}" >&2
-	echo -e "" >&2
-	echo -e "       Check: ${CYAN}https://www.cbcb.umd.edu/software/jellyfish/${NC}" >&2
-	echo -e "              for more information" >&2
-	echo -e "" >&2
-	echo -e "       Download: ${CYAN}http://www.cbcb.umd.edu/software/jellyfish/jellyfish-1.1.11.tar.gz${NC}" >&2
-	echo -e "                 MD5: dc994ea8b0896156500ea8c648f24846" >&2
-	echo -e "" >&2
-}
-kraken_install() {
+
+kraken2_install() {
 	echo -e "" >&2
 	echo -e "       ${RED}Please make sure kraken version 1 is installed.${NC}" >&2
 	echo -e "" >&2
@@ -111,7 +101,7 @@ logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
 BASE=flukraken-$(date "+%F")
-CMD="kraken"
+CMD="kraken2"
 SKIPS=()
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
@@ -135,7 +125,7 @@ done
 #---------------------------------------------------------------------------------------------------
 # check input arguments
 if [[ -z "$BASE" ]]; then
-	echo -e "${RED}Error: specify a kraken database with -k${NC}" >&2
+	echo -e "${RED}Error: specify a kraken2 database with -k${NC}" >&2
 	usage
 	exit 2
 fi
@@ -160,8 +150,7 @@ fi
 #---------------------------------------------------------------------------------------------------
 # check required software is installed
 gawk_version=$(gawk --version 2> /dev/null | head -n1)
-jellyfish_version=$(jellyfish --version 2> /dev/null | head -n1)
-kraken_version=$(kraken --version 2> /dev/null | head -n1)
+kraken2_version=$(kraken2 --version 2> /dev/null | head -n1)
 
 if [[ -z "$gawk_version" ]]; then
 	echo -e "${RED}Error: gawk is not installed${NC}" >&2
@@ -169,28 +158,17 @@ if [[ -z "$gawk_version" ]]; then
 	usage
 	exit 2
 fi
-if [[ -z "$jellyfish_version" ]]; then
-	echo -e "${RED}Error: Jellyfish version 1 not installed${NC}" >&2
-	jellyfish_install
-	usage
-	exit 2
-elif [[ -z "$(echo "$jellyfish_version" | grep "jellyfish 1")" ]]; then
-	echo -e "${RED}Error: A version of jellyfish is installed, but not version 1.${NC}" >&2
-	echo -e "       $jellyfish_version" >&2
-	jellyfish_install
-	usage
-	exit 2
-fi
-if [[ -z "$kraken_version" ]]; then
-	echo -e "${RED}Error: Kraken is not installed${NC}" >&2
-	kraken_install
+
+if [[ -z "$kraken2_version" ]]; then
+	echo -e "${RED}Error: Kraken2 is not installed${NC}" >&2
+	kraken2_install
 	usage
 	exit 2
 fi
 
 #---------------------------------------------------------------------------------------------------
 # set up log file
-logfile="$BASE/build_flukraken.log"
+logfile="$BASE/build_flukraken2.log"
 
 #===================================================================================================
 # DEFINE FUNCTIONS
@@ -232,10 +210,9 @@ mkdir -m 775 -p "$workdir"
 
 echo_log "recording software version numbers"
 echo_log "  gawk version: $(gawk --version | head -n1)"
-echo_log "  jellyfish version: $(jellyfish --version | head -n1)"
-echo_log "  kraken version: $(kraken --version | head -n1)"
+echo_log "  kraken2 version: $(kraken2 --version | head -n1)"
 
-if ! [[ -s $(which gawk) && -s $(which jellyfish) && -s $(which kraken) ]]; then
+if ! [[ -s $(which gawk)  && -s $(which kraken2) ]]; then
 	echo "Error: required packages are not installed" >&2
 	usage
 	exit 2
@@ -245,8 +222,8 @@ echo_log "input arguments"
 echo_log "  working directory: ${CYAN}$workdir${NC}"
 echo_log "  threads: ${CYAN}1${NC}"
 echo_log "output arguments"
-echo_log "  kraken directory: ${CYAN}$BASE${NC}"
-echo_log "------ building flu-kraken database ------"
+echo_log "  kraken2 directory: ${CYAN}$BASE${NC}"
+echo_log "------ building flu-kraken2 database ------"
 
 #===================================================================================================
 # Download data from IVR
@@ -299,13 +276,13 @@ if [[ ! " ${SKIPS[@]} " =~ "taxonomy" ]]; then
 		-x " |  "
 fi
 #===================================================================================================
-# Create Kraken or Centrifuge database
+# Create Kraken2 or Centrifuge database
 #===================================================================================================
 
 #-------------------------------------------------
 # Fix FASTA headers to include new taxids
 if [[ ! " ${SKIPS[@]} " =~ "build" ]]; then
-	build_krakendb.sh \
+	build_db.sh \
 		-k "$BASE" \
 		-r "$REFERENCES" \
 		-2 "$offset2" \
