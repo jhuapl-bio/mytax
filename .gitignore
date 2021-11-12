@@ -1,4 +1,5 @@
 
 data/*
-!data/sample.fastq
 databases/*
+!test-data/BC0[1-9].fastq
+!test-data/sample.fastq
