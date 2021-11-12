@@ -56,47 +56,51 @@ parser.add_argument('-download', dest="download", required = False, action='stor
 args = parser.parse_args()
 # outmap = dict()
 
-def read_report(file, tax_map):
-    filehandle = open(file, 'r')
+def read_report(df_report, tax_map):
+    # filehandle = open(file, 'r')
     nodes = []
     last_count = 0
     last_index = 0
     index = 0
     mappings = dict()
-   
-    with open(file, 'r') as filehandle:
-        for line in filehandle:
-            line = line.rstrip()
-            line_split = line.split("\t")
-            assignment = line_split[5].split("  ")
-            counts = assignment.count("")
-            assignment_filtered = "".join([i for i in assignment if i])
-            taxid = int(line_split[4])
-            fullname = '{0};{1}'.format(taxid, assignment_filtered) 
-            if taxid in tax_map:
-                fullname = fullname  + "({0})".format(tax_map[taxid])
-            else:
-                if taxid > 1:
-                    fullname = fullname  + "(no rank)"
-            if int(taxid) <= 1:
-                fullname = fullname + "(no rank)"
-            if counts == 0:
-                root = Node(fullname)
-                last_count = counts
-                nodes.append(root)
-                mappings[taxid] = root
-            else:
-                for entry in reversed(nodes):
-                    if counts - 1 == len(entry.ancestors):
-                        index +=1
-                        node = Node(fullname, parent=entry)
-                        nodes.append(node)
-                        mappings[taxid] = node
-                        break
-                        
+    unclass = False
+    for index, line in df_report.iterrows():
 
+    # with open(file, 'r') as filehandle:
+    #     for line in filehandle:
+        # line = line.rstrip()
+        # line_split = line.split("\t")
+        assignment = line['name'].split("  ")
+        counts = assignment.count("")
+        assignment_filtered = "".join([i for i in assignment if i])
+        taxid = int(line['taxid'])
+        fullname = '{0};{1}'.format(taxid, assignment_filtered) 
+        if taxid == 0:
+            unclass = True
+        if taxid in tax_map:
+            fullname = fullname  + "({0})".format(tax_map[taxid])
+        else:
+            if taxid > 1:
+                fullname = fullname  + "(no rank)"
+        if int(taxid) <= 1:
+            fullname = fullname + "(no rank)"
+        if counts == 0:
+            root = Node(fullname)
+            last_count = counts
+            nodes.append(root)
+            mappings[taxid] = root
+        else:
+            for entry in reversed(nodes):
+                if counts - 1 == len(entry.ancestors):
+                    index +=1
+                    node = Node(fullname, parent=entry)
+                    nodes.append(node)
+                    mappings[taxid] = node
+                    break
+                        
+   
     # close the pointer to that file
-    filehandle.close()
+    # filehandle.close()
     return mappings
 
 # def search_rows(c):
@@ -170,19 +174,24 @@ def main():
         exit()
 
     # df_out = pd.read_csv(vars(args)['out'], sep="\t", names=['state', 'id', 'taxid', 'readLength', 'kmers'])
-    df_report = pd.read_csv(vars(args)['report'], sep="\t", names=["coverage", "number_covered", "number_assigned", "rank_code", "taxid", "name"])
-
+    cols_report = ["coverage", "number_covered", "number_assigned", "rank_code", "taxid", "name"]
+    df_report = pd.read_csv(vars(args)['report'], sep="\t", names=cols_report)
+    if 0 not in df_report['taxid'].values:
+        print("All reads were classified, adding unclassified to fullstring output...")
+        df_report = pd.DataFrame( [[0.0,0,0,"U",0,"unclassified"]], columns=cols_report ).append(df_report,  ignore_index=True)
     # tax = pd.read_csv(vars(args)['taxdump'], delimiter=r"vars(args)['taxd']", header=None)
     tax_map = dict()
     if vars(args)['taxdump']:
         tax_map = map_ranks(vars(args)['taxdump'])
-    nodes = read_report(vars(args)['report'], tax_map)
+    nodes = read_report(df_report, tax_map)
+    # nodes = df_report.apply(read_report, args=(tax_map,))
     # outmap = df_out.set_index('id').to_dict('index') # make a dict from the out file to use the tax mapping with
     # print(outmap)
     # write_report(file=vars(args)['o'], nodes=nodes, df=df_out)
     df_report['fullstring'] = df_report['taxid'].apply(get_fullstring, args=(nodes, )   )
     # df_out_merged = df_out.merge(df_report, right_on="taxid", left_on="taxid")
-    # print(df_report)
+    print(df_report.tail())
+
     
     df_report.to_csv(vars(args)['o'], sep="\t", index=False, header=False)    # make the final fullstring file
     # bash krakenreport2json.sh -i /opt/data/${data.data.filename}.fullstring -o /opt/data/${data.data.filename}.json`

@@ -80,38 +80,39 @@ conda activate mytax
 
 ## Lets make a sample.fastq from test-data
 
-cp test-data/sample_metagenome.fastq data/sample.fastq
-
-
 # Kraken1 and Centrifuge must be compiled from scratch, due to issues with libraries/binaries on compilation and execution 
 
 bash install.sh
 
 
 # first, download ncbi taxdump
-python3 src/generate_hierarchy.py -o $PWD/data/ --report data/sample.report   -download 
 
+python3 src/generate_hierarchy.py -o $PWD/taxdump --report test-data/sample.report   -download 
+rm taxdump.tar.gz
 
 # create the kraken output first, (report and outfile)
 
-## Kraken 1 
+## DEPRECATED Kraken 1 
 
 mkdir -p databases/minikraken1
 wget https://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz -O databases/minikraken1.tgz
 tar -xvzf databases/minikraken1.tgz --directory databases/
 
 export kraken1db=databases/minikraken_20171013_4GB && \
-kraken --db $kraken1db --output data/sample.out data/sample.fastq && \
-kraken-report --db $kraken1db  data/sample.out | tee  data/sample.report
+kraken --db $kraken1db --output test-data/sample.out test-data/sample.fastq && \
+kraken-report --db $kraken1db  test-data/sample.out | tee  test-data/sample.report
+
+
 
 ## Also, use kraken 2
-
 ## export kraken2db to env variable
+
+### IF you've made flukraken2 in tmp or....
 export KRAKEN2_DEFAULT_DB="tmp/flukraken2
 
-
+### IF you have a pre-made minikraken/other kraken db ready 
 export KRAKEN2_DEFAULT_DB="databases/minikraken2_v2_8GB_201904_UPDATE" && \ 
-kraken2  --output data/sample.out  --report data/sample.report data/sample.fastq
+kraken2  --output test-data/sample.out  --report test-data/sample.report test-data/sample.fastq
 
 
 ### if you need minikraken2
@@ -135,22 +136,23 @@ tar -xvzf databases/centrifuge.tgz --directory databases/centrifuge/
 
 export centrifugedb=databases/  # example
 ## run classify 
-$CONDA_PREFIX/lib/centrifuge/centrifuge-build --taxonomy-tree data/taxdump/nodes.dmp --name-table data/taxdump/names.dmp  data/smaple.fastq sample
-$CONDA_PREFIX/lib/centrifuge/centrifuge -f -x databases/centrifuge/p_compressed+h+v  -q data/sample.fastq  --report data/sample.centrifuge.report > data/sample.out
-$CONDA_PREFIX/lib/centrifuge/centrifuge-kreport  -x databases/centrifuge/p_compressed+h+v data/sample.centrifuge.report > data/sample.report
+## If you need to make a new database, see here: $CONDA_PREFIX/lib/centrifuge/centrifuge-build --taxonomy-tree taxdump/nodes.dmp --name-table taxdump/names.dmp  sample.fastq sample
+
+$CONDA_PREFIX/lib/centrifuge/centrifuge -f -x databases/centrifuge/p_compressed+h+v  -q test-data/sample.fastq  --report test-data/sample.centrifuge.report > test-data/sample.out
+$CONDA_PREFIX/lib/centrifuge/centrifuge-kreport  -x databases/centrifuge/p_compressed+h+v test-data/sample.centrifuge.report > test-data/sample.report
 
 
 
  # Next, generate the hierarchy json file
 python3 src/generate_hierarchy.py \
--o $PWD/data/sample.fullstring \
---report data/sample.report \
--taxdump data/taxdump/nodes.dmp
+-o $PWD/test-data/sample.fullstring \
+--report test-data/sample.report \
+-taxdump taxdump/nodes.dmp
 
 
 #Get the json for mytax sunburst plot 
 
-bash krakenreport2json.sh -i data/sample.fullstring -o data/sample.json
+bash krakenreport2json.sh -i test-data/sample.fullstring -o test-data/sample.json
 
 
 
