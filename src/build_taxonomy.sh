@@ -48,7 +48,7 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
-	echo -e "   -c      classifier [kraken, centrifuge]"
+	echo -e "   -c      classifier [kraken2, centrifuge]"
 	echo -e "   -i      input metadata table"
 	echo -e "             Format specifications:"
 	echo -e "               (to be specified)"
@@ -79,7 +79,7 @@ offset2=2000000000
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-CMD="kraken"
+CMD="kraken2"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
 while getopts "hi:t:w:1:2:l:x:c:" OPTION

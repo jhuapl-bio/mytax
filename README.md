@@ -55,6 +55,111 @@ The single script `build_flukraken.sh` functions as an outer wrapper for the inf
 	process_krakendb.sh -> post-processes database for visualization pipeline (not included in this repo yet)
 ```
 
+## Running process script on kraken/kraken2 report and outfiles
+
+### If running from Docker
+
+docker build . -t jhuaplbio/mytax
+
+Unix
+
+`docker container run -it --rm -v $PWD:/data jhuaplbio/mytax bash`
+
+Windows Powershell
+
+`docker container run -it --rm -v $pwd:/data jhuaplbio/mytax bash`
+
+```
+
+# Run the installation script
+
+
+# Activate the env, this will contain kraken2 and centrifuge scripts to build the database if needed as well as kraken2 and centrifuge dependencies
+
+conda activate mytax
+
+## Lets make a sample.fastq from test-data
+
+# Kraken1 and Centrifuge must be compiled from scratch, due to issues with libraries/binaries on compilation and execution 
+
+bash install.sh
+
+
+# first, download ncbi taxdump
+
+python3 src/generate_hierarchy.py -o $PWD/taxdump --report test-data/sample.report   -download 
+rm taxdump.tar.gz
+
+# create the kraken output first, (report and outfile)
+
+## DEPRECATED Kraken 1 
+
+mkdir -p databases/minikraken1
+wget https://ccb.jhu.edu/software/kraken/dl/minikraken_20171019_4GB.tgz -O databases/minikraken1.tgz
+tar -xvzf databases/minikraken1.tgz --directory databases/
+
+export kraken1db=databases/minikraken_20171013_4GB && \
+kraken --db $kraken1db --output test-data/sample.out test-data/sample.fastq && \
+kraken-report --db $kraken1db  test-data/sample.out | tee  test-data/sample.report
+
+
+
+## Also, use kraken 2
+## export kraken2db to env variable
+
+### IF you've made flukraken2 in tmp or....
+export KRAKEN2_DEFAULT_DB="tmp/flukraken2
+
+### IF you have a pre-made minikraken/other kraken db ready 
+export KRAKEN2_DEFAULT_DB="databases/minikraken2_v2_8GB_201904_UPDATE" && \ 
+kraken2  --output test-data/sample.out  --report test-data/sample.report test-data/sample.fastq
+
+
+### if you need minikraken2
+mkdir -p databases/
+wget ftp://ftp.ccb.jhu.edu/pub/data/kraken2_dbs/old/minikraken2_v2_8GB_201904.tgz -O databases/minikraken2.tgz
+tar -xvzf databases/minikraken2.tgz --directory databases/ 
+
+## User Centrifuge 
+
+### Install centrifuge
+
+bash install.sh
+
+### Set up centrifuge env
+
+mkdir -p databases/centrifuge
+wget https://genome-idx.s3.amazonaws.com/centrifuge/p_compressed%2Bh%2Bv.tar.gz -O databases/centrifuge.tgz
+tar -xvzf databases/centrifuge.tgz --directory databases/centrifuge/
+
+
+
+export centrifugedb=databases/  # example
+## run classify 
+## If you need to make a new database, see here: $CONDA_PREFIX/lib/centrifuge/centrifuge-build --taxonomy-tree taxdump/nodes.dmp --name-table taxdump/names.dmp  sample.fastq sample
+
+$CONDA_PREFIX/lib/centrifuge/centrifuge -f -x databases/centrifuge/p_compressed+h+v  -q test-data/sample.fastq  --report test-data/sample.centrifuge.report > test-data/sample.out
+$CONDA_PREFIX/lib/centrifuge/centrifuge-kreport  -x databases/centrifuge/p_compressed+h+v test-data/sample.centrifuge.report > test-data/sample.report
+
+
+
+ # Next, generate the hierarchy json file
+python3 src/generate_hierarchy.py \
+-o $PWD/test-data/sample.fullstring \
+--report test-data/sample.report \
+-taxdump taxdump/nodes.dmp
+
+
+#Get the json for mytax sunburst plot 
+
+bash krakenreport2json.sh -i test-data/sample.fullstring -o test-data/sample.json
+
+
+
+```
+
+The resulting file can then imported into the sunburst plot at `sunburst/index.html` rendered with a simple `http.server` protocol 
+
 # License and copyright
 
 Copyright (c) 2019 Thomas Mehoke

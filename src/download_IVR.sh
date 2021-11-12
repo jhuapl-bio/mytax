@@ -50,8 +50,8 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
-	echo -e "   -k      directory to build kraken database"
-	echo -e "   -c      classifier used [kraken, centrifuge]"
+	echo -e "   -k      directory to build kraken2 database"
+	echo -e "   -c      classifier used [kraken2, centrifuge]"
 	echo -e "   -w      working directory (default: ${CYAN}/tmp${NC})"
 	echo -e ""
 }
@@ -71,7 +71,7 @@ FTP="ftp://ftp.ncbi.nih.gov"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-CMD="kraken"
+CMD="kraken2"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
 while getopts "hk:l:w:x:c:" OPTION
@@ -90,7 +90,7 @@ done
 #---------------------------------------------------------------------------------------------------
 # check input arguments
 if [[ -z "$BASE" ]]; then
-	echo "Error: specify a kraken database with -k" >&2
+	echo "Error: specify a kraken2 database with -k" >&2
 	usage
 	exit 2
 fi
@@ -158,7 +158,7 @@ fasta_rmlinebreaks_2col() {
 # set up log file
 echo_log "====== Call to ${YELLOW}"$(basename $0)"${NC} from ${GREEN}"$(hostname)"${NC} ======"
 
-# create directory structure for kraken database
+# create directory structure for kraken2 database
 mkdir -m 775 -p "$BASE/"{taxonomy,raw}
 
 # create directory to hold temporary files
@@ -170,11 +170,11 @@ if [[ -z "$prefix" ]]; then
 	echo_log "recording software version numbers"
 	echo_log "  gawk version: $gawk_version"
 	echo_log "input arguments:"
-	echo_log "  kraken directory: ${CYAN}$BASE${NC}"
+	echo_log "  kraken2 directory: ${CYAN}$BASE${NC}"
 	echo_log "  working directory: ${CYAN}$workdir${NC}"
 	echo_log "  threads: ${CYAN}1${NC}"
 fi
-echo_log "------ downloading files for Influenza kraken DB ------"
+echo_log "------ downloading files for Influenza kraken2 DB ------"
 
 #-------------------------------------------------
 # Download influenza data

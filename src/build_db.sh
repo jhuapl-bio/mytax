@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #---------------------------------------------------------------------------------------------------
-# script: build_krakendb.sh
+# script: build_db.sh
 # author: Thomas Mehoke (thomas.mehoke@jhuapl.edu)
 # source: https://github.com/tmehoke/mytax
 
@@ -51,8 +51,8 @@ usage() {
 	echo -e ""
 	echo -e "OPTIONS:"
 	echo -e "   -h      show this message"
-	echo -e "   -k      kraken database directory"
-	echo -e "   -c      Classifier to use: [kraken, centrifuge]"
+	echo -e "   -k      database directory"
+	echo -e "   -c      Classifier to use: [kraken2, centrifuge]"
 	echo -e "   -r      reference FASTA file"
 	echo -e "   -t      taxonomy (default: ${CYAN}taxonomy sub-folder in kraken database directory${NC})"
 	echo -e "   -2      offset for taxon IDs for new metadata taxonomy levels (default: ${CYAN}2000000000${NC})"
@@ -68,25 +68,15 @@ gawk_install() {
 	echo -e "              for more information" >&2
 	echo -e "" >&2
 }
-jellyfish_install() {
+
+kraken2_install() {
 	echo -e "" >&2
-	echo -e "       ${RED}Please make sure jellyfish version 1 is installed.${NC}" >&2
-	echo -e "" >&2
-	echo -e "       Check: ${CYAN}https://www.cbcb.umd.edu/software/jellyfish/${NC}" >&2
-	echo -e "              for more information" >&2
-	echo -e "" >&2
-	echo -e "       Download: ${CYAN}http://www.cbcb.umd.edu/software/jellyfish/jellyfish-1.1.11.tar.gz${NC}" >&2
-	echo -e "                 MD5: dc994ea8b0896156500ea8c648f24846" >&2
-	echo -e "" >&2
-}
-kraken_install() {
-	echo -e "" >&2
-	echo -e "       ${RED}Please make sure kraken version 1 is installed.${NC}" >&2
+	echo -e "       ${RED}Please make sure kraken version 2 is installed.${NC}" >&2
 	echo -e "" >&2
 	echo -e "       Check: ${CYAN}https://ccb.jhu.edu/software/kraken/${NC}" >&2
 	echo -e "              for more information" >&2
 	echo -e "" >&2
-	echo -e "       Clone git repository from: ${CYAN}https://github.com/DerrickWood/kraken.git${NC}" >&2
+	echo -e "       Clone git repository from: ${CYAN}https://github.com/DerrickWood/kraken2.git${NC}" >&2
 	echo -e "" >&2
 }
 #---------------------------------------------------------------------------------------------------
@@ -95,7 +85,7 @@ FTP="ftp://ftp.ncbi.nih.gov"
 logfile="/dev/null"
 tempdir="/tmp"
 prefix=""
-CMD="kraken"
+CMD="kraken2"
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
 while getopts "hk:r:t:2:l:w:x:c:" OPTION
@@ -123,14 +113,13 @@ done
 # make sure reference FASTA headers are formatted properly (or do we have a lookup?)
 
 
-# make sure Kraken can run
+# make sure Kraken2 can run
 
 
 #---------------------------------------------------------------------------------------------------
 # check required software is installed
 gawk_version=$(gawk --version 2> /dev/null | head -n1)
-jellyfish_version=$(jellyfish --version 2> /dev/null | head -n1)
-kraken_version=$(kraken --version 2> /dev/null | head -n1)
+kraken2_version=$(kraken2 --version 2> /dev/null | head -n1)
 
 if [[ -z "$gawk_version" ]]; then
 	echo -e "${RED}Error: gawk is not installed${NC}" >&2
@@ -138,21 +127,9 @@ if [[ -z "$gawk_version" ]]; then
 	usage
 	exit 2
 fi
-if [[ -z "$jellyfish_version" ]]; then
-	echo -e "${RED}Error: Jellyfish version 1 not installed${NC}" >&2
-	jellyfish_install
-	usage
-	exit 2
-elif [[ -z "$(echo "$jellyfish_version" | grep "jellyfish 1")" ]]; then
-	echo -e "${RED}Error: A version of jellyfish is installed, but not version 1.${NC}" >&2
-	echo -e "       $jellyfish_version" >&2
-	jellyfish_install
-	usage
-	exit 2
-fi
-if [[ -z "$kraken_version" ]]; then
-	echo -e "${RED}Error: Kraken is not installed${NC}" >&2
-	kraken_install
+if [[ -z "$kraken2_version" ]]; then
+	echo -e "${RED}Error: Kraken2 is not installed${NC}" >&2
+	kraken2_install
 	usage
 	exit 2
 fi
@@ -189,14 +166,14 @@ echo_log "====== Call to ${YELLOW}"$(basename $0)"${NC} from ${GREEN}"$(hostname
 
 # create directory to hold temporary files
 runtime=$(date +"%Y%m%d%H%M%S%N")
-workdir="$tempdir/build_krakendb-$runtime"
+workdir="$tempdir/build_db-$runtime"
 mkdir -m 775 -p "$workdir"
 
 if [[ -z "$prefix" ]]; then
 	echo_log "recording software version numbers"
 	echo_log "  gawk version: $gawk_version"
 	echo_log "input arguments"
-	echo_log "  Kraken database directory: ${CYAN}$BASE${NC}"
+	echo_log "  Kraken2 database directory: ${CYAN}$BASE${NC}"
 	echo_log "  working directory: ${CYAN}$workdir${NC}"
 	echo_log "  threads: ${CYAN}1${NC}"
 	echo_log "output arguments"
@@ -214,13 +191,12 @@ fix_references.sh \
 	-x "$prefix |  "
 
 # -------------------------------------------------
-if [[ $CMD == 'kraken' ]]; then
+if [[ $CMD == 'kraken2' ]]; then
 	# Build kraken database
-	echo_log "------ building kraken database ------"
-	kraken-build \
+	echo_log "------ building kraken2 database ------"
+	kraken2-build \
 		--build \
-		--db "$BASE" \
-		--threads 1 | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
+		--db "$BASE" | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
 else 
 	echo_log "------ building centrifuge database ------"
 	cat $BASE/taxonomy/names.dmp | \
@@ -230,19 +206,19 @@ else
 		--conversion-table $BASE/seqid2taxid.map \
 		--taxonomy-tree $BASE/taxonomy/nodes.dmp \
 		--name-table $BASE/taxonomy/names.dmp \
-		$REFERENCES \
-		flucentrifuge | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
+		$REFERENCES  \
+		"$BASE/$(basename -- $BASE)" | while read line; do echo "[$(date +"%F %T")]$prefix |  $line" | tee -a "$logfile"; done
 fi 
 #-------------------------------------------------
-# Process Kraken database
-echo_log "------ processing kraken database ------"
-process_krakendb.sh \
-	-k "$BASE" \
-	-l "$logfile" \
-	-w "$workdir" \
-	-s \
-	-c $CMD \
-	-x "$prefix |  "
+# DEPRECATED Process Kraken2 database
+# echo_log "------ processing kraken2 database ------"
+# process_krakendb.sh \
+# 	-k "$BASE" \
+# 	-l "$logfile" \
+# 	-w "$workdir" \
+# 	-s \
+# 	-c $CMD \
+# 	-x "$prefix |  "
 
 #-------------------------------------------------
 echo_log "${GREEN}Done${NC} (${YELLOW}"$(basename $0)"${NC})"
