@@ -1,0 +1,25 @@
+name: mytax2
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+  - anaconda
+  - r
+dependencies:
+  - anytree=2.8.0
+  - jq
+  - biopython=1.79
+  - blast=2.12.0
+  - bzip2=1.0.8
+  - entrez-direct=16.2
+  - gawk=5.1.0
+  - kraken2=2.1.2
+  - krakentools=1.2
+  - make=4.3
+  - ncurses=6.3
+  - nodejs=17.4.0
+  - numpy=1.22.3
+  - pandas=1.4.1
+  - pip=22.0.4
+  - python=3.8.12
+
