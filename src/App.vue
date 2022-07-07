@@ -232,10 +232,12 @@ import RunStats from "@/components/RunStats"
 import SampleStats from "@/components/SampleStats"
 import Data from "@/components/Data"
 import Map from "@/components/Map"
+import _ from 'lodash'
+
 export default {
     name: 'App',
     components: {
-      Plates,
+      Plates, 
       Samplesheet,
       RunStats,
       SampleStats,
@@ -338,8 +340,7 @@ export default {
     },
     watch: {
       maxDepth(){
-        console.log(this.selectedsample)
-        let data = this.filterData(this.sampledata[this.selectedsample])
+        let data = this.filterData(this.fullData[this.selectedsample])
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
@@ -353,18 +354,17 @@ export default {
         }
       },
       minDepth(){
-        let data = this.filterData(this.sampledata[this.selectedsample])
-        
+        let data = this.filterData(this.fullData[this.selectedsample])
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
       defaults(){
-        let data = this.filterData(this.sampledata[this.selectedsample])
+        let data = this.filterData(this.fullData[this.selectedsample])
         data = this.parseData(data)
         this.inputdata=data        
       },
       minPercent(){
-        let data = this.filterData(this.sampledata[this.selectedsample])
+        let data = this.filterData(this.fullData[this.selectedsample])
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
@@ -425,7 +425,6 @@ export default {
                 }
                 this.samplekeys = Object.keys(this.sampledata)
                 
-                
               })().catch((Err)=>{
                 console.error(Err)
               })
@@ -446,9 +445,7 @@ export default {
             }
            
         }
-        // let data  = await this.importData(this.filepath)
-        // console.log("imported data", data)
-        // this.inputdata = data
+
     },
     methods: {
         async sendNewWatch(params){
@@ -575,27 +572,14 @@ export default {
           
         },
         
-        filterData(data){
-          let base = {
-            value: 0,
-            num_fragments_clade: 0,
-            num_fragments_assigned: 0,
-            rank_code: '1B',
-            taxid: -1,
-            target: "base",
-            source: null,
-            depth: 0
-          }
+        filterData(d){
+          let data = _.cloneDeep(d)
           data = data.filter((f)=>{
             let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.maxDepth && f.depth >= this.minDepth && this.minPercent <= f.value )
             
-            if ( v && f.depth == 0  ){
-              base.value += parseFloat(f.value)
-              base.num_fragments_clade+= parseInt(f.num_fragments_clade)
-            }
+            
             return  v
           })
-          data.unshift(base)
           return data
         },
         async importData(information, type){
@@ -607,7 +591,16 @@ export default {
             text = information
           }
           let uniques  = {}
-          
+          let base = {
+              value: 0,
+              num_fragments_clade: 0,
+              num_fragments_assigned: 0,
+              rank_code: '1B',
+              taxid: -1,
+              target: "base",
+              source: null,
+              depth: 0
+          }
           let data = d3.tsvParseRows(text, (d)=>{
             d[0] = d[0].trim()
             let found = d[5].search(/\S/);
@@ -626,16 +619,19 @@ export default {
               source: null,
               depth: found
             }
+            if ( found == 0  ){
+              base.value += parseFloat(data.value)
+              base.num_fragments_clade+= parseInt(data.num_fragments_clade)
+            }
             
             uniques[d[3]] = 1
             
             return data
           })
-          // console.log(data[366])
+       
           
-          // data = data.splice(0,5)
-          
-          this.fullData = data
+          data.unshift(base)
+          this.fullData[this.selectedsample] = data
           data = this.filterData(data)
           data = this.parseData(data)
 
