@@ -89,68 +89,60 @@ function real {
 __dirname=$(dirname $0)
 parsed=""; 
 reportName=$(basename $filepath)
-# if [[ $samplepattern != '' ]]; then 	
-# 	parsed=$( echo $reportName | sed "s/${samplepattern}//g")
-# else 
-# 	parsed="${reportName%.*}"
-# fi 
-parsed=$reportName
-sampledir="sample"
-if [[ $samplename != '' ]]; then 
-	sampledir=$samplename
+if [[ $samplepattern != '' ]]; then 	
+	parsed=$( echo $reportName | sed "s/${samplepattern}//g")
+else 
+	parsed="${reportName%.*}"
 fi 
-outputBase=$output"/reports/${sampledir}/$parsed"
-outputCombinedReport=$output"/classifications.full"
-outputLastReport=$output"/classifications.last.report"
-outputFullOut=$output"/classifications.full.out"
-stored_seen=$output"/files_seen.txt"
+# parsed=$reportName
+outputBase=$output"/$parsed"
+outputReport="${outputBase}.report"
+outputAssigned="${outputBase}.out"
+# outputCombinedReport=$output"/classifications.full"
+# outputLastReport=$output"/classifications.last.report"
+# outputFullOut=$output"/classifications.full.out"
+# stored_seen=$output"/files_seen.txt"
 paired=""
+
 if [[ $type == 'paired' ]]; then
 	paired="--paired"
 fi 
 
-mkdir -p ${output}/reports/${sampledir}
+mkdir -p ${output}
 
-echo "kraken2 --db ${database} --output ${outputBase}.out $additional --report ${outputBase}.report $paired ${filepath} "
+echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report ${outputReport} $paired ${filepath} "
 
 kraken2 --db ${database} --output ${outputBase}.out $additional --report ${outputBase}.report $paired ${filepath} 
 
-test=${filepath//\//\\\/}
-
-
-
-files=$( find ${output} -name "*report" -not -name "*full.report" )
-
-# s_formatted="["$( echo $s | sed -r 's/ +/,/g' )"]"
-# cat ../data/classifications/classifications.full.json  | jq --arg METADATA $s_formatted '.metadata.files = $METADATA'
+files=$( find ${output} -name "*report" -not -name "full.report" )
+fullReport="${output}/full.report"
 echo "Combining all reports into aggregated report file $outputCombinedReport"
 
-
-if [[ -s ${output}/reports/${samplename}.report ]]; then 
-	echo "found" ${output}/reports/${samplename}.report	
-	bash ${__dirname}/combine.sh -i $(find $output/reports/${sampledir}/ -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' ) -o "${output}/reports/${samplename}.report"
+if [[ -s ${fullReport} ]]; then 
+	echo "found existing full report" ${fullReport} 
+	bash ${__dirname}/combine.sh -i "${outputReport} $fullReport" -o $fullReport
 else 
-	cp ${outputBase}.report ${output}/reports/${samplename}.report
+	cp ${outputReport} $fullReport
 fi 
 
 
-if [[ -s $outputFullOut ]]; then
-	s="${outputBase}.out $outputFullOut"
-	cat ${outputBase}.out >> $outputFullOut 
-	cat $outputFullOut  | sort | uniq  >  "$outputFullOut".tmp 
-	mv  "$outputFullOut".tmp  $outputFullOut
-else 
-	s="${outputBase}.out" 
-	cp $s $outputFullOut
-fi
-if [[ -s $outputCombinedReport ]]; then
-	echo "bash ${__dirname}/combine.sh  -o $outputCombinedReport -i \"$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' )\" "
-	bash ${__dirname}/combine.sh -o $outputCombinedReport -i "$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' ) " 
-	# cp $outputCombinedReport $outputLastReport
-else 
-	s="${outputBase}.report"
-	cp $s $outputCombinedReport
-fi
+# if [[ -s $outputFullOut ]]; then
+# 	s="${outputBase}.out $outputFullOut"
+# 	cat ${outputBase}.out >> $outputFullOut 
+# 	cat $outputFullOut  | sort | uniq  >  "$outputFullOut".tmp 
+# 	mv  "$outputFullOut".tmp  $outputFullOut
+# else 
+# 	s="${outputBase}.out" 
+# 	cp $s $outputFullOut
+# fi
+# if [[ -s $outputCombinedReport ]]; then
+# 	echo "bash ${__dirname}/combine.sh  -o $outputCombinedReport -i \"$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' )\" "
+# 	bash ${__dirname}/combine.sh -o $outputCombinedReport -i "$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' ) " 
+# 	# cp $outputCombinedReport $outputLastReport
+# else 
+# 	s="${outputBase}.report"
+# 	cp $s $outputCombinedReport
+# fi
 # for file in $files; do    
 # 	s="$s $file"
 # done  

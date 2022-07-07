@@ -64,7 +64,23 @@ app.ws('/ws', async function(ws, req) {
                 console.log("done", f,"done")
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));
             })
-        } 
+        } else if (command.type == 'start'){
+            try{
+                let i=0
+                logger.info(`Starting run frmo samplesheet `) 
+                orchestrator.setSamples(command)
+            } catch(err){
+                logger.error(err)
+            } 
+        } else if (command.type == 'restart'){
+            try{
+                let i=0
+                logger.info(`Starting restart of a sample `) 
+                orchestrator.setSampleSingle(command)
+            } catch(err){
+                logger.error(err)
+            } 
+        }
         else if (command.type == 'watch'){
             try{
                 let i=0
