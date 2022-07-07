@@ -260,7 +260,7 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return val + ' (' + $this.roundNumbers(abu, 3) + ')';
+            return val + ' (' + $this.roundNumbers(abu, 3) + ' %)';
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
       },

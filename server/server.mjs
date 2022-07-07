@@ -758,6 +758,7 @@ export  class Orchestrator {
             if (err){
                 logger.error(err)
             } else {
+                
                 $this.ws.send(JSON.stringify({ type: "data", samplename: samplename, "data" : data.toString()})) 
             }
         
