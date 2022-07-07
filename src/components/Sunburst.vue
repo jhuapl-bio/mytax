@@ -24,29 +24,40 @@
   <v-container  ref="sunburstBox" style="padding-top: 10px; height:500px; width: 97%">
     Sunburst Diagram
     <v-row>
-      <v-col  sm="2">
-          <v-select
-            v-model="selectedAttribute"
-            :items="ranks"    
-            dense light
-            :key="selectedAttribute.name"
-            item-text="name"
-            item-value="name"
-            return-object
-            label="Color rank"
-          >
-            
-
-          </v-select>          
-          <v-btn small type="info" @click="resetSunburst()">
-            Reset
-          </v-btn>
-          
-      </v-col>
-      <v-col  sm="10" class="" ref="containerBox" style="padding-top: 10px; height:500px; width: 97%">
+      <v-col  sm="9" class="" ref="containerBox" style="padding-top: 10px; height:500px; width: 97%">
         <div id="sunburstDiv">
         </div>
       </v-col>
+      <v-col  sm="3">
+        <v-select
+          v-model="selectedAttribute"
+          :items="ranks"    
+          dense light
+          :key="selectedAttribute.name"
+          item-text="name"
+          item-value="name"
+          return-object
+          label="Color rank"
+        >
+          
+
+        </v-select>          
+        <v-btn small type="info" @click="resetSunburst()">
+          Reset
+        </v-btn>
+        <div id="legend_text" style="margin:auto;  padding-bottom: 10px">
+          <h5>Legend</h5>
+          <span id="legend_text_label" style="text-align:center; "/>
+          <div v-if="selectedAttribute.name =='Deviation'" class="alert alert-info">
+            <span>Color is Relative to +/- Max Abundance at a Given Rank</span>
+          </div>
+        </div>
+        <div id="legend_wrapper"
+              style="position:relative; background: none; background-opacity: 0.5; width: 100%; max-height: 30vh; overflow-y:auto;overflow-x:auto">
+          <h5>Tax Ranks for: {{ selectedAttribute.name }}</h5>
+        </div>  
+      </v-col>
+      
     </v-row>
   </v-container> 
 </template>
@@ -66,7 +77,7 @@
           this.makeSunburst(newValue)
         } else {
           this.mergeData(newValue)
-          
+
           
           // this.updateSunburst()
         }
@@ -186,27 +197,24 @@
         let selectedAttribute = this.selectedAttribute.name
         const taxValues = this.taxValues
         const defaultColor = this.defaultColor
+        
         const piechartLegendSVG = d3.select("#sunburstSVG")
         piechartLegendSVG.select(".deviationLegend").remove()
         d3.select("#legend_text_label").text("Rank: " + selectedAttribute)
         d3.select("#legend_wrapper").style("overflow-y", "auto").style("overflow-x", "auto")
         piechartLegendSVG.selectAll("g.legendElement").remove()
         var legendElement = piechartLegendSVG.selectAll('g.legendElement')
-          .data(taxValues[selectedAttribute], function (d) {
-            const abu = (!d3.select("#" + d.arc).empty() ? d3.select("#" + d.arc).data()[0].data.totalsize : 0)
-            d.abu = abu
-          })
+          .data(taxValues[selectedAttribute])
         if (legendElement && legendElement._enter.length > 0) {
           legendElement.exit().remove();
         } else {
           return
         }
         var legendEnter = legendElement.enter()
-          .filter(function (d) {
-            return d.abu >= $this.abuThresholdMin && d.abu <= $this.abuThresholdMax
-          })
           .append('g')
+        
         legendEnter.attr('class', 'legendElement').sort((a, b) => {
+          
           return d3.descending(a.abu, b.abu)
         })
           .on('click', function (d) {
@@ -252,7 +260,7 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return val + ' (' + $this.roundNumbers(abu, 6) + ')';
+            return val + ' (' + $this.roundNumbers(abu, 3) + ')';
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
       },
@@ -398,10 +406,9 @@
         if (!taxValues[selectedAttribute]){
           if (Object.keys(taxValues).length > 0){
             
-            this.selectedAttribute = this.ranks[0]
+            this.selectedAttribute = ( this.ranks[0] ? this.ranks[0] : {name: "S1"} )
             selectedAttribute = this.selectedAttribute.name
           }
-          console.log("yes", this.selectedAttribute)
         }
         if (this.selectedAttribute.name != "Deviation") {
           colorRampPieChart = d3.scaleOrdinal(this.colorScalePiechart)
@@ -478,10 +485,13 @@
           g.attr("transform", transform);
           g.attr("stroke-width", 1 / transform.k);
         }
+        this.updateLegendTax()
       },
       async makeSunburst(data) { //https://observablehq.com/@d3/zoomable-sunburst  && Tom Mehoke (JHUAPL) && Brian Merritt (JHUAPL) references for Sunburst Code
         d3.select("#sunburstDiv").select("svg").remove()
+        d3.select("#sunburstSVG").remove()
         d3.select("#legend_wrapper").html("")
+        d3.select('#legend_wrapper').append('svg').attr("id", "sunburstSVG")
         const pieHeight = this.height;
         const maxRadius = Math.round(pieHeight / 2);
         this.maxRadius = maxRadius
@@ -515,7 +525,7 @@
             taxValues[f.rank_code]  = []
           }
           if (taxValues[f.rank_code].indexOf(f.target) == -1){
-            taxValues[f.rank_code].push({label: f.target })
+            taxValues[f.rank_code].push({label: f.target, abu: f.value })
           }
         })
         this.taxValues  = taxValues

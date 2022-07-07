@@ -41,142 +41,27 @@
       <v-main class=" ">
         <v-container class="mx-2  px-2 " style="margin-right: 0px">
             <v-row>
+              <v-col sm="12">
+                <Samplesheet
+                  :samplesheet="samplesheetdata"
+                  :seen="samplekeys"
+                  :current="current"
+                  @sendNewWatch="sendNewWatch"
+                  @updateData="updateData"
+                  :samplesheetName="samplesheet"
+                >
+                </Samplesheet>
+              </v-col>
               <v-col   sm="3">
                 <v-sheet class="fill-width scroll " style="max-height:80vh; overflow: auto;">
-                  <v-btn small type="info" @click="forceRestart()">
-                    Restart Report Run
-                  </v-btn>
-                  <v-spacer class="mt-4">
-                  </v-spacer>
-                  <v-btn color="orange "
-                        dark v-if="!paused" small type="warning" @click="paused = true">
-                    Pause Updates
-                  </v-btn>
-                  <v-btn color="info "
-                        dark v-else small  @click="paused = false">
-                    Resume Updates
-                  </v-btn>
-                  <v-spacer class="mt-4">
-                  </v-spacer>
-                  <vue-json-to-csv 
-                  :csv-title="CSVTITLE"
-                  :json-data="fullData">
-                    <v-btn>
-                      Download CSV
-                    </v-btn>
-                  </vue-json-to-csv>
-                  <v-dialog
-                    v-model="dialog"
-                    width="500"
-                  >
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-btn
-                        color="red lighten-2"
-                        dark
-                        v-bind="attrs"
-                        v-on="on"
-                      >
-                        Advanced
-                      </v-btn>
-                    </template>
-
-                    <v-card>
-                      <v-card-title class="text-h5 grey lighten-2">
-                        Kraken2 Advanced commands
-                      </v-card-title>
-                      <v-list>
-                        <v-list-item
-                          v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
-
-                        >
-                          <v-checkbox 
-                            v-if="typeof value == 'boolean'"
-                            v-model="config[key]" :label="`--${key}?`"
-                          >
-                          </v-checkbox>
-                          <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
-                          </v-text-field>
-                          <v-text-field v-model="config[key]" v-else :label="`--${key}`">
-                          </v-text-field>
-                        </v-list-item>
-
-                      </v-list>
-                      <v-card-actions>
-                        <v-btn small type="info" @click="forceRestart()">
-                          Restart Report Run
-                        </v-btn>
-                      </v-card-actions>
-                    </v-card>
-                  </v-dialog>
+                  
                   <v-spacer class="py-4"></v-spacer>
                   <v-select
-                    :items="Object.keys(sampledata)"
+                    :items="samplekeys"
                     v-model="selectedsample"
                     label="Selected Sample"
                   >
                   </v-select>
-                  <v-text-field
-                    label="Kraken2 Database"
-                    v-model="database"
-                    persistent-hint 
-                    hint="Database location for kraken2"
-                    placeholder="Database name"
-                  ></v-text-field>
-                  <!-- <v-sheet  elevation="1" v-else
-                      height="50" :hint="'Drag and drop or select'" persistent-hint
-                      max-width="600" class="px-8 pt-4" 
-                      style="" @drop.prevent="addDropFiles" @dragover.prevent >
-                      
-                        <v-icon
-                        small class="mr-2 "
-                        > mdi-upload
-                        </v-icon>
-                        Drag Folder here
-                        <v-icon  v-if="database_file" class="text--caption configure ml-5" @click="database_file = null" color="grey" small>$times-circle
-                        </v-icon>
-                      <p v-if="database_file" >{{database_file}}</p>
-                  </v-sheet> -->
-                  <v-spacer class="py-4"></v-spacer>
-                  <v-spacer class="py-4"></v-spacer>
-                  <v-text-field
-                    label="Run Directory"
-                    v-model="watchdir"
-                    persistent-hint
-                    hint="Directory containing fastq files"
-                    placeholder="fastq_pass"
-                  ></v-text-field>
-                  <p>Read type</p>
-                  <v-btn-toggle
-                    v-model="type"
-                    tile
-                  
-                    color="deep-purple accent-3"
-                    group
-                  >
-                    <v-btn value="paired">
-                      Paired
-                    </v-btn>
-
-                    <v-btn value="single">
-                      Single
-                    </v-btn>
-
-                  
-                  </v-btn-toggle>
-                  <v-spacer class="py-4"></v-spacer>
-                  {{type}}
-                  <v-text-field
-                    hint="Match string for fastq files"
-                    v-model="matchSingle" v-if="type == 'single'"
-                    persistent-hint 
-                    single-line
-                  ></v-text-field>
-                    <v-text-field
-                      hint="Match string for paired end read 1 & 2 fastq files"
-                      v-model="matchPaired" 
-                      persistent-hint  v-else
-                      single-line
-                    ></v-text-field>
                   <v-spacer class="py-4"></v-spacer>
                   <v-text-field
                     hint="Max Depth of Tax Tree"
@@ -342,23 +227,23 @@
 <script>
 import Plates from "@/components/Plates"
 import * as d3 from 'd3'
+import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
 import SampleStats from "@/components/SampleStats"
 import Data from "@/components/Data"
 import Map from "@/components/Map"
-import VueJsonToCsv from 'vue-json-to-csv'
-
 export default {
     name: 'App',
     components: {
       Plates,
+      Samplesheet,
       RunStats,
       SampleStats,
       Data,
       Map,
-      VueJsonToCsv
     },
     computed: {
+     
       icon () {
         if (this.selectedAllRanks) return 'mdi-close-box'
         if (this.selectedSomeRanks) return 'mdi-minus-box'
@@ -384,13 +269,16 @@ export default {
             socket: {},
             scroll:true,
             config: {},
+            current: {},
+            seen: [],
+            samplekeys: [],
             database_file: null,
             db_option: "file",
             db_options: [
               "file",
               "path"
             ],
-            stagedData: null,
+            stagedData: {},
             paused: false,
             dialog: false,
             drawer: false,
@@ -405,19 +293,16 @@ export default {
             type: "single",
             database:null,
             watchdir:null,
-            // database: "/Users/merribb1/Desktop/mytax/flukraken2", 
-            // databaseLL: "/Users/merribb1/Desktop/mytax/minikraken2_v2_8GB_201904_UPDATE",
-            // watchdir: "/Users/merribb1/Documents/Projects/real-time-reporting/data/",
             playbackdata: null,
-            filename: "/Users/merribb1/Documents/Projects/real-time-reporting/data/classifications/flu_BC01.report",
-            csv:"energy.csv" ,
-            CSVTITLE: "Mytax2Report",
+            
             nodeCountMax: 0,
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'O','C','S','F','S1','S2','S3', 'S4'],
             defaultsList: ['U','K', 'P', 'D','G', 'O','C','S','F','S2','S1','S2','S3', 'S4'],
             maxDepth: 20,
+            samplesheetdata: [],
+            samplesheet: null,
             minDepth: 0,
-            minPercent: 0.0, 
+            minPercent: 0.08, 
             jsondata: null, 
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
@@ -453,27 +338,33 @@ export default {
     },
     watch: {
       maxDepth(){
-        let data = this.filterData(this.fullData)
+        console.log(this.selectedsample)
+        let data = this.filterData(this.sampledata[this.selectedsample])
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
       paused(newValue){
         if (!newValue){
-          this.inputdata = this.stagedData
+          let keys = Object.keys(this.stagedData)
+          if (!this.selectedsample && keys.length > 0){
+            this.selectedsample = keys[0]
+          }
+          this.sampledata[this.selectedsample] = this.stagedData[this.selectedsample]
         }
       },
       minDepth(){
-        let data = this.filterData(this.fullData)
+        let data = this.filterData(this.sampledata[this.selectedsample])
+        
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
       defaults(){
-        let data = this.filterData(this.fullData)
+        let data = this.filterData(this.sampledata[this.selectedsample])
         data = this.parseData(data)
         this.inputdata=data        
       },
       minPercent(){
-        let data = this.filterData(this.fullData)
+        let data = this.filterData(this.sampledata[this.selectedsample])
         data = this.parseData(data)
         this.sampledata[this.selectedsample] = data
       },
@@ -484,29 +375,17 @@ export default {
         // ws://your-url-here.com or wss:// for secure websockets.
         const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
         const port = ':3000';
-        if (process.env.NODE_ENV !== 'production'){
-          this.database = process.env.VUE_APP_dev_database
-          this.watchdir = process.env.VUE_APP_dev_watchdir
-        } else {
-          this.database = process.env.VUE_APP_prod_database
-        this.watchdir = process.env.VUE_APP_prod_watchdir
-        }
-        this.config['memory-mapping']=false
-        this.config['gzip-compressed'] = false
-        this.config['bzip2-compressed'] = false
-        this.config['minimum-hit-groups'] = false
-        this.config['report-minimizer-data'] = false
-        this.config['report-zero-counts'] = false
-        this.config['quick'] = false
-        this.config['threads'] = 1
-        this.config['confidence'] = 0
-        this.config['minimum-base-quality'] = 0
+        let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
+        let data = await d3.csv(`${samplesheet}`)
+        this.samplesheet = samplesheet
+        this.samplesheetdata = data
+        
         
         // this.matchPaired = process.env.VUE_APP_paired_string
         // this.matchSingle = process.env.VUE_APP_single_string
         
-        this.ext = process.env.VUE_APP_ext
-        this.compressed = process.env.VUE_APP_compressed
+        // this.ext = process.env.VUE_APP_ext
+        // this.compressed = process.env.VUE_APP_compressed
         const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port + '/ws'
         // this.defaults = this.defaultsList
         // Define socket and attach it to our data object
@@ -519,9 +398,9 @@ export default {
             
 
             this.sendMessage(JSON.stringify({type: "message", "message" : "Hello, server."}));
-            this.sendNewWatch()
-            this.sendMessage(JSON.stringify({type: "config"}));
-            this.sendMessage(JSON.stringify({type: "playback", target: "/Users/merribb1/Documents/Projects/real-time-reporting/data/playback", "message" : "Begin watching"}));
+            // this.sendNewWatch()
+            this.sendMessage(JSON.stringify({type: "start", samplesheet: this.samplesheetdata, overwrite: false }));
+            // this.sendMessage(JSON.stringify({type: "playback", target: "/Users/merribb1/Documents/Projects/real-time-reporting/data/playback", "message" : "Begin watching"}));
         }
         // When we receive a message from the server, we can capture it here in the onmessage event.
         this.socket.onmessage = (event) => {
@@ -531,17 +410,22 @@ export default {
             if (parsedMessage.type == 'data'){
               // this.jsondata = JSON.parse(parsedMessage.data)
               ( async ()=>{
-                let data  = await this.importData(parsedMessage.data)
-                
-                if (!this.paused){
-                  this.inputdata = data
-                } else {
-                  this.stagedData = data
-                }
-                this.sampledata[parsedMessage.samplename] = data
                 if (!this.selectedsample){
                   this.selectedsample = parsedMessage.samplename
                 }
+                let data  = await this.importData(parsedMessage.data)
+                if (!this.selectedsample){
+                  this.selectedsample = parsedMessage.samplename
+                }
+                if (!this.paused){
+                  this.stagedData[parsedMessage.samplename] = data
+                  this.sampledata[parsedMessage.samplename] = data
+                } else {
+                  this.stagedData[parsedMessage.samplename] = data
+                }
+                this.samplekeys = Object.keys(this.sampledata)
+                
+                
               })().catch((Err)=>{
                 console.error(Err)
               })
@@ -554,6 +438,8 @@ export default {
               this.config = parsedMessage.message
             } else if (parsedMessage.type == 'reads'){
               this.reads = parsedMessage.message
+            } else if (parsedMessage.type == 'current'){
+              this.$set(this.current, parsedMessage.current, parsedMessage.running)
             }
             else{
               this.message = parsedMessage.message;
@@ -565,17 +451,48 @@ export default {
         // this.inputdata = data
     },
     methods: {
-        exportCSV(){
-
-        },  
+        async sendNewWatch(params){
+          let restart = params.overwrite
+          let sample = params.sample
+          this.sampledata = {}
+          this.stagedData = {}
+          this.samplekeys = []
+          if (sample){
+            this.sendMessage(JSON.stringify({
+                  type: "restart", 
+                  overwrite: restart,
+                  sample: sample,
+                  "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+              }
+            ));
+          } else {
+            console.log("else")
+            this.sendMessage(JSON.stringify({
+                  type: "start", 
+                    samplesheet: this.samplesheetdata,
+                    overwrite: restart,
+                    "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+                }
+            ));
+          }
+          
+        },
+        updateData(data){
+          this.samplesheetdata = data
+          this.sendMessage(JSON.stringify({
+                  type: "start", 
+                  samplesheet: this.samplesheetdata,
+                  overwrite: false,
+                  "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+              }
+          ));
+        },
         addDropFiles(e) {
           this.value = Array.from(e.dataTransfer.files);
           console.log("e", e, this.value[0])
           this.database_file = this.value[0].path
         },
-        async forceRestart(){
-          this.sendNewWatch(true)
-        },
+        
         toggle () {
           this.$nextTick(() => {
             if (this.selectedAllRanks) {
@@ -657,23 +574,9 @@ export default {
           return data
           
         },
-        sendNewWatch(restart){
-          this.sendMessage(JSON.stringify({
-                  type: "watch", 
-                  readtype: this.type,
-                  database: this.database,
-                  watchdir: this.watchdir,
-                  compressed: this.compressed,
-                  ext: this.ext, 
-                  restart: restart,
-                  config: this.config,
-                  match: (this.type == 'single' ? this.matchSingle : this.matchPaired ),
-                  "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
-              }
-          ));
-        },
+        
         filterData(data){
-          this.base = {
+          let base = {
             value: 0,
             num_fragments_clade: 0,
             num_fragments_assigned: 0,
@@ -683,13 +586,12 @@ export default {
             source: null,
             depth: 0
           }
-          let base = this.base
           data = data.filter((f)=>{
             let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.maxDepth && f.depth >= this.minDepth && this.minPercent <= f.value )
             
-            if ( v ){
-              this.base.value += parseFloat(f.value)
-              this.base.num_fragments_clade+= parseInt(f.num_fragments_clade)
+            if ( v && f.depth == 0  ){
+              base.value += parseFloat(f.value)
+              base.num_fragments_clade+= parseInt(f.num_fragments_clade)
             }
             return  v
           })

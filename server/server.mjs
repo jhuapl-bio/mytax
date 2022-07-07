@@ -14,6 +14,8 @@ export  class Orchestrator {
         this.queue = null
         this.ws = socket
         this.config = {}
+        this.watcher = {}
+        this.samples = []
         this.watchdir = null
         this.reportfile = null
         this.match = "*.fastq"
@@ -33,7 +35,6 @@ export  class Orchestrator {
         this.config['minimum-base-quality'] = 0
         this.logdata = []
         this.overwrite = {}
-        this.samples = {}
         this.seenfiles = {}
         this.queuedFastqs = []
         this.streamout = null
@@ -42,8 +43,7 @@ export  class Orchestrator {
         this.ext = ".fastq"
         this.seenfile = null
         this.streamoutseen = null
-        
-        this.watcher = null
+        this.enableQueue()
         logger.on("data", (stream)=>{
             let output = stream
             try{
@@ -56,18 +56,190 @@ export  class Orchestrator {
 
 
     } 
+    async watchDirectory(sample, overwrite){
+        const $this = this;
+        if (this.watcher[sample.sample] ){
+            this.watcher[sample.sample].close().then(() => console.log('closed')).catch((err)=>{
+                logger.error("no watcher available to cancel properly")
+            });
+        }
+        var watcher = chokidar.watch(`${sample.path_1}/**/${this.match}`, {ignored: /^\./, persistent: true});
+        this.watcher[sample.sample] = watcher
+        let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
+        let fullreport = path.join(outpath, sample.sample, 'full.report')
+        let seenfiles = []
+        let exists_returned = await fs.existsSync(fullreport)
+        if (exists_returned && overwrite){
+            try{
+                await this.rmFile(fullreport)
+            } catch(err){
+                logger.error(err)
+            }
+        }
+        function check_file(filepath){
+            seenfiles.push(filepath)
+            console.log("seen", filepath)
+            $this.check_and_classify(filepath, null,  sample.sample, overwrite).then((runClassify)=>{
+                
+                if (runClassify){
+                    logger.info(`report from ${filepath} doesn't exists, classifying now`)
+                    $this.checkAndAddFileToQueue(sample, filepath, runClassify)
+                } else {
+                    logger.info(`skipping report making for ${filepath}`)
+                } 
+            }).catch((err)=>{
+                logger.error(`${err}`)
+            })
+        }
+
+        let files = await this.globFiles(`${sample.path_1}/**/${this.match}`)
+        if (files){
+            files.forEach((filepath)=>{
+                check_file(filepath)
+            })
+        }
+        watcher  
+            .on('add', function(filepath) {
+                if (seenfiles.indexOf(filepath) == -1){
+                    logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
+                    $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                    check_file(filepath)
+                } else {
+                    logger.info(`File ${filepath} has already been seen for sample: ${sample.sample}`)
+                }
+                    
+                    
+                
+            }) 
+            .on('unlink', function(filepath) {
+                logger.info(`File ${filepath} has been removed`);
+            })
+            .on('error', function(error) {
+                logger.error(`Error happened ${error}`);
+            })  
+       
+        
+        
+    
+    
+    } async setSampleSingle(sample){
+        try{
+            await this.setupSample(sample.sample, sample.overwrite)
+        } catch (err){
+            logger.error(`${err}`)
+        }
+    }
+    async setSamples(samples){
+        const $this = this
+        if (this.samples){
+            this.samples.forEach((sample)=>{
+                if (sample.watcher){
+                    try{ 
+                        sample.watcher.close()                        
+                    } catch (err){
+                        console.error(`${err} error in closing existing watcher`)
+                    }
+                }
+            })
+        }
+        try{
+            console.log("close queue..............")
+            this.$queue.end()
+        } catch (err){
+            console.error(`${err} error in closing queue`)
+        } finally{
+            this.samples = samples.samplesheet
+            
+            for (let i = 0; i < samples.samplesheet.length; i++){
+                await $this.setupSample(samples.samplesheet[i], samples.overwrite)
+            }
+        }
+        
+        
+    }
+    async setupSample(sample, overwrite){
+        const $this = this
+        if (overwrite){
+            let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
+            let fullreport = path.join(outpath, 'full.report')
+            let exists_returned = await fs.existsSync(fullreport)
+            if (exists_returned){
+                try{
+                    await this.rmFile(fullreport)
+                } catch(err){
+                    logger.error(err)
+                }
+            }
+        }
+        if (sample.path_1 && sample.format == 'file'){
+            
+            let runClassify = await this.check_and_classify(sample.path_1, sample.path_2,  sample.sample, overwrite) 
+            if (runClassify){
+                logger.info(`report from ${sample.path_1} ${sample.path_2 ? sample.path_2 : '' } doesn't exists, classifying now`)
+                $this.checkAndAddFileToQueue(sample, sample.path_2 ? `${sample.path_1} ${sample.path_2}` : `${sample.path_1}`, runClassify)
+            } else {
+                logger.info(`skipping report making for ${sample.path_1} ${sample.path_2 ? sample.path_2 : '' }`)
+            }
+        } else if (sample.path_1 && sample.format == 'directory'){
+            sample.files = []
+            this.watchDirectory(sample, overwrite)
+        } 
+        return 
+    }
+    async check_and_classify(path_1, path_2,  sample, overwrite){
+        try{
+            let outpath = path.join(path.dirname(path_1), sample)            
+            let sampleReport = this.getReportName(path_1, path_2, outpath)
+            let fullreport = (sample.directory ? path.join(outpath, sample, 'full.report') :  path.join(outpath, 'full.report'))
+            if (overwrite){
+                return sampleReport
+            } else {
+                let returned = null
+                let returnedFull = false
+                try{
+                    returnedFull = await fs.existsSync(fullreport)
+                } catch (err ){
+                    logger.error(`${err} error in getting full report name for sample: ${sample}`)
+                    return sampleReport
+                } 
+                if (!returnedFull){
+                    return sampleReport
+                }
+                try{
+                    returned = await fs.existsSync(sampleReport)
+                } catch (err){
+                    logger.error(`${err} error in getting full report name for sample: ${sample}`)
+                    return sampleReport
+                } finally {
+                    if (returned){ 
+                        try{
+                            this.sendFullReportSample(fullreport, sample)
+                        } catch (err){
+                            console.error(err)
+                            logger.error(`${err} error in getting full report name for sample: ${sample}`)
+                        }
+                    }
+                    return (!returned ? sampleReport : null )
+                }
+                
+            }
+        } catch (Err){
+            logger.error(Err)
+            return null
+        }
+    }
     enableQueue(){
         const queue = new Queue({
             concurrent: 1,
             interval: 2000
         });
-        this.queue = queue 
         queue.on("start", () => logger.info("started queue"));
         queue.on("stop", () => logger.info("stopped queue"));
         queue.on("end", () => logger.info("Ended queue"));
 
         queue.on("resolve", data => console.log(data));
         queue.on("reject", error => console.error(error));
+        this.queue = queue 
 
 
 
@@ -79,12 +251,10 @@ export  class Orchestrator {
                 // await 
                 let promises = []
                 const $this = this
-                console.log("remove report!", $this.seenfiles)
                 promises.push(this.rmFile(this.seenfile))
                 promises.push(this.rmFile(this.reportfile))
                 promises.push(this.rmFile(`${this.watchdir}/classifications/classifications.last.report`))
                 Object.keys($this.seenfiles).forEach((f)=>{
-                    console.log(f)
                     let filename = `${path.join(this.classificationsDir, 'reports', f)}.report`
                     promises.push(this.rmFile(filename))
                 })
@@ -268,7 +438,6 @@ export  class Orchestrator {
         let outfile = `${this.watchdir}/classifications/classifications.full.report`
         try{
             let files = await this.globFiles(`${this.watchdir}/classifications/reports/*.report`)
-            console.log(files)
             files = this.parseNames(files, 
                 {
                     remove: [ '.report' ],
@@ -312,27 +481,12 @@ export  class Orchestrator {
                                 
                                 $this.ws.send(JSON.stringify({ type: "data", samplename: report.sample, "data" : data.toString()})) 
                             }
-                        
                         })
                     }
                 })
                 $this.watchFastqs(ignoreSeen)
             })
-            // fs.exists(outfile, (exists)=>{
-            //     if(exists){
-            //         fs.readFile(outfile,(err,data)=>{
-            //             $this.ws.send(JSON.stringify({ type: "data", samplename: 'full', "data" : data.toString()}))
-            //             files.map((f)=>{
-            //                 if ($this.seenfiles[f.sample] == -1){
-            //                     $this.seenfiles.push(f.path)
-            //                 }
-            //             })
-            //             $this.watchFastqs(ignoreSeen)
-            //         })    
-            //     } else {
-            //         $this.watchFastqs(ignoreSeen)
-            //     }
-            // })                
+                        
         } catch(err){
             logger.error(err) 
         }
@@ -428,33 +582,19 @@ export  class Orchestrator {
         returnable = returnable.replaceAll(re, "")
         return returnable
     }
-    checkAndAddFileToQueue(filepath, samplename){
-        const $this = this;
-        if (Array.isArray(filepath)){
-            filepath = filepath.join(" ")
-        } 
-        let found = -1
-        
-        let checkpath = filepath
-        if ($this.type == 'paired'){
-            checkpath = path.basename( filepath.split(" ")[0] ) 
-        }
-        console.log("filepath", checkpath, samplename, $this.seenfiles)
-        if (!$this.seenfiles[samplename] || $this.seenfiles[samplename].indexOf(checkpath) == -1 ){ 
-            $this.queuedFastqs.push(filepath)   
-            // console.log("filepath not found", $this.seenfiles[samplename])
-            $this.queue.enqueue(async () =>{ 
-                // console.log("Add to query", filepath,"!!!!!!!!!!!!!!!!")
-                await $this.classify($this.database, filepath, samplename,  $this.watchdir) 
-                
-                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                // if ($this.seenfiles.indexOf(filepath) == -1){ 
-                //     $this.seenfiles.push(filepath) 
-                // } 
-            } );  
+    getReportName(path_1, path_2, outpath){
+        if (path_1 && !path_2 ){
+            return path.join(outpath, `${path.parse(path_1).name}.report`)
         } else {
-            $this.logger.info(`${filepath}, already seen in report, skipping classification`)
+            return path.join(outpath, `${path.parse(path_1).name}.report`)
         }
+    }
+    checkAndAddFileToQueue(sample, filepath, report){
+        const $this = this;
+        $this.queue.enqueue(async () =>{ 
+            $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
+            await $this.classify(sample.database, filepath, report, (sample.path_2 && sample.path_1 ? true : false), sample.compressed, sample.sample) 
+        } ); 
     } 
     defineSample(filepath){
         let re = new RegExp(this.match.replaceAll(".\*", ""), "gi")
@@ -468,12 +608,7 @@ export  class Orchestrator {
     
     mergeSamples(files){
         const $this=this
-        // let merged = this.parseNames(files, 
-        //     {
-        //         remove: [ '.report', '.fastq', '.fq', '.gzip', '.gz' ],
-        //         sampleparse : /^(.*)?\./
-        //     }   
-        // ) 
+        
         let merged = {}
         files.forEach((file)=>{
             let sam = file.sample
@@ -543,7 +678,7 @@ export  class Orchestrator {
                 let sam = $this.defineSample(filepath)
                 logger.info(`File ${filepath} has been added`);
                 $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                this.checkAndAddFileToQueue(filepath,sam)
+                $this.checkAndAddFileToQueue(filepath,sam)
             })
 
             // .on('change', function(filepath) {
@@ -567,32 +702,36 @@ export  class Orchestrator {
         
         // this.streamoutseen.end()
     }
-    async classify(database, filepath, samplename, watchpath){
+    async classify(database, filepath, report, paired, compressed, samplename){
         const $this=this
         return new Promise((resolve, reject)=>{
-            let outputpath = path.join(watchpath, "classifications")
+            let outputdir = path.dirname(report)
             
     
-            logger.info(`report for: ${filepath},  database: ${database}, output to: ${outputpath}` )
+            logger.info(`report for: ${filepath},  database: ${database}, output to: ${outputdir}` )
             let command = `
-                bash ${__dirname}/src/bundle.sh -t "${this.type}" -i "${filepath}" -o "${outputpath}"  -d "${database}" -s ${samplename} `
-            if (this.type == 'paired'){
-                command=`${command} -p "${this.match.replaceAll(".\*", "")}" `
+                bash ${__dirname}/src/bundle.sh  -i "${filepath}" -o "${outputdir}"  -d "${database}"  `
+            if (paired){ 
+                command=`${command} -t paired `
             }
+            
             let additionals = ""
             for(let [key, value] of Object.entries(this.config))
             {
                 
                 if (value && value == true && typeof value == 'boolean'){
-                    additionals = `${additionals} --${key}`
+                    additionals = `${additionals} --${key}` 
                 } else if (value && value !== true){
                     additionals = `${additionals} --${key} ${value}`
                 } 
             }
+            if (compressed == 'TRUE' && !additionals.match(/--gzip-compressed/g)){
+                additionals = `${additionals} --gzip-compressed `
+            }
+            
             if (additionals !== ''){
                 command = `${command} -a "${additionals}"`
             }
-            console.log("COMMAND", command)
             let classify = spawn('bash', ['-c', command]);
             classify.stdout.on('data', (data) => {
                 logger.info(`${data} `);
@@ -603,24 +742,27 @@ export  class Orchestrator {
             });
             classify.on('exit', (data) => {
                 logger.info(`finished classification for: ${filepath}`);
-                if (!$this.seenfiles[samplename]){
-                    $this.seenfiles[samplename] = []
-                }
-                $this.seenfiles[samplename].push(filepath)
-                let reportpath = path.join(outputpath, "reports", `${samplename}.report`)
-                fs.readFile(reportpath,(err,data)=>{
-                    if (err){
-                        logger.error(err)
-                    } else {
-                        $this.ws.send(JSON.stringify({ type: "data", samplename: samplename, "data" : data.toString()})) 
-                    }
+                $this.ws.send(JSON.stringify({ type: "current", current : samplename, running: false }))
+                let reportpath = path.join(outputdir, `full.report`)
+                $this.sendFullReportSample(reportpath, samplename)
                 
-                })
                 
                 resolve()
             });
         })
     } 
+    sendFullReportSample(reportpath, samplename){
+        const $this = this
+        logger.info(`${reportpath}: file done, sending sample data for sample ${samplename}`)
+        fs.readFile(reportpath,(err,data)=>{
+            if (err){
+                logger.error(err)
+            } else {
+                $this.ws.send(JSON.stringify({ type: "data", samplename: samplename, "data" : data.toString()})) 
+            }
+        
+        })
+    }
     
     
     
