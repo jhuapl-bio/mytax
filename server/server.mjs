@@ -727,11 +727,12 @@ export  class Orchestrator {
             }
             if (compressed == 'TRUE' && !additionals.match(/--gzip-compressed/g)){
                 additionals = `${additionals} --gzip-compressed `
-            }
+            } 
             
             if (additionals !== ''){
                 command = `${command} -a "${additionals}"`
             }
+            console.log(command,"!!!!!")
             let classify = spawn('bash', ['-c', command]);
             classify.stdout.on('data', (data) => {
                 logger.info(`${data} `);

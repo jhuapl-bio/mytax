@@ -33,7 +33,7 @@
         >	
             <template v-slot:footer>
                 <v-row>
-                    <v-col sm="4" id="fileinput"   @drop.prevent="addDropFile" @dragover.prevent >
+                    <v-col sm="3" id="fileinput"   @drop.prevent="addDropFile" @dragover.prevent >
                         <v-file-input
                             :width="'100px'"
                             v-model="name" 
@@ -44,64 +44,66 @@
                         <v-subheader>
                         </v-subheader>
                     </v-col>
-                  <v-col sm="2">
-                    <v-btn small type="info" @click="forceRestart()">
-                      Restart Report Run
-                    </v-btn>
-                  </v-col>
-                  <v-col sm="2">
-                    <v-btn color="orange "
-                          dark v-if="!paused" small type="warning" @click="paused = true">
-                      Pause Updates
-                    </v-btn>
-                    <v-btn color="info "
-                          dark v-else small  @click="paused = false">
-                      Resume Updates
-                    </v-btn>
-                  </v-col>
-                  <v-col sm="2">
-                    <v-dialog
-                      v-model="dialogAdvanced"
-                    >
-                      <template v-slot:activator="{ on, attrs }">
-                        <v-btn
-                          color="red lighten-2"
-                          dark
-                          v-bind="attrs"
-                          v-on="on"
+                    <v-col sm="9">
+                        <v-alert v-if="logs[logs.length-1]"  border="left" text color="info" style="height: 100px; padding-right: 10px; overflow:auto; ">
+                            <v-row align="center">
+                            <v-col class="grow">
+                                <span class="text-sm-body-2">{{logs[logs.length-1].message}}</span>
+                            </v-col>
+                            <v-col align="top" class="shrink">
+                                <v-btn @click="sheet = true">Show Full</v-btn>
+                            </v-col>
+                            </v-row>
+                        </v-alert>   
+                        <v-bottom-sheet
+                            v-model="sheet"
+                            inset
                         >
-                          Advanced
-                        </v-btn>
-                      </template>
-
-                      <v-card>
-                        <v-card-title class="text-h5 grey lighten-2">
-                          Kraken2 Advanced commands
-                        </v-card-title>
-                        <v-list>
-                          <v-list-item
-                            v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
-
-                          >
-                            <v-checkbox 
-                              v-if="typeof value == 'boolean'"
-                              v-model="config[key]" :label="`--${key}?`"
+                            <v-sheet
+                            class="text-left logDiv mx-0"
+                            max-height="700px"
+                            min-height="180px"
+                            style="overflow:auto"
                             >
-                            </v-checkbox>
-                            <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
-                            </v-text-field>
-                            <v-text-field v-model="config[key]" v-else :label="`--${key}`">
-                            </v-text-field>
-                          </v-list-item>
-
-                        </v-list>
-                        <v-card-actions>
-                          <v-btn small type="info" @click="forceRestart()">
-                            Restart Report Run
-                          </v-btn>
-                        </v-card-actions>
-                      </v-card>
-                    </v-dialog>
+                            <div class="py-10 pl-4 mx-0">
+                                <span v-for="(row,index) in logs" :key="'sheet'+index">
+                                <v-icon
+                                    dark v-if="row.level == 'error'"
+                                    left color="red"
+                                >
+                                    mdi-alert-circle-outline
+                                </v-icon>
+                                <v-icon
+                                    dark v-else
+                                    left color="blue"
+                                >
+                                    mdi-information
+                                </v-icon>
+                                    {{row.message}}
+                                <br>
+                                </span>
+                            </div>
+                            
+                            </v-sheet>
+                            <v-btn
+                                color="red" dark v-if="scroll"
+                                icon-and-text @click="scroll = false"
+                            >
+                                Pause Autoscroll
+                                <v-icon>
+                                mid-cancel
+                                </v-icon>
+                            </v-btn>
+                            <v-btn v-else
+                                color="blue" dark
+                                icon-and-text @click="scroll = true"
+                            >
+                                Autoscroll
+                                <v-icon>
+                                mid-play
+                                </v-icon>
+                            </v-btn>
+                        </v-bottom-sheet>
                     </v-col>
                 </v-row>
             </template>
@@ -135,14 +137,73 @@
                     max-width="500px"
                     >
                     <template v-slot:activator="{ on, attrs }">
-                        <v-btn
-                        color="primary"
-                        dark
-                        class="mb-2"
-                        v-bind="attrs"
-                        v-on="on"
+                        <v-dialog
+                            v-model="dialogAdvanced"
                         >
-                        New Item
+                            <template v-slot:activator="{ on, attrs }">
+                                <v-btn
+                                    color="red lighten-2"
+                                    dark
+                                    class="mb-2"
+                                    v-bind="attrs"
+                                    v-on="on"
+                                >
+                                    Advanced
+                                </v-btn>
+                            </template>
+
+                            <v-card>
+                                <v-card-title class="text-h5 grey lighten-2">
+                                Kraken2 Advanced commands
+                                </v-card-title>
+                                <v-list>
+                                <v-list-item
+                                    v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
+
+                                >
+                                    <v-checkbox 
+                                    v-if="typeof value == 'boolean'"
+                                    v-model="config[key]" :label="`--${key}?`"
+                                    >
+                                    </v-checkbox>
+                                    <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
+                                    </v-text-field>
+                                    <v-text-field v-model="config[key]" v-else :label="`--${key}`">
+                                    </v-text-field>
+                                </v-list-item>
+
+                                </v-list>
+                                <v-card-actions>
+                                <v-btn small type="info" @click="updateConfig()">
+                                    Update Config
+                                </v-btn>
+                                </v-card-actions>
+                            </v-card>
+                        </v-dialog>
+                        <v-btn
+                            color="primary"
+                            dark
+                            class="mb-2"
+                            v-bind="attrs"
+                            v-on="on"
+                            >
+                            New Item
+                        </v-btn>
+                        <v-spacer>
+                        </v-spacer>
+                        <v-btn  class="mb-2" color="info" @click="forceRestart()">
+                            Restart Report Run
+                        </v-btn>
+                        <v-btn color="orange "
+                                dark 
+                                v-if="!paused" 
+                                class="mb-2"
+                                @click="paused = true">
+                            Pause Updates
+                        </v-btn>
+                        <v-btn color="secondary"
+                                dark v-else   class="mb-2" @click="paused = false">
+                            Resume Updates
                         </v-btn>
                     </template>
                     <v-card>
@@ -483,9 +544,9 @@
             </template>
         </v-data-table>
         <v-snackbar
-        v-model="snack"
-        :timeout="3000"
-        :color="snackColor"
+            v-model="snack"
+            :timeout="3000"
+            :color="snackColor"
         >
         {{ snackText }}
 
@@ -511,14 +572,25 @@
 
   export default {
     name: 'Samplesheet',
-    props: ["samplesheet", 'samplesheetName', 'seen', 'current'],
+    props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs'],
     components: {
         VueJsonToCsv,
         
     },
+    updated: function(){
+      const $this = this;
+      this.$nextTick(()=>{
+        if ($this.$el.querySelector && $this.$el.querySelector('.logDiv')){
+          this.scroll ? this.$el.querySelector('.logDiv').scrollTop = this.$el.querySelector('.logDiv').scrollHeight : ''
+        }
+      })
+    },
     watch: {
       dialog (val) {
         val || this.closeItem()
+      },
+      paused(val){
+          this.$emit("pausedChange", val)
       },
       current: {
           deep:true,
@@ -563,10 +635,12 @@
           CSVTITLE: "Mytax2Report",
           snack: false,
           name: null,
+          scroll:true,
+          sheet:false,
           stagedData: [],
           config: {},
-            paused: false,
-            dialogAdvanced: false,
+          paused: false,
+          dialogAdvanced: false,
           snackColor: '',
           editedItem: {
             sample: '',
@@ -666,7 +740,9 @@
     },
  
     methods: {
-        
+        updateConfig(){
+            this.$emit("updateConfig", this.config)
+        },
         async forceRestart(sample){
           this.$emit("sendNewWatch", {
               overwrite: true,

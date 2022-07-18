@@ -22,9 +22,12 @@
 
 <template>
   <v-container  ref="sankeyBox" style="padding-top: 10px;  width: 97%">
-    Sankey Diagram
     <v-row>
       <v-col sm="2">
+        <v-subheader v-if="samplename">{{samplename}}
+        </v-subheader>
+        <v-divider></v-divider>
+        <br>
         <v-select
           v-model="edgeColor"
           :items="options"    
@@ -98,7 +101,7 @@
         </v-btn> -->
       </v-col>
       <v-col  sm="10">
-          <div style="overflow-x:auto " id="sankeyBox">
+          <div style="overflow-x:auto " :id="`sankeyBox-${samplename}`">
           </div>
       </v-col>
     </v-row>
@@ -115,7 +118,7 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions", "socket"],
+    props: ["inputdata", "dimensions", "socket", "samplename"],
     watch: {
       inputdata: {
         deep:true,
@@ -215,10 +218,12 @@
         this.Sankeychart(this.inputdata)
       },
       hideLabels(){
-        d3.selectAll(".nodeText").style("opacity", d => (this.rangeLabelDepth[0] <= d.depth && this.rangeLabelDepth[1] > d.depth ? 1 : 0))
+        let div = d3.select(`#sankeyBox-${this.samplename}`)
+        div.selectAll(".nodeText").style("opacity", d => (this.rangeLabelDepth[0] <= d.depth && this.rangeLabelDepth[1] >= d.depth ? 1 : 0))
       },
       colorLinks(){
-        let link = d3.selectAll(".link")
+        let div = d3.select(`#sankeyBox-${this.samplename}`)
+        let link = div.selectAll(".link")
         
         link.attr("stroke", d => this.edgeColor === "none" ? "#aaa"
           : this.edgeColor === "path" ? d.uid 
@@ -245,12 +250,12 @@
                 return this.color(d.target)
               } );
         } else {
-          d3.selectAll(".gradient").remove()
+          div.selectAll(".gradient").remove()
         }
         
       },
       removeSankeychart(){
-        d3.select("#sankeyBox").selectAll("*").remove()
+        d3.select("#sankeyBox-"+this.samplename).selectAll("*").remove()
       },
       async Sankeychart(data){ //https://observablehq.com/d/62d604dff1093411
         // const $this = this
@@ -264,9 +269,9 @@
         // format variables
         var formatNumber = d3.format(",.0f"), // zero decimal places
             format = function(d) { return formatNumber(d); }
-        
+        let sankeyBox = d3.select("#sankeyBox-"+this.samplename)
         // append the svg object to the body of the page
-        var svg = d3.select("#sankeyBox").append('svg')
+        var svg = sankeyBox.append('svg')
             .attr("width", width + margin.left + margin.right)
             .attr("height", height + margin.top + margin.bottom)
           .append("g")
