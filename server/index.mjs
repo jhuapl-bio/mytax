@@ -58,8 +58,9 @@ app.ws('/ws', async function(ws, req) {
             ws.send(JSON.stringify({ "message" : "hello" }));
         } else if (command.type == 'config'){
             ws.send(JSON.stringify({ type: "config", "message" : orchestrator.config }));
-        } else if (command.type == 'extractTaxid'){ 
-            console.log("extracting taxid")
+        } else if (command.type == 'updateConfig'){
+            orchestrator.config = command.config
+        }else if (command.type == 'extractTaxid'){ 
             orchestrator.extractTaxid(command.taxid).then((f)=>{
                 console.log("done", f,"done")
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));

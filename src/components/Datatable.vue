@@ -22,6 +22,8 @@
 
 <template>
     <v-row>
+      <v-subheader>{{samplename}}
+      </v-subheader>
       <v-data-table
             small v-if="inputdata"
             :items="inputdata"
@@ -75,7 +77,7 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions","socket"],
+    props: ["inputdata", "dimensions","socket", "samplename"],
     watch: {
     },  
     data(){

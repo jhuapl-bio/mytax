@@ -21,40 +21,23 @@
 
 
 <template>
-  <v-container  ref="sunburstBox" style="padding-top: 10px; height:500px; width: 97%">
-    Sunburst Diagram
+  <v-container  style="padding-top: 10px; max-height:1000px; width: 97%">
     <v-row>
-      <v-col  sm="9" class="" ref="containerBox" style="padding-top: 10px; height:500px; width: 97%">
-        <div id="sunburstDiv">
+      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px; ; max-height:1000px; width: 97%">
+        <div :id="`sunburstDiv-${samplename}`">
         </div>
       </v-col>
-      <v-col  sm="3">
-        <v-select
-          v-model="selectedAttribute"
-          :items="ranks"    
-          dense light
-          :key="selectedAttribute.name"
-          item-text="name"
-          item-value="name"
-          return-object
-          label="Color rank"
-        >
-          
-
-        </v-select>          
-        <v-btn small type="info" @click="resetSunburst()">
-          Reset
-        </v-btn>
-        <div id="legend_text" style="margin:auto;  padding-bottom: 10px">
+      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0; pt-0 text-center">
+        
+        <div :id="`legend_text-${samplename}`" style="margin:auto;  padding-bottom: 10px">
           <h5>Legend</h5>
-          <span id="legend_text_label" style="text-align:center; "/>
-          <div v-if="selectedAttribute.name =='Deviation'" class="alert alert-info">
+          <span :id="`legend_text_label-${samplename}`" style="text-align:center; "/>
+          <div v-if="selectedAttribute =='Deviation'" class="alert alert-info">
             <span>Color is Relative to +/- Max Abundance at a Given Rank</span>
           </div>
         </div>
-        <div id="legend_wrapper"
-              style="position:relative; background: none; background-opacity: 0.5; width: 100%; max-height: 30vh; overflow-y:auto;overflow-x:auto">
-          <h5>Tax Ranks for: {{ selectedAttribute.name }}</h5>
+        <div :id="`legend_wrapper-${samplename}` "
+              style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; height: 200px; overflow-y:auto;overflow-x:auto">
         </div>  
       </v-col>
       
@@ -68,8 +51,36 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions", "socket"],
+    props: ["inputdata", "dimensions", 'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
+      // full(){
+      //   if (this.madeFirst){
+      //     console.log("full", this.samplename)
+      //     this.updateColors()
+      //     if (this.inputdata){
+      //       this.updateLegendTax()
+      //     }
+      //   }
+      // },
+      // taxa(){
+      //     console.log("taxa", this.samplename)
+      //   if (this.madeFirst){
+      //     this.updateColors()
+      //     if (this.inputdata){
+      //       this.updateLegendTax()
+      //     }
+      //   }
+      // },
+      selectedTaxid(val){
+        let ele = d3.select("#sunburstDiv-"+this.samplename).select(this.fetchArc("#sliceMain", val))
+        let data = ele.data()[0]
+        this.$emit("changeAttribute", data.data.data.rank_code)
+        this.focusOn(data)  
+        if (this.madeFirst){
+          this.updateColors()     
+          this.updateLegendTax()
+        }
+      },
       inputdata(
         newValue
       ){
@@ -77,15 +88,16 @@
           this.makeSunburst(newValue)
         } else {
           this.mergeData(newValue)
-
-          
-          // this.updateSunburst()
         }
       },
       selectedAttribute: {
         deep:true,
         handler(){
-          this.updateSunburst()
+          if (this.inputdata){
+            this.getTaxValues()
+            this.updateColors()
+            this.updateLegendTax()
+          }
         }
       },
      
@@ -111,7 +123,7 @@
       return {
         test: 0.5,
         taxData: null,
-        taxValues: {},
+        taxValues: [],
         childrenselected: 0,
         history: {},
         recursedata: null,
@@ -145,6 +157,7 @@
         read_type: null,
         boundsLegendDeviation: {lower: -1, upper: 1},
         boundsDeviation: {},
+        childrenTaxes: [],
         firstReady: false,
         tab: 1,
 
@@ -157,10 +170,7 @@
         ],
         filterOn: [],
         sortBy: 'originalsize',
-
-
         defaultColor: '#1f77b4',
-        selectedAttribute: {name: "S1"},
         colorScalePiechart: d3.schemeCategory10.slice(1),
         colorScaleDeviationPieChart: d3.interpolateRdBu,
         x: null,
@@ -175,53 +185,82 @@
       }
     },
     methods: {
+      getTaxValues(){
+        let taxValues = []
+        this.inputdata.map((f)=>{
+          if (taxValues.indexOf(f.target) == -1 && f.rank_code == this.selectedAttribute){
+            taxValues.push({label: f.target, taxid: f.taxid , rank_code: f.rank_code, abu: f.value })
+          }
+        })
+        return taxValues
+      },
       mergeData(newData){ 
-        this.makeSunburst(newData)
-      },
-      sort(col) {
-        this.sortDir.col = col
-        if (!this.sortDir.direction) {
-          this.sortDir.direction = 'asc'
+        let maxDepth = d3.max(newData, (f)=>{
+          return f.depth
+        })
+        if (maxDepth !== this.maxDepth){
+          // this.maxDepth = maxDepth
+          // this.makeSunburst(newData)
+          let data = this.stratify(newData)
+          this.root = this.partition(data)
+          this.updateSunburst(this.root)
+
         } else {
-          this.sortDir.direction = (this.sortDir.direction == "asc" ? 'desc' : 'asc')
+          let data = this.stratify(newData)
+          this.root = this.partition(data)
+          this.updateSunburst(this.root)
         }
-        this.sortDir.direction == "asc" ? this.rankNames.sort((a, b) => (a[col] > b[col]) ? 1 : -1) : this.rankNames.sort((a, b) => (a[col] < b[col]) ? 1 : -1)
       },
-    
-
-
       updateLegendTax() {
         let $this = this
         let emptyColor = d3.schemeCategory10[0];
         this.emptyColor = d3.schemeCategory10[0];
-        let selectedAttribute = this.selectedAttribute.name
-        const taxValues = this.taxValues
+        let selectedAttribute = this.selectedAttribute
         const defaultColor = this.defaultColor
+        let taxValues = this.getTaxValues()
+        // const taxValues = this.taxValues 
+        const piechartLegendSVG = d3.select("#legendSVG-"+this.samplename)
         
-        const piechartLegendSVG = d3.select("#sunburstSVG")
-        piechartLegendSVG.select(".deviationLegend").remove()
-        d3.select("#legend_text_label").text("Rank: " + selectedAttribute)
-        d3.select("#legend_wrapper").style("overflow-y", "auto").style("overflow-x", "auto")
-        piechartLegendSVG.selectAll("g.legendElement").remove()
-        var legendElement = piechartLegendSVG.selectAll('g.legendElement')
-          .data(taxValues[selectedAttribute])
+        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplename}`)
+        let legend_text_label = d3.select(`#legend_text_label-${this.samplename}`)
+        legend_text_label.text("Rank: " + selectedAttribute)
+        legend_text_label.text("Sample: " + this.samplename)
+        legend_wrapper.style("overflow-y", "auto").style("overflow-x", "auto")
+        piechartLegendSVG.selectAll(".legendElement").remove()
+        let childrenTaxes = this.childrenTaxes
+        var legendElement ;
+        let full = this.full
+        if ( ( !full  ) ){
+          let filtered_taxa = childrenTaxes.filter((f)=>{
+            return this.taxa.indexOf(f.label) > -1
+          })
+          if (filtered_taxa.length == 0){
+            legendElement = piechartLegendSVG.selectAll('g.legendElement')
+            .data(taxValues)
+          } else {
+            legendElement = piechartLegendSVG.selectAll('g.legendElement')
+            .data(filtered_taxa)
+          }
+
+        } else {
+          legendElement = piechartLegendSVG.selectAll('g.legendElement')
+          .data(taxValues)
+        }
+
         if (legendElement && legendElement._enter.length > 0) {
           legendElement.exit().remove();
-        } else {
-          return
-        }
+        } 
         var legendEnter = legendElement.enter()
           .append('g')
         
         legendEnter.attr('class', 'legendElement').sort((a, b) => {
-          
           return d3.descending(a.abu, b.abu)
         })
-          .on('click', function (d) {
-            $this.jumpTo(d.arc)
+          .on('click', function (d, f) {
+            $this.jumpTo(f.taxid, f.rank_code)
           })
           .attr("id", (d)=>{
-            return "legendElement-"+d.arc
+            return "legendElement-"+$this.samplename+d.taxid
           });
 
         legendEnter.append('rect')
@@ -236,7 +275,6 @@
           .attr('x', 35)
           .attr('y', 18)
           .style('font-size', '14px');
-
         var legendUpdate = legendElement.merge(legendEnter)
           .transition().duration(0)
           .attr('transform', function (d, i) {
@@ -260,45 +298,54 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return val + ' (' + $this.roundNumbers(abu, 3) + ' %)';
+            return val + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid;
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
       },
+      updateColors(){
+        let svg = this.svg
+        let colorRampPieChart = d3.scaleOrdinal(this.colorScalePiechart)
+          .domain(this.taxa);
+        this.colorRampPieChart = colorRampPieChart;
+        const colorSlice = this.colorSlice
+        if (svg){
+          svg.selectAll(".main-arc").style('fill', function (d) {
+            return colorSlice(d)
+          });
+        }
+        
+        
+      },
       clearSunburst() {
         return new Promise((resolve) => {
-          d3.select('#sunburstDiv').html("")
+          d3.select('#sunburstDiv-'+this.samplename).html("")
           resolve()
         })
       },
       resetSunburst() {
-        this.jumpTo()
+        this.jumpTo(-1, "base")
         this.zoomed = null
       },
-      jumpTo(ele) {
-        this.focusOn(d3.select("#" + ele).data()[0])
+      jumpTo(ele, rank) {
+        this.$emit("jumpTo", ele, rank)
       },
       fetchArc(arcName, taxid) {
-        return arcName + "-" + taxid 
+        return arcName + "-" + this.samplename + "-" + taxid 
       },
-      updateSunburst() {
-        const root = this.root
+      updateSunburst(root) {
         const $this = this
         const svg = this.svg
-        const taxValues = this.taxValues
+        // const taxValues = this.taxValues
         const maxRadius = this.maxRadius
         const pieHeight = this.height;
-        let selectedAttribute = this.selectedAttribute.name
-        const focusOn = this.focusOn
-        const arc = this.arc
+        // const focusOn = this.focusOn
         const x = this.x
         const y = this.y
-        this.taxValues = taxValues
         svg
           .attr('viewBox', `${-maxRadius} ${-pieHeight / 2} ${maxRadius * 2} ${pieHeight}`)
 
         const radius = this.width / this.maxRanks
         this.radius = radius
-
         const middleArcLine = d => {
           const halfPi = Math.PI / 2;
           const angles = [x(d.x0) - halfPi, x(d.x1) - halfPi];
@@ -316,15 +363,12 @@
         };
 
         this.middleArcLine = middleArcLine
-
         let rankNames = [];
-        const g = d3.select("#globalg")
-        // d3.select("#globalg").html("")
+        const g = svg.select(".globalg")
         let minAbu = 0
-        
         let filteredData = root.descendants()
           .filter(function (d) {
-            const id = $this.fetchArc("sliceMain", d.data.data.taxid, d.data.depth)
+            const id = $this.fetchArc("sliceMain", d.data.data.taxid)
             let data = d.data.data
             rankNames.push({
               rank: data.rank_code,
@@ -342,96 +386,7 @@
               minAbu = data.num_fragments_clade
             }
             return true
-            // return d.data.totalsize >= $this.abuThresholdMin && d.data.totalsize <= $this.abuThresholdMax
           })
-        
-        
-        this.filteredData = filteredData
-        const slice = g.selectAll("g.slice").data(filteredData, (d) => {
-          return d.data.data.taxid + "-" + d.data.data.num_fragments_clade
-        })
-        slice.exit().remove()
-        const sliceEnter = slice.enter()
-          .append('g').attr('class', 'slice')
-          .on('click', function (event, f) {
-            event.stopPropagation();
-            focusOn(f);
-          }).attr("id", (d) => {
-            return $this.fetchArc("slice", d.data.data.taxid)
-          });
-        sliceEnter.append("title").text(function (d) {
-          return "Name: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
-             "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
-        })
-        this.deviation
-        sliceEnter.append('path')
-          .attr('class', 'hidden-arc')
-          .attr('id', (_, i) => {
-            return `hiddenArc${i}`
-          })
-          .attr('d', (d)=>{
-            return middleArcLine(d)
-          } )
-        sliceEnter.append('path')
-          .attr('class', 'main-arc')
-          
-          .attr("id", (d) => {
-            const id = $this.fetchArc("sliceMain", d.data.data.taxid, d.data.data.depth)
-            return id
-          })
-          .style('fill', '#ccc')
-          .on('mouseover', function (d, f) {
-            var currentEl = d3.select($this.fetchArc("#sliceMain", f.data.data.taxid, f.data.data.depth));
-            currentEl.style('fill-opacity', 0.5);
-          })
-          .on('mouseout', function (d,f) {
-            var currentEl = d3.select($this.fetchArc("#sliceMain", f.data.data.taxid, f.data.data.depth));
-            currentEl.style('fill-opacity', 1);
-          });
-        this.sort('depth')
-      
-
-        this.rankNames = rankNames;
-        const minMaxAbu = d3.extent(rankNames, (d) => {
-          if (d.totalabu > 0) {
-            return d.totalabu
-          }
-        })
-        let colorRampPieChart;
-        this.minAbu = minMaxAbu[0]
-        if (this.abuThresholdMin < this.minAbu){
-          this.abuThresholdMin = this.minAbu
-        }
-        this.calculateAbu = false;
-        if (!taxValues[selectedAttribute]){
-          if (Object.keys(taxValues).length > 0){
-            
-            this.selectedAttribute = ( this.ranks[0] ? this.ranks[0] : {name: "S1"} )
-            selectedAttribute = this.selectedAttribute.name
-          }
-        }
-        if (this.selectedAttribute.name != "Deviation") {
-          colorRampPieChart = d3.scaleOrdinal(this.colorScalePiechart)
-            .domain(taxValues[selectedAttribute].map((d) => {
-              
-              return d.label
-            }));
-          
-        } else {
-          colorRampPieChart = d3.scaleSequential(this.colorScaleDeviationPieChart).domain([1, -1])
-        }
-        const colorSlice = this.colorSlice
-
-
-        this.colorRampPieChart = colorRampPieChart;
-        // const colorSlice = this.colorSlice
-        sliceEnter.selectAll('.main-arc')
-          .attr('d', (d)=>{
-            return arc(d)
-          }) /* I moved this from sliceEnter to sliceUpdate in the hopes of dynamically zooming in */
-        d3.selectAll(".main-arc").style('fill', function (d) {
-            return colorSlice(d)
-          });
         const transition = svg.transition()
           .duration(750)
           .tween('scale', () => {
@@ -444,38 +399,122 @@
           });
         transition.selectAll('path.main-arc')
           .attrTween('d', d => () => {
+            
             return this.arc(d)
           });
         transition.selectAll('path.hidden-arc')
-          .attrTween('d', d => () => middleArcLine(d));
+          .attrTween('d', (d) => {
+            middleArcLine(d)
+          });
         transition.selectAll('text')
-          .attrTween('display', d => () => this.textFits(d) ? null : 'none');
+          .attrTween('display', d => () => $this.textFits(d) ? null : 'none');
+        // this.filteredData = filteredData
+        const arc = this.arc
+        let alreadyseen = {}
+        const colorSlice = this.colorSlice
+        g.selectAll("g.slice").data(filteredData, (d) => {
+          if (!alreadyseen[d.data.label]){
+            alreadyseen[d.data.label] = d
+          } else {
+            alreadyseen[d.data.label].x0 = d.x0
+            alreadyseen[d.data.label].y0 = d.y0
+            alreadyseen[d.data.label].x1 = d.x1 
+            alreadyseen[d.data.label].y1 = d.y1 
+          }
+          return d.data.label 
+        }).join(
+            function(enter){
+              let returnable = enter.append('g').attr('class', 'slice')
+              .on('click', function (event, f) {
+                event.stopPropagation();
+                $this.$emit("jumpTo", f.data.data.taxid, f.data.data.rank_code)
+              }).attr("id", (d) => {
+                return $this.fetchArc("slice", d.data.data.taxid)
+              });
 
-        const text = sliceEnter.append('text')
-          .attr('display', d => this.textFits(d) ? null : 'none');
+              returnable.append("title").text(function (d) {
+                return "Sample: " + $this.samplename + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
+                  "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
+              })
+              returnable.append('path')
+                .attr('class', 'hidden-arc')
+                .attr('id', (_) => {
+                  return `hiddenArc${_.data.data.taxid}-${$this.samplename}`
+                })
+                .attr('d', (d)=>{
+                  return middleArcLine(d)
+              } )
 
-        // Add white contour
-        text.append('textPath')
-          .attr('startOffset', '50%')
-          .attr('xlink:href', (_, i) => `#hiddenArc${i}`)
-          .text(d => d.data.data.target)
-          .style('font-size', '12px')
-          .style('fill', 'none')
-          .style('stroke', '#fff')
-          .style('stroke-width', 4)
-          .style('stroke-linejoin', 'round');
+              returnable.append('path')
+                .attr('class', 'main-arc')
+                .style('fill', function (d) {
+                  return colorSlice(d)
+                })
+                .attr('d', (d)=>{
+                  return arc(d)
+                })
+                .attr("id", (d) => {
+                  const id = $this.fetchArc("sliceMain", d.data.data.taxid, d.data.data.depth)
+                  return id
+                })
+                .style('fill', '#ccc')
+                .on('mouseover', function (d, f) {
+                  var currentEl = d3.select($this.fetchArc("#sliceMain", f.data.data.taxid, f.data.data.depth));
+                  currentEl.style('fill-opacity', 0.5);
+                })
+                .on('mouseout', function (d,f) {
+                  var currentEl = d3.select($this.fetchArc("#sliceMain", f.data.data.taxid, f.data.data.depth));
+                  currentEl.style('fill-opacity', 1);
+                });
 
-        text.append('textPath')
-          .attr('startOffset', '50%')
-          .attr('xlink:href', (_, i) => `#hiddenArc${i}`)
-          .text(d => d.data.data.target)
-          .style('font-size', '12px');
-        slice.merge(sliceEnter)
-          .transition().call(this.standardTransition);
-        // const piechartLegendSVG = d3.select('#legend_wrapper').append('svg')
-          // .style('width', '100%')
-          // .attr("id", "sunburstSVG")
-        selectedAttribute != "Deviation" ? this.updateLegendTax() : this.updateLegendDeviation();
+
+                 
+               
+              return returnable
+            },
+            function(update){
+              update
+                .selectAll(".main-arc").each((d)=>{
+                  d.x0 = alreadyseen[d.data.label].x0
+                  d.x1 = alreadyseen[d.data.label].x1
+                  d.y0 = alreadyseen[d.data.label].y0
+                  d.y1 = alreadyseen[d.data.label].y1
+                  }).style('fill', function (d) {
+                    return colorSlice(d)
+                  }).transition().call($this.standardTransition);
+              update.selectAll(".hidden-arc").attr('d', (d)=>{
+                  d.x0 = alreadyseen[d.data.label].x0
+                  d.x1 = alreadyseen[d.data.label].x1
+                  d.y0 = alreadyseen[d.data.label].y0
+                  d.y1 = alreadyseen[d.data.label].y1
+                  return middleArcLine(d)
+              })              
+              return update
+            },
+            function(exit){
+              return exit.remove()
+            }
+        )
+        svg.selectAll(".textfull").remove()
+        let slices = svg.selectAll(".slice")
+        let text = slices.append('text').classed("textfull",true)
+              .attr('display', (d) => { return $this.textFits(d) ? null : 'none' } );
+              // Add white contour
+              text.append('textPath').classed("whitecontour",true)
+                .attr('startOffset', '50%')
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .text(d => d.data.data.target)
+                .style('font-size', '12px')
+                .style('fill', 'none')
+                .style('stroke', '#fff')
+                .style('stroke-width', 4)
+                .style('stroke-linejoin', 'round');
+
+              text.append('textPath').classed("hiddentext",true)
+                .attr('startOffset', '50%')
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .text(d => d.data.data.target)
+                .style('font-size', '12px');   
 
         d3.zoom()
           .scaleExtent([1, 8])
@@ -485,94 +524,56 @@
           g.attr("transform", transform);
           g.attr("stroke-width", 1 / transform.k);
         }
+        this.updateColors()
         this.updateLegendTax()
       },
+        
       async makeSunburst(data) { //https://observablehq.com/@d3/zoomable-sunburst  && Tom Mehoke (JHUAPL) && Brian Merritt (JHUAPL) references for Sunburst Code
-        d3.select("#sunburstDiv").select("svg").remove()
-        d3.select("#sunburstSVG").remove()
-        d3.select("#legend_wrapper").html("")
-        d3.select('#legend_wrapper').append('svg').attr("id", "sunburstSVG")
+        let div = d3.select("#sunburstDiv-"+this.samplename)
+        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplename}`)
+        div.select("svg").remove()
+        div.select("#legendSVG-"+this.samplename).remove()
+        legend_wrapper.html("")
+        legend_wrapper.append('svg').attr("id", "legendSVG-"+this.samplename)
         const pieHeight = this.height;
         const maxRadius = Math.round(pieHeight / 2);
         this.maxRadius = maxRadius
-        let svg = d3.select("#sunburstDiv").append('svg')
+        let svg = div.append('svg')
           .style('max-width', maxRadius * 2)
           .style('max-height', this.height)
-          .attr('id', 'sunburst');
+          .attr('id', "sunburst-"+this.samplename);
         this.svg = svg
-        d3.selectAll(".slice").remove()
-        d3.selectAll(".legendElement").remove()
-        d3.select("#sunburstDiv").style("width", maxRadius * 2)
-        svg.append("g").attr('id', "globalg")
+        svg.selectAll(".slice").remove()
+        svg.selectAll(".legendElement").remove()
+        div.style("width", maxRadius * 2)
+        svg.append("g").attr('class', "globalg")
         const $this = this;
         setTimeout(()=>{ 
           $this.startSunburst(data);
-          this.selectedAttribute =  {name: "S1"};
+          // this.selectedAttribute =  {name: "S1"};
           this.madeFirst = true
         }, 100)
         
         
       },
+      stratify(data){
+        return d3.stratify()
+          .id(d => d.taxid)
+          .parentId(d => d.parenttaxid)(data);
+      },
       startSunburst(data){
         // const $this = this
         this.childrenSelected = 0;
-        let vData = d3.stratify()
-          .id(d => d.taxid)
-          .parentId(d => d.parenttaxid)(data);
-        const taxValues = {}
-        data.map((f)=>{
-          if (!taxValues[f.rank_code]){
-            taxValues[f.rank_code]  = []
-          }
-          if (taxValues[f.rank_code].indexOf(f.target) == -1){
-            taxValues[f.rank_code].push({label: f.target, abu: f.value })
-          }
-        })
+        let vData = this.stratify(data)
+        let taxValues = []
+        this.taxValues = []
         this.taxValues  = taxValues
         const root = this.partition(vData);
-        this.root = root;
         this.minAbu = this.defaultAbuThresholdMin
         this.maxAbu = this.defaultAbuThresholdMax
-
+        
 
         this.ranks = []
-        const $this = this
-        // let yt = 0
-        let maxDepth = 0
-        let partDepths = {}
-        root.each((d => {
-          // yt += d.data.size
-          d.data.depth > this.maxRanks ? this.maxRanks = d.data.depth : '';
-          if (!partDepths[d.data.depth]) {
-            partDepths[d.data.depth] = []
-          }
-          partDepths[d.data.depth].push(d)
-          if (d.data.depth > maxDepth) {
-            maxDepth = d.data.depth
-          }
-        }))
-        let extent = d3.extent(root, (d)=>{
-          return d.data.data.size
-        })
-        for (let i = maxDepth; i > 0; i--) {
-          partDepths[i].forEach((d) => {
-            
-            !taxValues[d.data.data.rank_code] ? (taxValues[d.data.data.rank_code] = [],  this.childrenSelected += 1) : '';
-            taxValues[d.data.data.rank_code].map(function (e) {
-              let idx  = $this.ranks.findIndex((f)=>{
-                return f.name == d.data.data.rank_code
-              })
-              if (idx == -1){
-                $this.ranks.push({name: d.data.data.rank_code})
-              }
-              return e.label;
-            }).indexOf(d.data.data.target) == -1 && d.data.data.totalsize > 0
-              ? taxValues[d.data.data.rank_code].push({
-                label: d.data.data.target,
-                arc: $this.fetchArc("sliceMain", d.data.data.taxid, d.data.depth, d.data.data.target)
-              }) : '';
-          })
-        }
         const x = d3.scaleLinear()
           .range([0, 2 * Math.PI])
           .clamp(true);
@@ -581,21 +582,9 @@
         const y = d3.scaleSqrt()
           .range([maxRadius * .05, maxRadius]);
         this.y = y
-        const arc = d3.arc()
-          .startAngle(d => x(d.x0))
-          .endAngle(d => x(d.x1))
-          .innerRadius(d => Math.max(0, y(d.y0)))
-          .outerRadius(d => Math.max(0, y(d.y1)));
         
-        
-        
-        
-        
-        this.arc = arc
-
-        this.updateSunburst()
-        this.Extent = extent
-        // data = null
+        this.updateColors()
+        this.updateSunburst(root)
         this.firstReady = true;
       },
       roundNumbers(value, to) {
@@ -603,32 +592,28 @@
       },
       colorSlice(d) {
         const colorRampPieChart = this.colorRampPieChart
-        let selectedAttribute = this.selectedAttribute.name
+        let selectedAttribute = this.selectedAttribute
         const defaultColor = this.defaultColor
         var e = d, ret = defaultColor;
-        if (selectedAttribute != "Deviation") {
-          if (e !== null) {
-            if (e.data.data.taxid > 0) {
-              if (e.data.data.rank_code == selectedAttribute) {
-                ret = colorRampPieChart(d.data.data.target);
-              } else {
-                let end = false
-                let parent = d.parent
-                while (parent.depth > 0 && end == false) {
-                  if (parent.data.data.rank_code == selectedAttribute) {
-                    ret = colorRampPieChart(parent.data.data.target);
-                    end = true;
-                  }
-                  parent = parent.parent
+        if (e !== null) {
+          if (e.data.data.taxid > 0) {
+            if (e.data.data.rank_code == selectedAttribute) {
+              ret = colorRampPieChart(d.data.data.target);
+            } else {
+              let end = false
+              let parent = d.parent
+              while (parent.depth > 0 && end == false) {
+                if (parent.data.data.rank_code == selectedAttribute) {
+                  ret = colorRampPieChart(parent.data.data.target);
+                  end = true;
                 }
+                parent = parent.parent
               }
             }
           }
-        } else {
-          colorRampPieChart.domain(this.boundsDeviation[e.data.rank])
-          ret = colorRampPieChart(e.data.data.totalsize - e.data.data.originalsize)
         }
-        return ret;
+        
+        return ret
       },
 
       standardTransition(transition) {
@@ -640,6 +625,10 @@
         const root = d3.hierarchy(data)
         const $this = this
         this.seen = {}
+        let maxDepth = 0
+        let taxValues = []
+        let partDepths = {}
+        this.taxValues = this.getTaxValues()
         root.sum(function (f) {
         //   d.taxid = parseInt(d.taxid)
           let d = f.data //Fix this!
@@ -657,9 +646,6 @@
               
               total += (y.children && y.children.length > 0 ? g.num_fragments_clade : g.num_fragments_clade )
             })
-            // f.sum((g)=>{
-            //   total += (g.children && g.children.length > 0 ? g.num_fragments_assigned : g.num_fragments_clade )
-            // })
             d.size = d.num_fragments_clade - total
           } else {
             d.size = d.num_fragments_clade
@@ -668,15 +654,51 @@
           d.totalsize = d.size
           d.originalsize = 0
           $this.seen[d.taxid] = 1
-          // if (d.taxid < 2){
-            
-          // }
-          // console.log(d.taxid, d.depth, d.size, d.num_fragments_clade)
           return d.size
         })
         root.sort((a, b) => b.taxid - a.taxid);
-        
+        root.each((d => {
+          d.data.depth > this.maxRanks ? this.maxRanks = d.data.depth : '';
+          if (!partDepths[d.depth]) {
+            partDepths[d.depth] = []
+          }
+          partDepths[d.depth].push(d)
+          if (d.depth > maxDepth) {
+            maxDepth = d.depth
+          }
+        }))
+        let extent = d3.extent(root, (d)=>{
+          return d.data.data.size
+        })
+        this.Extent = extent
+        this.taxValues = []
+        // for (let i = maxDepth; i > 0; i--) {
+          // partDepths[i].forEach((d) => {
+            // !taxValues ? (taxValues = [],  this.childrenSelected += 1) : '';
+            // taxValues.map(function (e) {
+            //   let idx  = $this.ranks.findIndex((f)=>{
+            //     return f.name == d.data.data.rank_code
+            //   })
+            //   if (idx == -1){
+            //     $this.ranks.push({name: d.data.data.rank_code})
+            //   }
+            //   return e.label;
+            // }).indexOf(d.data.data.target) == -1 && d.data.data.totalsize > 0
+            //   ? taxValues.push({
+            //     label: d.data.data.target,
+            //     arc: $this.fetchArc("sliceMain", d.data.data.taxid, d.data.depth, d.data.data.target)
+            //   }) : '';
+        //   })
+        // }
+        const arc = d3.arc()
+          .startAngle(d => this.x(d.x0))
+          .endAngle(d => this.x(d.x1))
+          .innerRadius(d => Math.max(0, this.y(d.y0)))
+          .outerRadius(d => Math.max(0, this.y(d.y1)));
+        this.arc = arc
 
+        this.maxDepth = maxDepth
+        this.taxValues = taxValues
         return d3.partition()(root)
       },
       textFits(d) {
@@ -713,6 +735,26 @@
         transition.selectAll('text')
           .attrTween('display', d => () => this.textFits(d) ? null : 'none');
         this.moveStackToFront(d);
+        this.setChildren(d)
+      },
+      setChildren(el){
+        let taxes = []
+        if (el.children){
+          let ranks = el.children.map((f)=>{
+            taxes.push({
+              abu: f.data.data.value,
+              rank_code: f.data.data.rank_code,
+              label: f.data.data.target,
+              taxid: f.data.data.taxid
+            })
+            return f.data.data.rank_code
+          })
+          this.childrenTaxes = taxes
+          this.$emit("changeAttribute", ranks[0])
+        } else {
+          this.childrenTaxes = []
+        }
+        
       },
       moveStackToFront(elD) {
         const moveStackToFront = this.moveStackToFront
@@ -729,7 +771,6 @@
       if (this.inputdata)
       {
         this.makeSunburst(this.inputdata)
-
       }
     }, 
     

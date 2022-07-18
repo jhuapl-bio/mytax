@@ -41,28 +41,36 @@
       <v-main class=" ">
         <v-container class="mx-2  px-2 " style="margin-right: 0px">
             <v-row>
-              <v-col sm="12">
+              <v-col sm="12" class="py-0 my-1">
                 <Samplesheet
                   :samplesheet="samplesheetdata"
                   :seen="samplekeys"
                   :current="current"
                   @sendNewWatch="sendNewWatch"
                   @updateData="updateData"
+                  @pausedChange="pausedChange"
+                  :logs="logs"
+                  @updateConfig="updateConfig"
                   :samplesheetName="samplesheet"
                 >
                 </Samplesheet>
               </v-col>
-              <v-col   sm="3">
+              <v-col   sm="2">
                 <v-sheet class="fill-width scroll " style="max-height:80vh; overflow: auto;">
                   
                   <v-spacer class="py-4"></v-spacer>
-                  <v-select
+                  <v-autocomplete
+                    v-model="selectedsamples"
                     :items="samplekeys"
-                    v-model="selectedsample"
-                    label="Selected Sample"
-                  >
-                  </v-select>
-                  <v-spacer class="py-4"></v-spacer>
+                    outlined
+                    dense
+                    chips
+                    small-chips
+                    label="Samples"
+                    multiple
+                  ></v-autocomplete>
+                 
+                  <v-spacer class="py-0"></v-spacer>
                   <v-text-field
                     hint="Max Depth of Tax Tree"
                     v-model="maxDepth"
@@ -116,15 +124,10 @@
                     </template>
                   
                   </v-select>
-                  <v-spacer class="py-4">
-                  </v-spacer>
-                  
-                  <v-spacer>
-                  </v-spacer>
                 </v-sheet>
               </v-col>
               <v-col
-                  sm="9"
+                  sm="10"
                   id=""
                   class="overflow-y-auto  my-0"
               >
@@ -139,12 +142,9 @@
                       <v-container class="my-3">
                           <component
                               :is="tabItem.component"
-                              :inputdata="inputdata"
-                              :sampledata="sampledata[selectedsample]"
-                              :selectedsample="selectedsample"
-                              :jsondata="jsondata"
+                              :sampleData="selectedData"
+                              :selectedsamples="selectedsamples"
                               :socket="socket"
-                              :playbackdata="playbackdata"
                           >
                           </component>
 
@@ -153,67 +153,7 @@
 
 
                   </v-tabs-items>
-                  <v-alert v-if="logs[logs.length-1]"  border="left" text color="info" style="height: 100px; overflow:auto; ">
-                    <v-row align="center">
-                      <v-col class="grow">
-                          <div>{{logs[logs.length-1].message}}</div>
-                      </v-col>
-                      <v-col align="top" class="shrink">
-                        <v-btn @click="sheet = true">Show Full</v-btn>
-                      </v-col>
-                    </v-row>
-                  </v-alert>  
-                  <v-bottom-sheet
-                    v-model="sheet"
-                    inset
-                  >
-                    <v-sheet
-                      class="text-left logDiv mx-0"
-                      max-height="700px"
-                      min-height="180px"
-                      style="overflow:auto"
-                    >
-                      <div class="py-10 pl-4 mx-0">
-                        <span v-for="(row,index) in logs" :key="'sheet'+index">
-                          <v-icon
-                            dark v-if="row.level == 'error'"
-                            left color="red"
-                          >
-                            mdi-alert-circle-outline
-                          </v-icon>
-                          <v-icon
-                            dark v-else
-                            left color="blue"
-                          >
-                            mdi-information
-                          </v-icon>
-                            {{row.message}}
-                          <br>
-                        </span>
-                      </div>
-                      
-                    </v-sheet>
-                    <v-btn
-                        color="red" dark v-if="scroll"
-                        icon-and-text @click="scroll = false"
-                      >
-                        Pause Autoscroll
-                        <v-icon>
-                          mid-cancel
-                        </v-icon>
-                      </v-btn>
-                      <v-btn v-else
-                        color="blue" dark
-                        icon-and-text @click="scroll = true"
-                      >
-                        Autoscroll
-                        <v-icon>
-                          mid-play
-                        </v-icon>
-                      </v-btn>
-                  </v-bottom-sheet>
-                    <!-- <code v-for="row in logs" :key="row">{{row.message}}<br></code> -->
-                    
+                  
                   
               </v-col>
             </v-row>
@@ -245,7 +185,6 @@ export default {
       Map,
     },
     computed: {
-     
       icon () {
         if (this.selectedAllRanks) return 'mdi-close-box'
         if (this.selectedSomeRanks) return 'mdi-minus-box'
@@ -258,24 +197,18 @@ export default {
         return this.defaults.length > 0 && !this.selectedAllRanks
       },
     },
-    updated: function(){
-      const $this = this;
-      this.$nextTick(()=>{
-        if ($this.$el.querySelector && $this.$el.querySelector('.logDiv')){
-          this.scroll ? this.$el.querySelector('.logDiv').scrollTop = this.$el.querySelector('.logDiv').scrollHeight : ''
-        }
-      })
-    },
+    
     data() {
         return {
             socket: {},
-            scroll:true,
+            selectedsamples: [],
             config: {},
             current: {},
             seen: [],
             samplekeys: [],
             database_file: null,
             db_option: "file",
+            selectedData: {},
             db_options: [
               "file",
               "path"
@@ -284,7 +217,6 @@ export default {
             paused: false,
             dialog: false,
             drawer: false,
-            sheet:false,
             connectedStatus: 'Not connected!',
             message: 'No message yet!',
             inputdata: null,
@@ -339,34 +271,40 @@ export default {
         }
     },
     watch: {
+      selectedsamples(val){
+        let data = {}
+        val.map((sample)=>{
+          return data[sample] = this.sampledata[sample]
+        })
+        this.selectedData = data
+      },
       maxDepth(){
-        let data = this.filterData(this.fullData[this.selectedsample])
-        data = this.parseData(data)
-        this.sampledata[this.selectedsample] = data
+        this.filter()
       },
       paused(newValue){
         if (!newValue){
           let keys = Object.keys(this.stagedData)
-          if (!this.selectedsample && keys.length > 0){
-            this.selectedsample = keys[0]
+          if (this.selectedsamples.length == 0 && keys.length > 0){
+            this.selectedsamples = keys[0]
           }
-          this.sampledata[this.selectedsample] = this.stagedData[this.selectedsample]
+          let data = {}
+          this.selectedsamples.map((sample)=>{
+            data[sample] = this.stagedData[sample]
+          })
+          this.selectedData=data
         }
       },
       minDepth(){
-        let data = this.filterData(this.fullData[this.selectedsample])
-        data = this.parseData(data)
-        this.sampledata[this.selectedsample] = data
+        this.filter()
       },
       defaults(){
-        let data = this.filterData(this.fullData[this.selectedsample])
-        data = this.parseData(data)
-        this.inputdata=data        
+        this.minDepth = 0
+        this.maxDepth = 20
+        this.minPercent=0
+        this.filter()     
       },
       minPercent(){
-        let data = this.filterData(this.fullData[this.selectedsample])
-        data = this.parseData(data)
-        this.sampledata[this.selectedsample] = data
+        this.filter()
       },
       
     },
@@ -408,22 +346,41 @@ export default {
             let parsedMessage = JSON.parse(event.data);
             // If those data attributes exist, we can then console log or show data to the user on their web page.
             if (parsedMessage.type == 'data'){
+              // const $this = this;
               // this.jsondata = JSON.parse(parsedMessage.data)
               ( async ()=>{
-                if (!this.selectedsample){
-                  this.selectedsample = parsedMessage.samplename
+                // if (!this.selectedsamples || this.selectedsamples.length <= 1 ){
+                //   this.selectedsamples.push(parsedMessage.samplename)
+                // }
+                let indexSamples = this.selectedsamples.indexOf(parsedMessage.samplename)
+                if(indexSamples == -1){
+                  this.selectedsamples.push(parsedMessage.samplename)
                 }
                 let data  = await this.importData(parsedMessage.data)
-                if (!this.selectedsample){
-                  this.selectedsample = parsedMessage.samplename
-                }
+                // let fulldata = _.cloneDeep(data)
+                // data = data.splice(0,5)
+                // data[ data.length - 1 ].num_fragments_clade = 15
+                this.stagedData[parsedMessage.samplename] = data
                 if (!this.paused){
-                  this.stagedData[parsedMessage.samplename] = data
+                  
                   this.sampledata[parsedMessage.samplename] = data
-                } else {
-                  this.stagedData[parsedMessage.samplename] = data
-                }
-                this.samplekeys = Object.keys(this.sampledata)
+                  
+                  let index = this.selectedsamples.indexOf(parsedMessage.samplename)
+                  if ( index > -1){
+                    this.selectedData[parsedMessage.samplename] = data
+                  } else  if (index == -1 && this.selectedData[parsedMessage.samplename]){
+                    delete this.selectedData[parsedMessage.samplename]
+                  }
+                  // setTimeout(()=>{
+                  //   $this.selectedData[parsedMessage.samplename] = fulldata.splice(0,9)
+                    // .splice(0,47)
+                    // $this.sampledata[parsedMessage.samplename] = fulldata.splice(0,9)
+                    // .splice(0,47)
+                  // },2000)
+                } 
+                  
+                this.samplekeys = Object.keys(this.selectedData)
+                
                 
               })().catch((Err)=>{
                 console.error(Err)
@@ -448,6 +405,27 @@ export default {
 
     },
     methods: {
+        pausedChange(val){
+          this.paused = val
+        },
+        updateConfig(val){
+          this.sendMessage(JSON.stringify({
+                type: "updateConfig", 
+                config: val,
+                  "message" : `Config Updated for data, select restart run  next please `
+              }
+          ));
+
+        },
+        filter(){
+          let dataFull = {}
+          this.selectedsamples.map((sample)=>{
+            let data = this.filterData(this.sampledata[sample])
+            data = this.parseData(data)
+            dataFull[sample] = data
+          })
+          this.selectedData = dataFull
+        },
         async sendNewWatch(params){
           let restart = params.overwrite
           let sample = params.sample
@@ -463,7 +441,6 @@ export default {
               }
             ));
           } else {
-            console.log("else")
             this.sendMessage(JSON.stringify({
                   type: "start", 
                     samplesheet: this.samplesheetdata,
@@ -486,7 +463,6 @@ export default {
         },
         addDropFiles(e) {
           this.value = Array.from(e.dataTransfer.files);
-          console.log("e", e, this.value[0])
           this.database_file = this.value[0].path
         },
         
