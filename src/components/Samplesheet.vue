@@ -504,9 +504,9 @@
                 <v-icon
                     small
                     class="mr-2" color=""
-                    @click="editItem(item)"
+                    @click="editItem(item)" 
                 >
-                    mdi-pencil
+                    mdi-pencil 
                 </v-icon>
                 <v-icon
                     small class="mr-2" color="orange"
