@@ -99,6 +99,7 @@
                     v-model="defaults" multiple
                     :items="defaultsList"
                     item-text="value"
+                    @change="filter"
                     item-value="value"
                     persistent-hint 
                     
@@ -230,9 +231,9 @@ export default {
             playbackdata: null,
             
             nodeCountMax: 0,
-            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'O','C','S','F','S1','S2','S3', 'S4'],
-            defaultsList: ['U','K', 'P', 'D','G', 'O','C','S','F','S2','S1','S2','S3', 'S4'],
-            maxDepth: 20,
+            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
+            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S2','S1','S2','S3', 'S4'],
+            maxDepth: 30,
             samplesheetdata: [],
             samplesheet: null,
             minDepth: 0,
@@ -356,8 +357,8 @@ export default {
                 if(indexSamples == -1){
                   this.selectedsamples.push(parsedMessage.samplename)
                 }
-                let data  = await this.importData(parsedMessage.data)
-                // let fulldata = _.cloneDeep(data)
+                let data  = await this.importData(parsedMessage.data, null, parsedMessage.samplename)
+                // this.fullData[parsedMessage.samplename ] = _.cloneDeep(data)
                 // data = data.splice(0,5)
                 // data[ data.length - 1 ].num_fragments_clade = 15
                 this.stagedData[parsedMessage.samplename] = data
@@ -419,9 +420,10 @@ export default {
         },
         filter(){
           let dataFull = {}
+          const $this = this;
           this.selectedsamples.map((sample)=>{
-            let data = this.filterData(this.sampledata[sample])
-            data = this.parseData(data)
+            let data = $this.filterData(_.cloneDeep($this.fullData[sample]))
+            data = $this.parseData(data)
             dataFull[sample] = data
           })
           this.selectedData = dataFull
@@ -558,7 +560,7 @@ export default {
           })
           return data
         },
-        async importData(information, type){
+        async importData(information, type, sample){
           let text;
           
           if (type == 'file'){
@@ -579,10 +581,10 @@ export default {
           }
           let data = d3.tsvParseRows(text, (d)=>{
             d[0] = d[0].trim()
+            d[5] = d[5].replace(/\t/, '')
             let found = d[5].search(/\S/);
-            found = found / 2
-            d[5] = d[5].trim()
             
+            d[5] = d[5].trim()
             let size = 0
             let data = {
               value: parseFloat(d[0]),
@@ -607,7 +609,7 @@ export default {
        
           
           data.unshift(base)
-          this.fullData[this.selectedsample] = data
+          this.fullData[sample] = data
           data = this.filterData(data)
           data = this.parseData(data)
 

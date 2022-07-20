@@ -53,24 +53,15 @@
     name: 'RunStats',
     props: ["inputdata", "dimensions", 'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
-      // full(){
-      //   if (this.madeFirst){
-      //     console.log("full", this.samplename)
-      //     this.updateColors()
-      //     if (this.inputdata){
-      //       this.updateLegendTax()
-      //     }
-      //   }
-      // },
-      // taxa(){
-      //     console.log("taxa", this.samplename)
-      //   if (this.madeFirst){
-      //     this.updateColors()
-      //     if (this.inputdata){
-      //       this.updateLegendTax()
-      //     }
-      //   }
-      // },
+      full(){
+        if (this.madeFirst){
+          this.updateColors()
+          if (this.inputdata){
+            this.updateLegendTax()
+          }
+        }
+      },
+      
       selectedTaxid(val){
         let ele = d3.select("#sunburstDiv-"+this.samplename).select(this.fetchArc("#sliceMain", val))
         let data = ele.data()[0]
@@ -260,6 +251,7 @@
             $this.jumpTo(f.taxid, f.rank_code)
           })
           .attr("id", (d)=>{
+
             return "legendElement-"+$this.samplename+d.taxid
           });
 
@@ -630,15 +622,12 @@
         let partDepths = {}
         this.taxValues = this.getTaxValues()
         root.sum(function (f) {
-        //   d.taxid = parseInt(d.taxid)
           let d = f.data //Fix this!
           d.taxid = parseInt(d.taxid)
-          
           if ($this.taxes.findIndex(x => x.rank_code === d.rank_code) == -1) {
             $this.taxes.push({name: d.rank_code})
           }
           if (f.children && f.children.length > 0){
-            // d.size =  d.num_fragments_assigned
             d.size = null
             let total= 0
             f.children.forEach((y)=>{
