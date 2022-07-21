@@ -612,8 +612,12 @@ export default {
           this.fullData[sample] = data
           data = this.filterData(data)
           data = this.parseData(data)
-
-          this.defaultsList = Object.keys(uniques)
+          Object.keys(uniques).forEach((f)=>{
+            if (this.defaultsList.indexOf(f)==-1){
+              this.defaultsList.push(f)
+            }
+          })
+          // this.defaultsList = Object.keys(uniques)
           return data 
           
           
