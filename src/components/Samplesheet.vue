@@ -261,7 +261,7 @@
                             >
                                 <v-select
                                     v-model="editedItem.format"
-                                    :items="['file', 'directory']"
+                                    :items="['file', 'directory', 'barcoded']"
                                     label="Type/Format"
                                 ></v-select>
                             </v-col>
@@ -438,7 +438,7 @@
                         </div>
                         <v-select
                             v-model="item.format"
-                            :items="['file', 'directory']"
+                            :items="['file', 'directory', 'barcoded']"
                             label="Edit"
                             single-line
                             counter
@@ -534,10 +534,16 @@
                     color="primary" small size="30"
                 ></v-progress-circular>
                 <v-icon
-                    small  v-else
+                    small  v-else-if="item.format !== 'barcoded'"
                     :color="seen && seen.indexOf(item.sample) > -1 ? 'green': 'orange'"
                 >
                     {{seen && seen.indexOf(item.sample) > -1 ? 'mdi-check-circle' : 'mdi-times-circle' }}
+                </v-icon>
+                <v-icon
+                    small  v-else
+                    :color="'grey'"
+                >
+                    mdi-magnify
                 </v-icon>
                 
                     

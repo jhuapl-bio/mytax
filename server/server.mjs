@@ -76,6 +76,7 @@ export  class Orchestrator {
                 logger.error(err)
             }
         }
+        
         function check_file(filepath){
             seenfiles.push(filepath)
             console.log("seen", filepath)
@@ -92,7 +93,7 @@ export  class Orchestrator {
             })
         }
 
-        let files = await this.globFiles(`${sample.path_1}/**/${this.match}`)
+        let files = await this.globFiles(`${sample.path_1}/**/${this.match}`, { nodir: true })
         if (files){
             files.forEach((filepath)=>{
                 check_file(filepath)
@@ -130,7 +131,8 @@ export  class Orchestrator {
         }
     }
     async setSamples(samples){
-        logger.info(`${process.env} ${path.cwd}-----000`)
+        logger.info(`${process.env} ${path.cwd}-----${samples}`)
+        console.log(samples)
         const $this = this
         if (this.samples){
             this.samples.forEach((sample)=>{
@@ -172,8 +174,9 @@ export  class Orchestrator {
                 }
             }
         }
+        console.log(sample,"<<<")
         if (sample.path_1 && sample.format == 'file'){
-            
+            // overwrite = true //CHANGE THIS LATER!
             let runClassify = await this.check_and_classify(sample.path_1, sample.path_2,  sample.sample, overwrite) 
             if (runClassify){
                 logger.info(`report from ${sample.path_1} ${sample.path_2 ? sample.path_2 : '' } doesn't exists, classifying now`)
@@ -184,8 +187,110 @@ export  class Orchestrator {
         } else if (sample.path_1 && sample.format == 'directory'){
             sample.files = []
             this.watchDirectory(sample, overwrite)
+        }  else if (sample.path_1 && sample.format == 'barcoded'){
+            sample.files = []
+            this.barcodeWatch(sample.path_1, sample, ( sample.kits ? sample.kits.split(" ") : ['barcode_arrs_nb12.cfg'] ) )
         } 
         return 
+    }
+    async barcodeWatch(dirpath, sample, kits){
+        console.log(dirpath, "<<<<<<<<<", kits)
+        const $this = this;
+        if (this.watcher[sample.sample] ){
+            this.watcher[sample.sample].close().then(() => console.log('closed')).catch((err)=>{
+                logger.error("no watcher available to cancel properly")
+            });
+        }
+        var watcher = chokidar.watch(`${dirpath}/*}`, {ignored: /^\./, persistent: true});
+        this.watcher[sample.sample] = watcher
+        let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
+        let fullreport = path.join(outpath, sample.sample, 'full.report')
+        let seenfiles = []
+        watcher  
+            .on('add', function(filepath) {
+                // let sam = $this.defineSample(filepath)
+                logger.info(`File ${filepath} has been added`);
+                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                // $this.checkAndAddFileToQueue(filepath,sam)
+            })
+
+            .on('unlink', function(filepath) {
+                logger.info(`File ${filepath} has been removed`);
+            })
+            .on('error', function(error) { 
+                logger.error(`Error happened ${error}`);
+            }) 
+        let exists_returned = await fs.existsSync(dirpath)
+        if (exists_returned ){
+            try{
+                console.log("barcode now")
+                $this.queue.enqueue(async () =>{ 
+                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
+                    await barcode(dirpath, kits)
+                } ); 
+                
+            } catch(err){
+                logger.error(err)
+            }
+        }
+        async function barcode(dirpath, kits){
+            return new Promise((resolve, reject)=>{
+                let output_path = path.join(dirpath, 'demultiplexed')
+                console.log(output_path, )
+                // var  ls = spawn('bash', ['-c', ` guppy_barcoder \
+                // --require_barcodes_both_ends --compress_fastq --disable_pings  \
+                // -i "${dirpath}" \
+                // -s "${output_path}" \
+                // --arrangements_files " ${kits}" ` ]);
+                var  ls = spawn('bash', ['-c', ` ls -lht "${output_path}"  ` ]);
+
+                ls.stdout.on('data', (data) => {
+                    logger.info(`stdout: ${data}`);
+                });
+            
+                ls.stderr.on('data', (data) => {
+                    logger.error(`stderr: ${data}`);
+                });
+                ls.on('error', function(error) {
+                    logger.error(`Error happened ${error}`);
+                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
+                    reject(error)
+                })  
+                ls.on('exit', (code) => {
+                    logger.info(`child process exited with code ${code}`);
+                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
+                    $this.addSamples(output_path)
+                    resolve(code)
+                }); 
+            })
+            
+        }
+
+       
+    }
+    async addSamples(output_path){
+        try{
+            const $this = this
+            logger.info(`${output_path}/ output path of files from barcoding`)
+            let directories = await this.globFiles(`${output_path}/*`, { furtherfilter: ['barcode[0-9]+'], nodir: false })
+            if (directories){
+                directories.forEach((directory)=>{
+                    let entry = {
+                        sample: path.basename(directory),
+                        platform: 'oxford',
+                        database: '/Users/merribb1/Desktop/mytax/flukraken2',
+                        format: 'directory',
+                        path_1: directory,
+                        path_2: null,
+                        compressed: true,
+                        kits:null
+                    }
+                    $this.setupSample(entry, false)
+                })
+            }
+        } catch (err){
+            logger.error(`${err} error in reading barcode outputs`)
+        }
     }
     async check_and_classify(path_1, path_2,  sample, overwrite){
         try{
@@ -358,11 +463,11 @@ export  class Orchestrator {
         if (!options){
             options = { ignore: [] }
         }
-        
-        let globoptions = {nodir:true, ignore:  options.ignore  }
+        let globoptions = options
         if (options.cwd){
             globoptions.cwd = options.cwd
         }
+        console.log(globoptions)
         return new Promise((resolve, reject)=>{
             glob.glob(`${pattern}`,globoptions, (err, files)=>{
                 if (err){
@@ -370,7 +475,7 @@ export  class Orchestrator {
                     reject(err)
                 } else {
                     if (options.furtherfilter){
-                        let re = new RegExp($this.match, "g")
+                        let re = new RegExp(options.furtherfilter, "g")
                         let files_true  = files.filter((file)=>{
                             let returnable = file.match(re)
                             return returnable
@@ -438,7 +543,7 @@ export  class Orchestrator {
         const $this = this;
         let outfile = `${this.watchdir}/classifications/classifications.full.report`
         try{
-            let files = await this.globFiles(`${this.watchdir}/classifications/reports/*.report`)
+            let files = await this.globFiles(`${this.watchdir}/classifications/reports/*.report`, { nodir: true })
             files = this.parseNames(files, 
                 {
                     remove: [ '.report' ],
@@ -449,7 +554,7 @@ export  class Orchestrator {
             let reports = []
             let promises = []
             files.forEach((report)=>{
-                promises.push($this.globFiles(`${this.watchdir}/classifications/reports/${report.sample}/*.report`))
+                promises.push($this.globFiles(`${this.watchdir}/classifications/reports/${report.sample}/*.report`, { nodir: true }))
                 // console.log(fastqs)
                 
             })
@@ -639,7 +744,8 @@ export  class Orchestrator {
         let pattern = `${this.watchdir}/**/*`
         let files = await this.globFiles(pattern, {
             ignore: [`${this.watchdir}/classifications/**/*`],
-            furtherfilter: $this.match
+            furtherfilter: $this.match,
+            nodir: true
         })
         
         files = this.parseNames(files, 
