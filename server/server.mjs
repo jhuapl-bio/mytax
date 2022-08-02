@@ -130,6 +130,7 @@ export  class Orchestrator {
         }
     }
     async setSamples(samples){
+        logger.info(`${process.env} ${path.cwd}-----000`)
         const $this = this
         if (this.samples){
             this.samples.forEach((sample)=>{
