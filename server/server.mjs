@@ -1,5 +1,5 @@
 import chokidar from 'chokidar'
-import glob from "glob"
+import glob from "glob-all"
 import {logger} from './logger.js'
 import Queue from "queue-promise";
 import path, { resolve } from 'path'
@@ -18,7 +18,7 @@ export  class Orchestrator {
         this.samples = []
         this.watchdir = null
         this.reportfile = null
-        this.match = "*.fastq"
+        this.match = "*(.fastq.gz|.fq.gz)"
         this.taxonomy = null;
         this.database = null
         this.type = "single"
@@ -79,7 +79,6 @@ export  class Orchestrator {
         
         function check_file(filepath){
             seenfiles.push(filepath)
-            console.log("seen", filepath)
             $this.check_and_classify(filepath, null,  sample.sample, overwrite).then((runClassify)=>{
                 
                 if (runClassify){
@@ -93,12 +92,14 @@ export  class Orchestrator {
             })
         }
 
-        let files = await this.globFiles(`${sample.path_1}/**/${this.match}`, { nodir: true })
+        let files = await this.globFiles([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], { nodir: true })
+        // let files = await this.globFiles(`${sample.path_1}/**/**/${this.match}`, { nodir: true })
         if (files){
             files.forEach((filepath)=>{
                 check_file(filepath)
             })
         }
+        console.log(files, `${sample.path_1}/**/${this.match}`,"<<")
         watcher  
             .on('add', function(filepath) {
                 if (seenfiles.indexOf(filepath) == -1){
@@ -145,14 +146,13 @@ export  class Orchestrator {
                 }
             })
         }
-        try{
+        try{ 
             console.log("close queue..............")
-            this.$queue.end()
+            this.queue.close()
         } catch (err){
             console.error(`${err} error in closing queue`)
         } finally{
-            this.samples = samples.samplesheet
-            
+            console.log(samples)
             for (let i = 0; i < samples.samplesheet.length; i++){
                 await $this.setupSample(samples.samplesheet[i], samples.overwrite)
             }
@@ -174,7 +174,6 @@ export  class Orchestrator {
                 }
             }
         }
-        console.log(sample,"<<<")
         if (sample.path_1 && sample.format == 'file'){
             // overwrite = true //CHANGE THIS LATER!
             let runClassify = await this.check_and_classify(sample.path_1, sample.path_2,  sample.sample, overwrite) 
@@ -187,14 +186,13 @@ export  class Orchestrator {
         } else if (sample.path_1 && sample.format == 'directory'){
             sample.files = []
             this.watchDirectory(sample, overwrite)
-        }  else if (sample.path_1 && sample.format == 'barcoded'){
+        }  else if (sample.path_1 && sample.format == 'run'){
             sample.files = []
             this.barcodeWatch(sample.path_1, sample, ( sample.kits ? sample.kits.split(" ") : ['barcode_arrs_nb12.cfg'] ) )
         } 
         return 
     }
-    async barcodeWatch(dirpath, sample, kits){
-        console.log(dirpath, "<<<<<<<<<", kits)
+    async barcodeWatch(dirpath, sample){
         const $this = this;
         if (this.watcher[sample.sample] ){
             this.watcher[sample.sample].close().then(() => console.log('closed')).catch((err)=>{
@@ -210,7 +208,7 @@ export  class Orchestrator {
             .on('add', function(filepath) {
                 // let sam = $this.defineSample(filepath)
                 logger.info(`File ${filepath} has been added`);
-                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
                 // $this.checkAndAddFileToQueue(filepath,sam)
             })
 
@@ -223,56 +221,60 @@ export  class Orchestrator {
         let exists_returned = await fs.existsSync(dirpath)
         if (exists_returned ){
             try{
-                console.log("barcode now")
                 $this.queue.enqueue(async () =>{ 
-                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
-                    await barcode(dirpath, kits)
+                    let output_path = path.join(dirpath, 'demultiplexed')
+                    $this.addSamples(output_path, sample.pattern, sample.run)
                 } ); 
                 
             } catch(err){
                 logger.error(err)
             }
         }
-        async function barcode(dirpath, kits){
-            return new Promise((resolve, reject)=>{
-                let output_path = path.join(dirpath, 'demultiplexed')
-                console.log(output_path, )
-                // var  ls = spawn('bash', ['-c', ` guppy_barcoder \
-                // --require_barcodes_both_ends --compress_fastq --disable_pings  \
-                // -i "${dirpath}" \
-                // -s "${output_path}" \
-                // --arrangements_files " ${kits}" ` ]);
-                var  ls = spawn('bash', ['-c', ` ls -lht "${output_path}"  ` ]);
-
-                ls.stdout.on('data', (data) => {
-                    logger.info(`stdout: ${data}`);
-                });
-            
-                ls.stderr.on('data', (data) => {
-                    logger.error(`stderr: ${data}`);
-                });
-                ls.on('error', function(error) {
-                    logger.error(`Error happened ${error}`);
-                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
-                    reject(error)
-                })  
-                ls.on('exit', (code) => {
-                    logger.info(`child process exited with code ${code}`);
-                    $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
-                    $this.addSamples(output_path)
-                    resolve(code)
-                }); 
-            })
-            
-        }
+        
 
        
     }
-    async addSamples(output_path){
+    async  barcode(dirpath, sample, run, kits){
+        const $this = this
+        return new Promise((resolve, reject)=>{
+ 
+            $this.ws.send(JSON.stringify({ type: "current", current : sample, running: true }))
+
+
+            let output_path = path.join(dirpath, 'demultiplexed')
+            var  ls = spawn('bash', ['-c', ` guppy_barcoder \
+            --require_barcodes_both_ends --compress_fastq --disable_pings  \
+            -i "${dirpath}" \
+            -s "${output_path}" \
+            --barcode_kits " ${kits}" ` ]);
+            // var  ls = spawn('bash', ['-c', ` ls -lht "${output_path}"  ` ]);
+
+            ls.stdout.on('data', (data) => { 
+                logger.info(`stdout: ${data}`);
+            });
+        
+            ls.stderr.on('data', (data) => {
+                logger.error(`stderr: ${data}`);
+            });
+            ls.on('error', function(error) {
+                logger.error(`Error happened ${error}`);
+                $this.ws.send(JSON.stringify({ type: "current", current : sample, running: false }))
+                reject(error)
+            })  
+            ls.on('exit', (code) => {
+                logger.info(`child process exited with code ${code} ${sample}`);
+                $this.ws.send(JSON.stringify({ type: "current", current : sample, running: false }))
+                $this.addSamples(output_path, sample.pattern, run)
+                resolve(code)
+            }); 
+        })
+        
+    }
+    async addSamples(output_path, pattern, run){
         try{
             const $this = this
-            logger.info(`${output_path}/ output path of files from barcoding`)
-            let directories = await this.globFiles(`${output_path}/*`, { furtherfilter: ['barcode[0-9]+'], nodir: false })
+            logger.info(`${output_path}/ output path of files from barcoding ${pattern}`)
+            let directories = await this.globFiles(`${output_path}/*`, { furtherfilter: [ ( pattern ? pattern : 'barcode[0-9]+' ) ], nodir: false })
             if (directories){
                 directories.forEach((directory)=>{
                     let entry = {
@@ -282,10 +284,12 @@ export  class Orchestrator {
                         format: 'directory',
                         path_1: directory,
                         path_2: null,
+                        run: run ? run : 'N/A',
                         compressed: true,
                         kits:null
                     }
                     $this.setupSample(entry, false)
+                    $this.ws.send(JSON.stringify({ type: "add", "data" :  entry })) 
                 })
             }
         } catch (err){
@@ -467,13 +471,13 @@ export  class Orchestrator {
         if (options.cwd){
             globoptions.cwd = options.cwd
         }
-        console.log(globoptions)
         return new Promise((resolve, reject)=>{
-            glob.glob(`${pattern}`,globoptions, (err, files)=>{
+            glob(pattern ,globoptions, (err, files)=>{
                 if (err){
                     logger.error(err)
                     reject(err)
                 } else {
+                    console.log(pattern,"<<<")
                     if (options.furtherfilter){
                         let re = new RegExp(options.furtherfilter, "g")
                         let files_true  = files.filter((file)=>{
@@ -482,6 +486,7 @@ export  class Orchestrator {
                         })
                         files = files_true
                     }
+                    console.log("done", )
                     
                     resolve(files)
                 }
@@ -689,10 +694,19 @@ export  class Orchestrator {
         return returnable
     }
     getReportName(path_1, path_2, outpath){
-        if (path_1 && !path_2 ){
+        if (path_1 && !path_2 ){ 
             return path.join(outpath, `${path.parse(path_1).name}.report`)
         } else {
             return path.join(outpath, `${path.parse(path_1).name}.report`)
+        }
+    }
+    flush(){
+        logger.info("flush queue, cancel job(s)")
+        try{
+            this.queue.stop()
+            // this.queue.clear()
+        } catch (err){
+            logger.error(`Error in stopping job(s) ${err}`)
         }
     }
     checkAndAddFileToQueue(sample, filepath, report){
@@ -839,7 +853,6 @@ export  class Orchestrator {
             if (additionals !== ''){
                 command = `${command} -a "${additionals}"`
             }
-            console.log(command,"!!!!!")
             let classify = spawn('bash', ['-c', command]);
             classify.stdout.on('data', (data) => {
                 logger.info(`${data} `);

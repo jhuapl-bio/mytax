@@ -47,8 +47,7 @@ app.ws('/ws', async function(ws, req) {
     logger.info("App Initiated") 
     let orchestrator = new Orchestrator(ws);
     orchestrator.enableQueue()
-    orchestrator.ws = ws 
-    console.log(orchestrator.config)
+    orchestrator.ws = ws  
     orchestrator.ws.on('message', async function(command) {
         // Let's put our message in JSON.stringify, and send it to the user who just sent the message
         // logger.info(`${command}`)
@@ -65,11 +64,29 @@ app.ws('/ws', async function(ws, req) {
                 console.log("done", f,"done")
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));
             })
-        } else if (command.type == 'start'){
+        } else if (command.type == 'start'){ 
             try{
                 let i=0
+                console.log(command,"start")
                 logger.info(`Starting run frmo samplesheet `) 
                 orchestrator.setSamples(command)
+            } catch(err){
+                logger.error(err)
+            } 
+        } else if (command.type == 'flush'){
+            console.log(command)
+            try{
+                orchestrator.flush()
+                ws.send(JSON.stringify({ type: "flushed" }));
+            } catch(err){
+                logger.error(err)
+            } 
+        } else if (command.type == 'barcode'){
+            try{
+                let i=0
+                console.log("yes")
+                logger.info(`Barcoding ${command.dirpath} ${command.kits} `) 
+                orchestrator.barcode(command.dirpath, command.sample, command.run, command.kits)
             } catch(err){
                 logger.error(err)
             } 
