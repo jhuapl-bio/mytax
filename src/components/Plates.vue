@@ -5,20 +5,18 @@
     </v-toolbar-title>
     <v-row >
         <v-col sm="12">
+          <v-text-field
+            hint="Top N per sample"
+            v-model="top_n"
+            persistent-hint 
+            single-line
+            type="number"
+          ></v-text-field>
           <div :id="`platesDiv`" 
             style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; height: 500px; overflow-y:auto;overflow-x:auto"
             >
           </div>
         </v-col>
-        <!-- <v-col
-          sm="3"
-        >
-          <div :id="`platesLegend`" 
-            style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; height: 500px; overflow-y:auto;overflow-x:auto"
-          >
-          </div>
-
-        </v-col> -->
     </v-row>
   </v-container>
 </template>
@@ -34,6 +32,9 @@
         if (val){
           this.makePlot()
         }
+      },
+      top_n(){
+        this.makePlot()
       },
       samplenames(val){
         if (val){
@@ -52,6 +53,7 @@
     data: () => ({
       width: 500,
       height: 500,
+      top_n: 3,
 
     }),
     methods: {
@@ -66,15 +68,29 @@
             let data = sample.filter((f)=>{
               return f.rank_code == this.selectedAttribute
             })
-            let max = d3.maxIndex(data, (f)=>{
-              return f.value
-            })
-            if (max > -1){
-              tops.push({
-                name: samplename, 
-                top: data[max],
-                abu: data[max].value
-              })
+            
+            let sorted = data.sort((a, b) => a.value - b.value)
+            let top_n = this.top_n
+            if (sorted.length  > 0){
+              for (let i = 0; i < top_n; i++){
+                if (i < sorted.length){
+                  tops.push({
+                    name: samplename, 
+                    top: sorted[i],
+                    abu: sorted[i].value
+                  })
+                } 
+              }
+            
+            // let max = d3.maxIndex(data, (f)=>{
+            //   return f.value
+            // })
+            // if (max > -1){
+            //   tops.push({
+            //     name: samplename, 
+            //     top: data[max],
+            //     abu: data[max].value
+            //   })
             } else {
               tops.push({
                 name: samplename,
@@ -177,14 +193,22 @@
         // Add scales to axis
         var x_axis = d3.axisTop()
                       .scale(taxidScale);
-
+    
         //Append group and insert axis
         svg
           .append("g")
           .attr("transform", 
                     "translate(" + this.boxWidth/2 + "," + margin.top / 4 + ")")
           .attr("class", "xAxis")
-          .call(x_axis);
+          .call(x_axis)
+          .selectAll("text")
+            .attr("x", 0)
+            .attr("dy", ".35em")
+            .style("width", 10)
+            .style("overflow", "auto")
+            .style("font-size", "10")
+            .attr("transform", "rotate(315)")
+            .style("text-anchor", "start");
         
         // Add scales to axis
         var y_axis = d3.axisLeft()

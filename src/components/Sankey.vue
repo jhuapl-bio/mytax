@@ -45,12 +45,12 @@
           item-text="label"
           item-value="value"
           return-object
-          label="Align"
+          label="Align Type"
         >
 
         </v-select> 
         <v-text-field
-          hint="Expand Width"
+          hint="Expand Sankey Width"
           v-model="width"
           persistent-hint 
           single-line
@@ -59,7 +59,7 @@
         <v-range-slider
           hint="Label Hide Depth"
           v-model="rangeLabelDepth"
-          :min="maxRange[0]" vertical
+          :min="maxRange[0]-1" vertical
           :max="maxRange[1]"
           @change="hideLabels()"
         >
@@ -68,11 +68,12 @@
                 :value="rangeLabelDepth[0]"
                 class="mt-0 pt-0"
                 hide-details
-                single-line
+                single-line label="Node Label Shown"
                 type="number"
                 style="width: 60px"
                 @change="$set(rangeLabelDepth, 0, $event)"
               ></v-text-field>
+              
             </template>
             <template v-slot:append>
               <v-text-field
@@ -88,6 +89,7 @@
         
         </v-range-slider>
         <v-spacer class="mt-4"></v-spacer>
+        <v-subheader>Node Depth Labels to Show</v-subheader>
         <v-btn class="info" @click="reset()">Reset
         </v-btn>
         <!-- <v-btn icon>
@@ -103,6 +105,7 @@
       <v-col  sm="10">
           <div style="overflow-x:auto " :id="`sankeyBox-${samplename}`">
           </div>
+         
       </v-col>
     </v-row>
       
@@ -154,8 +157,8 @@
         edgeColor: "default",
         graph:null,
         sankey: null,
-        rangeLabelDepth: [0,7],
-        maxRange: [0,7],
+        rangeLabelDepth: [0,10],
+        maxRange: [0,10],
         align_options: [
           {
             label: "Left align",
@@ -271,9 +274,17 @@
             format = function(d) { return formatNumber(d); }
         let sankeyBox = d3.select("#sankeyBox-"+this.samplename)
         // append the svg object to the body of the page
+
+        let zoom = d3.zoom()
+				.scaleExtent([0, 5])
+				// .center([width / 2, height / 2])
+				.on("zoom", zoomed);
+
+
         var svg = sankeyBox.append('svg')
             .attr("width", width + margin.left + margin.right)
             .attr("height", height + margin.top + margin.bottom)
+            .call(zoom)
           .append("g")
             .attr("transform", 
                   "translate(" + margin.left + "," + margin.top + ")");
@@ -281,13 +292,15 @@
         // Set the sankey diagram properties
         var sankey = d3Sankey()
             .nodeWidth(10)
-            .nodePadding(4)
+            .nodePadding(40)
             .size([width, height])
             .nodeAlign(this.aligned.target)
             ;
         this.sankey = sankey
         let sankeydata = {"nodes" : [], "links" : []};
-        
+        data = data.filter((f)=>{
+          return f.parenttaxid >=0 && f.parenttaxid
+        })
         data.forEach(function (d) {
           sankeydata.nodes.push({ "name": `${d.source}-${d.parenttaxid}` });
           sankeydata.nodes.push({ "name": `${d.target}-${d.taxid}`});
@@ -296,7 +309,7 @@
                             "value": +d.value });
         });
         this.maxRange = d3.extent(data, (d)=>{
-          return d.depth
+          return 1 + d.depth / 2
         })
       // return only the distinct / unique nodes
       sankeydata.nodes = Array.from(
@@ -395,10 +408,12 @@
             .on('drag', dragMove)
             ); 
       
-      
-      
-      
-      
+    
+    function zoomed(e){
+      console.log(e)
+      return svg.attr('transform', e.transform);
+    }
+
 
 
       function dragStart (event, d) {

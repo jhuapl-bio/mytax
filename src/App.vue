@@ -3,162 +3,170 @@
       <v-app-bar
         app
         color="light"
-        class="elevation-26 mx-0 px-0" 
-
-        dark
+        dark absolute
         dense
-        prominent
       >
-        <v-app-bar-nav-icon @click="drawer = true"></v-app-bar-nav-icon>
+        
         <v-toolbar-title>Real Time Nanopore Report Analysis</v-toolbar-title>
+        <v-spacer>
+        </v-spacer>
+        <span style="margin-right: 10px" v-if="!samplesheetdata || samplesheetdata.length <= 0 ">No Data Loaded</span>
+        
+        
+        <v-btn btn-and-icon color="blue"   @mouseover="drawer=true" @click="drawer = true" >
+          Data Sheet
+          <span  v-if="!samplesheetdata || samplesheetdata.length <= 0 " class="pulse"></span>
+          <v-icon v-else class="ml-2">mdi-export</v-icon>
+        </v-btn>
       </v-app-bar> 
-        <v-spacer></v-spacer>
+      <v-main >
         <v-navigation-drawer
           v-model="drawer"
-          absolute
-          temporary
+          absolute width="88%"
+          temporary right
         >
-          <v-list
-            nav
-            dense
-          >
-            <v-list-item-group
-              v-model="tab"
-              active-class="deep-purple--text text--accent-4"
+            <Samplesheet
+              :samplesheet="samplesheetdata"
+              :seen="samplekeys"
+              :current="current"
+              @sendNewWatch="sendNewWatch"
+              @sendMessage="sendMessage"
+              @updateData="updateData"
+              @barcode="barcode"
+              @pausedChange="pausedChange"
+              :logs="logs"
+              @updateConfig="updateConfig"
+              :samplesheetName="samplesheet"
             >
-              <v-list-item  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
-                <v-icon class="mr-2">
-                  mdi-{{tabItem.icon}}
-                </v-icon>
-                {{tabItem.name}}
-              </v-list-item>
-            </v-list-item-group>
-          </v-list>
-          <h2>Welcome to Websockets</h2>
-          <p>You are: {{ connectedStatus }}</p>
-          <p>Your message is: {{ message }}</p>
+            </Samplesheet>
         </v-navigation-drawer>
-      <v-main class=" ">
-        <v-container class="mx-2  px-2 " style="margin-right: 0px">
-            <v-row>
-              <v-col sm="12" class="py-0 my-1">
-                <Samplesheet
-                  :samplesheet="samplesheetdata"
-                  :seen="samplekeys"
-                  :current="current"
-                  @sendNewWatch="sendNewWatch"
-                  @updateData="updateData"
-                  @pausedChange="pausedChange"
-                  :logs="logs"
-                  @updateConfig="updateConfig"
-                  :samplesheetName="samplesheet"
-                >
-                </Samplesheet>
-              </v-col>
-              <v-col   sm="2">
-                <v-sheet class="fill-width scroll " style="max-height:80vh; overflow: auto;">
-                  
-                  <v-spacer class="py-4"></v-spacer>
-                  <v-autocomplete
-                    v-model="selectedsamples"
-                    :items="samplekeys"
-                    outlined
-                    dense
-                    chips
-                    small-chips
-                    label="Samples"
-                    multiple
-                  ></v-autocomplete>
-                 
-                  <v-spacer class="py-0"></v-spacer>
-                  <v-text-field
-                    hint="Max Depth of Tax Tree"
-                    v-model="maxDepth"
-                    persistent-hint 
-                    single-line
-                    type="number"
-                  ></v-text-field>
-                  <v-text-field
-                    hint="Min Depth of Tax Tree"
-                    v-model="minDepth"
-                    persistent-hint 
-                    single-line
-                    type="number"
-                  ></v-text-field>
-                  <v-spacer class="py-4"></v-spacer>
-                  <v-text-field
-                    hint="Min Percent in Sample"
-                    v-model="minPercent"
-                    persistent-hint 
-                    single-line
-                    type="number"
-                  ></v-text-field>
-                  <v-spacer class="py-4"></v-spacer>
-                  <v-select
-                    label="Tax Rank Codes"
-                    v-model="defaults" multiple
-                    :items="defaultsList"
-                    item-text="value"
-                    @change="filter"
-                    item-value="value"
-                    persistent-hint 
-                    
-                    >
-                    <template v-slot:prepend-item>
-                      <v-list-item
-                        ripple
-                        @mousedown.prevent
-                        @click="toggle"
-                      >
-                        <v-list-item-action>
-                          <v-icon :color="defaults.length > 0 ? 'indigo darken-4' : ''">
-                            {{ icon }}
-                          </v-icon>
-                        </v-list-item-action>
-                        <v-list-item-content>
-                          <v-list-item-title>
-                            Select All
-                          </v-list-item-title>
-                        </v-list-item-content>
-                      </v-list-item>
-                      <v-divider class="mt-2"></v-divider>
-                    </template>
-                  
-                  </v-select>
-                </v-sheet>
-              </v-col>
-              <v-col
-                  sm="10"
-                  id=""
-                  class="overflow-y-auto  my-0"
+        <v-row class="ml-4">
+          <v-col   sm="2">
+            <v-sheet class="fill-width scroll " style="max-height:80vh; overflow: auto;">
+              <v-spacer class="py-4"></v-spacer>
+              <v-autocomplete
+                v-model="selectedsamples"
+                :items="samplekeys"
+                outlined
+                dense
+                chips
+                small-chips
+                label="Samples"
+                multiple
               >
-                  <v-tabs-items v-model="tab"
+              <template v-slot:selection="{ attr, on, item, selected }">
+                <v-chip
+                  v-bind="attr" small
+                  :input-value="selected"
+                  color="blue-grey"
+                  class="white--text"
+                  v-on="on"
+                >
+                  <v-progress-circular
+                      indeterminate v-if="( current && typeof current == 'object' && current[item])"
+                      color="white" small size="15"
+                  ></v-progress-circular>
+                  <v-icon
+                      small v-else 
+                      :color="samplekeys && samplekeys.indexOf(item) > -1 ? 'white': 'white'"
                   >
+                    {{ samplekeys && samplekeys.indexOf(item) > -1 ? 'mdi-check-circle' : 'mdi-exclamation'}}
+                  </v-icon>
+                  <span class="ml-2" v-text="item"></span>
+                </v-chip>
+              </template>
+                
+              
+              </v-autocomplete>
+              
+              <v-spacer class="py-0"></v-spacer>
+              <v-text-field
+                hint="Max Depth of Tax Tree"
+                v-model="maxDepth"
+                persistent-hint 
+                single-line
+                type="number"
+              ></v-text-field>
+              <v-text-field
+                hint="Min Depth of Tax Tree"
+                v-model="minDepth"
+                persistent-hint 
+                single-line
+                type="number"
+              ></v-text-field>
+              <v-spacer class="py-4"></v-spacer>
+              <v-text-field
+                hint="Min Percent in Sample"
+                v-model="minPercent"
+                persistent-hint 
+                single-line
+                type="number"
+              ></v-text-field>
+              <v-spacer class="py-4"></v-spacer>
+              <v-select
+                label="Tax Rank Codes"
+                v-model="defaults" multiple
+                :items="defaultsList"
+                item-text="value"
+                @change="filter"
+                item-value="value"
+                persistent-hint 
+                
+                >
+                <template v-slot:prepend-item>
+                  <v-list-item
+                    ripple
+                    @mousedown.prevent
+                    @click="toggle"
+                  >
+                    <v-list-item-action>
+                      <v-icon :color="defaults.length > 0 ? 'indigo darken-4' : ''">
+                        {{ icon }}
+                      </v-icon>
+                    </v-list-item-action>
+                    <v-list-item-content>
+                      <v-list-item-title>
+                        Select All
+                      </v-list-item-title>
+                    </v-list-item-content>
+                  </v-list-item>
+                  <v-divider class="mt-2"></v-divider>
+                </template>
+              
+              </v-select>
+            </v-sheet>
+          </v-col>
+          <v-col
+              sm="10"
+              id=""
+              class="overflow-y-auto  my-0"
+          >
+              <v-tabs-items v-model="tab"
+              >
 
-                  <v-tab-item
-                      align-with-title v-for="(tabItem, key) in tabs" 
-                      :key="`${key}-item`"
-                  >   
+              <v-tab-item
+                  align-with-title v-for="(tabItem, key) in tabs" 
+                  :key="`${key}-item`"
+              >   
 
-                      <v-container class="my-3">
-                          <component
-                              :is="tabItem.component"
-                              :sampleData="selectedData"
-                              :selectedsamples="selectedsamples"
-                              :socket="socket"
-                          >
-                          </component>
+                  <v-container class="my-3">
+                      <component
+                          :is="tabItem.component"
+                          :sampleData="selectedData"
+                          :selectedsamples="selectedsamples"
+                          :socket="socket"
+                      >
+                      </component>
 
-                      </v-container>
-                  </v-tab-item>
+                  </v-container>
+              </v-tab-item>
 
 
-                  </v-tabs-items>
-                  
-                  
-              </v-col>
-            </v-row>
-        </v-container>
+              </v-tabs-items>
+              
+              
+          </v-col>
+        </v-row>
       </v-main>
       
       
@@ -170,9 +178,6 @@ import Plates from "@/components/Plates"
 import * as d3 from 'd3'
 import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
-import SampleStats from "@/components/SampleStats"
-import Data from "@/components/Data"
-import Map from "@/components/Map"
 import _ from 'lodash'
 
 export default {
@@ -181,9 +186,6 @@ export default {
       Plates, 
       Samplesheet,
       RunStats,
-      SampleStats,
-      Data,
-      Map,
     },
     computed: {
       icon () {
@@ -232,7 +234,7 @@ export default {
             
             nodeCountMax: 0,
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
-            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S2','S1','S2','S3', 'S4'],
+            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S1','S2','S3', 'S4'],
             maxDepth: 30,
             samplesheetdata: [],
             samplesheet: null,
@@ -248,9 +250,9 @@ export default {
             tab: 0, 
             tabs: [
                 {
-                name: 'Run Stats',
-                icon: "square",
-                component: "RunStats"
+                  name: 'Run Stats',
+                  icon: "square",
+                  component: "RunStats"
                 },
                 {
                 name: 'History Mode',
@@ -258,9 +260,9 @@ export default {
                 component: "SampleStats"
                 },
                 {
-                name: 'Data Output',
+                name: 'Barcoding/Demultiplexing',
                 icon: "pencil",
-                component: "Data"
+                component: "Barcoding"
                 },
                 
                 {
@@ -316,9 +318,16 @@ export default {
         const port = ':3000';
         let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
         let data = await d3.csv(`${samplesheet}`)
+        data = data.filter((f)=>{
+          f.run = !f.run ?  "standalone" : f.run
+          return f.sample && f.sample != ''
+        })
         this.samplesheet = samplesheet
         this.samplesheetdata = data
-        
+        if (this.samplesheetdata.length == 0){
+            this.drawer=true
+        }
+
         
         // this.matchPaired = process.env.VUE_APP_paired_string
         // this.matchSingle = process.env.VUE_APP_single_string
@@ -387,13 +396,19 @@ export default {
                 console.error(Err)
               })
                 
+            } else if (parsedMessage.type == 'add'){
+              this.samplesheetdata.push(parsedMessage.data)
             } else if (parsedMessage.type == 'playback'){
               this.playbackdata = parsedMessage.message;
             } else if (parsedMessage.type == 'logs'){
               this.logs.push(parsedMessage.data)
             } else if (parsedMessage.type == 'config'){
               this.config = parsedMessage.message
-            } else if (parsedMessage.type == 'reads'){
+            } else if (parsedMessage.type == 'flushed'){
+              for(let key of Object.keys(this.current)){
+                this.current[key]= false
+              }
+            }else if (parsedMessage.type == 'reads'){
               this.reads = parsedMessage.message
             } else if (parsedMessage.type == 'current'){
               this.$set(this.current, parsedMessage.current, parsedMessage.running)
@@ -428,12 +443,21 @@ export default {
           })
           this.selectedData = dataFull
         },
+        async barcode(sample){
+          this.sendMessage(JSON.stringify({
+                type: "barcode", 
+                sample: sample.sample,
+                kits: sample.kits,
+                run: sample.sample,
+                dirpath: sample.path_1
+            }
+          ));
+        },
         async sendNewWatch(params){
           let restart = params.overwrite
           let sample = params.sample
           this.sampledata = {}
           this.stagedData = {}
-          this.samplekeys = []
           if (sample){
             this.sendMessage(JSON.stringify({
                   type: "restart", 
@@ -443,7 +467,9 @@ export default {
               }
             ));
           } else {
+            this.samplekeys = []
             this.sendMessage(JSON.stringify({
+              
                   type: "start", 
                     samplesheet: this.samplesheetdata,
                     overwrite: restart,
@@ -475,6 +501,7 @@ export default {
             } else {
               this.defaults = this.defaultsList
             }
+            console.log(this.defaults,"<<<")
           })
         },
         waitForOpenConnection: function() {
@@ -562,7 +589,6 @@ export default {
         },
         async importData(information, type, sample){
           let text;
-          
           if (type == 'file'){
             text = await d3.text(information)
           } else {
@@ -640,5 +666,45 @@ export default {
 }
 .container {
   max-width: 100000px
+}
+.pulse {
+  display: block;
+  margin-left: 10px;
+  margin-right: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #da4040;
+  box-shadow: 0 0 0 rgba(255, 255, 255, 0.4);
+  animation: pulse 2s infinite;
+}
+.pulse:hover {
+  animation: none;
+}
+
+@-webkit-keyframes pulse {
+  0% {
+    -webkit-box-shadow: 0 0 0 0 rgba(252, 251, 248, 0.4);
+  }
+  70% {
+      -webkit-box-shadow: 0 0 0 30px rgba(204,169,44, 0);
+  }
+  100% {
+      -webkit-box-shadow: 0 0 0 0 rgba(204,169,44, 0);
+  }
+}
+@keyframes pulse {
+  0% {
+    -moz-box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+  }
+  70% {
+      -moz-box-shadow: 0 0 0 30px rgba(204,169,44, 0);
+      box-shadow: 0 0 0 30px rgba(204,169,44, 0);
+  }
+  100% {
+      -moz-box-shadow: 0 0 0 0 rgba(204,169,44, 0);
+      box-shadow: 0 0 0 0 rgba(204,169,44, 0);
+  }
 }
 </style>
