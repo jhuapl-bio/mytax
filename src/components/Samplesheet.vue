@@ -22,11 +22,14 @@
 
 <template>
     <v-row>
+      
       <v-data-table
             small v-if="dataSamples"
             :items="dataSamples"
             :headers="headers"
-            height="200"
+            height="400"
+            group-by="run"
+            show-group-by
             :width="1000"
             :items-per-page="10" 
             class="elevation-1 mx-5 px-6"					        
@@ -51,7 +54,7 @@
                                 <span class="text-sm-body-2">{{logs[logs.length-1].message}}</span>
                             </v-col>
                             <v-col align="top" class="shrink">
-                                <v-btn @click="sheet = true">Show Full</v-btn>
+                                <v-btn  x-small @click="sheet = true">Show Full</v-btn>
                             </v-col>
                             </v-row>
                         </v-alert>   
@@ -109,22 +112,20 @@
             </template>
             <template v-slot:top>
                 <v-toolbar
-                    flat
+                    flat class="my-10"
                 >
-                    <v-toolbar-title>Samplesheet</v-toolbar-title>
                     
-                    <v-divider
-                    class="mx-4"
-                    inset
-                    vertical
-                    ></v-divider>
-                    <vue-json-to-csv 
+                    <vue-json-to-csv  v-if="dataSamples.length > 0"
                     :csv-title="CSVTITLE"
                     :json-data="dataSamples">
-                        <v-btn>
+                        <v-btn  x-small>
                         Download CSV
                         </v-btn>
                     </vue-json-to-csv>
+                    <v-alert type="warning"
+                        v-else
+                    > Your Datasheet is Empty, please add rows manually or upload your own Samplesheet.csv file
+                    </v-alert>
                     <v-divider
                         class="mx-4"
                         inset
@@ -143,7 +144,7 @@
                             <template v-slot:activator="{ on, attrs }">
                                 <v-btn
                                     color="red lighten-2"
-                                    dark
+                                    dark  x-small
                                     class="mb-2"
                                     v-bind="attrs"
                                     v-on="on"
@@ -174,7 +175,7 @@
 
                                 </v-list>
                                 <v-card-actions>
-                                <v-btn small type="info" @click="updateConfig()">
+                                <v-btn small type="info"  x-small @click="updateConfig()">
                                     Update Config
                                 </v-btn>
                                 </v-card-actions>
@@ -182,7 +183,7 @@
                         </v-dialog>
                         <v-btn
                             color="primary"
-                            dark
+                            dark  x-small
                             class="mb-2"
                             v-bind="attrs"
                             v-on="on"
@@ -191,17 +192,23 @@
                         </v-btn>
                         <v-spacer>
                         </v-spacer>
-                        <v-btn  class="mb-2" color="info" @click="forceRestart()">
+                        <v-btn  class="mb-2" color="info"  x-small @click="forceRestart()">
                             Restart Report Run
                         </v-btn>
+                        <v-btn color="primary "
+                                dark   x-small
+                                class="mb-2"
+                                @click="flush()">
+                            Flush
+                        </v-btn>
                         <v-btn color="orange "
-                                dark 
+                                dark   x-small
                                 v-if="!paused" 
                                 class="mb-2"
                                 @click="paused = true">
                             Pause Updates
                         </v-btn>
-                        <v-btn color="secondary"
+                        <v-btn color="secondary"  x-small
                                 dark v-else   class="mb-2" @click="paused = false">
                             Resume Updates
                         </v-btn>
@@ -261,7 +268,7 @@
                             >
                                 <v-select
                                     v-model="editedItem.format"
-                                    :items="['file', 'directory', 'barcoded']"
+                                    :items="['file', 'directory']"
                                     label="Type/Format"
                                 ></v-select>
                             </v-col>
@@ -295,13 +302,13 @@
                         <v-spacer></v-spacer>
                         <v-btn
                             color="blue darken-1"
-                            text
+                            text  x-small
                             @click="closeItem"
                         >
                             Cancel
                         </v-btn>
                         <v-btn
-                            color="blue darken-1"
+                            color="blue darken-1"  x-small
                             text
                             @click="saveItem"
                         >
@@ -315,8 +322,8 @@
                         <v-card-title class="text-h5">Are you sure you want to delete this item?</v-card-title>
                         <v-card-actions>
                         <v-spacer></v-spacer>
-                        <v-btn color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
-                        <v-btn color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
+                        <v-btn  x-small color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
+                        <v-btn  x-small color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
                         <v-spacer></v-spacer>
                         </v-card-actions>
                     </v-card>
@@ -438,7 +445,7 @@
                         </div>
                         <v-select
                             v-model="item.format"
-                            :items="['file', 'directory', 'barcoded']"
+                            :items="['file', 'directory', 'run']"
                             label="Edit"
                             single-line
                             counter
@@ -514,7 +521,8 @@
                 >
                     mdi-delete
                 </v-icon>
-                <v-tooltip left>
+                
+                <v-tooltip  v-if="item.format != 'run'" left>
                     <template v-slot:activator="{ on, attrs }">
                         <v-icon
                             small color="indigo"
@@ -527,6 +535,19 @@
                     </template>
                     <span>Re-run the report</span>
                 </v-tooltip>
+                <v-tooltip v-else left>
+                    <template v-slot:activator="{ on, attrs }">
+                        <v-icon
+                            small color="indigo"
+                            v-bind="attrs"
+                            v-on="on" 
+                            @click="barcode(item)"
+                        >
+                            mdi-view-week
+                        </v-icon>
+                    </template>
+                    <span>Barcode</span>
+                </v-tooltip>
             </template>
             <template v-slot:[`item.report`]="{ item }">
                 <v-progress-circular
@@ -534,17 +555,14 @@
                     color="primary" small size="30"
                 ></v-progress-circular>
                 <v-icon
-                    small  v-else-if="item.format !== 'barcoded'"
+                    small  v-else-if="item.format !=='run'"
                     :color="seen && seen.indexOf(item.sample) > -1 ? 'green': 'orange'"
                 >
-                    {{seen && seen.indexOf(item.sample) > -1 ? 'mdi-check-circle' : 'mdi-times-circle' }}
+                    {{seen && seen.indexOf(item.sample) > -1 ? 'mdi-check-circle' : 'mdi-exclamation' }}
                 </v-icon>
-                <v-icon
-                    small  v-else
-                    :color="'grey'"
-                >
-                    mdi-magnify
-                </v-icon>
+                <v-subheader v-else>
+                    Barcodes
+                </v-subheader>
                 
                     
             </template>
@@ -558,7 +576,7 @@
 
         <template v-slot:action="{ attrs }">
             <v-btn
-            v-bind="attrs"
+            v-bind="attrs" x-small
             text
             @click="snack = false"
             >
@@ -620,7 +638,9 @@
           reader.readAsText(val);
           async function parseFile(){
             $this.stagedData = await d3.csvParse(reader.result)
-
+            $this.stagedData = $this.stagedData.filter((f)=>{
+                return f.sample && f.sample != ''
+            })
           }
       },
       dialogDelete (val) {
@@ -672,7 +692,18 @@
           containsPlatform: v => (v=='oxford' || v == 'illumina' ) || 'Must be oxford or illumina! (case sensitive)',
           containsFormat: v => (v=='fil2e' || v == 'directory') || 'Must be file or directory! (case sensitive)',
           headers: [
-            
+            {
+                text: "Report Available",
+                value: "report",
+                align:"center"  ,              
+                sortable: false
+            },
+            {
+                text: "Actions",
+                value: "actions",
+                align:"center"  ,              
+                sortable: false
+            },
             {
                 text: "Sample Name",
                 value: "sample",
@@ -715,18 +746,7 @@
                 sortable: false,
                 align:"center"                
             },
-            {
-                text: "Report Available",
-                value: "report",
-                align:"center"  ,              
-                sortable: false
-            },
-            {
-                text: "Actions",
-                value: "actions",
-                align:"center"  ,              
-                sortable: false
-            },
+            
             
         ],
       }
@@ -748,6 +768,13 @@
     methods: {
         updateConfig(){
             this.$emit("updateConfig", this.config)
+        },
+        barcode(item){
+            this.$emit("barcode", item)
+        },
+        flush(){
+            this.$emit("sendMessage", JSON.stringify({type: "flush" }));
+            
         },
         async forceRestart(sample){
           this.$emit("sendNewWatch", {

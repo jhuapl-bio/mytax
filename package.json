@@ -17,6 +17,7 @@
     "dotenv": "^16.0.0",
     "express-ws": "^5.0.2",
     "file-system": "^2.2.2",
+    "glob-all": "^3.3.0",
     "i": "^0.3.7",
     "json2csv": "^5.0.7",
     "lodash": "^4.17.21",
