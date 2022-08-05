@@ -52,6 +52,8 @@ test,test2.fastq,,file,illumina,<path_to_database_directory>/flukraken2,
 | `format`  | TRUE/FALSE, is the row attributed to a demultiplexed barcode folder of 1 or more fastq files or is it a single file that is .gz?                                                       |
 | `platform` | Platform used, [ILLUMINA, OXFORD]                                                            |
 | `compressed`     | TRUE/FALSE, is your set of files compressed or not as `.gz` format column                                                                                       |
+| `pattern` | Pattern to match items (regex) for barcoded runs                                              |
+| `kits` | List of guppy barcode kits for barcode runs. Such as `EXP-NBD103` and   `SQK-LWB001`                                          |
 
 An [example samplesheet](../examples/Samplesheet.csv) has been provided with the pipeline alongside some demo data.
 
@@ -61,6 +63,7 @@ An [example samplesheet](../examples/Samplesheet.csv) has been provided with the
 conda activate mytax2
 
 npm run build;
+
 
 docker build . -t jhuaplbio/basestack_mytax2; 
 
