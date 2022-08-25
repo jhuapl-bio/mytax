@@ -805,16 +805,17 @@
             console.log('Dialog closed')
         },
         deleteItem (item) {
-            this.editedIndex = this.data.indexOf(item)
+            console.log(item,"<<<",this.dataSamples)
+            this.editedIndex = this.dataSamples.indexOf(item)
             this.editedItem = Object.assign({}, item)
             this.dialogDelete = true
         },
         deleteItemConfirm () {
-            this.data.splice(this.editedIndex, 1)
+            this.dataSamples.splice(this.editedIndex, 1)
             this.closeDelete()
         },
         editItem (item) {
-            this.editedIndex = this.data.indexOf(item)
+            this.editedIndex = this.dataSamples.indexOf(item)
             this.editedItem = Object.assign({}, item)
             this.dialog = true
         },
@@ -834,9 +835,9 @@
         },
         saveItem () {
             if (this.editedIndex > -1) {
-                Object.assign(this.data[this.editedIndex], this.editedItem)
+                Object.assign(this.dataSamples[this.editedIndex], this.editedItem)
             } else {
-                this.data.push(this.editedItem)
+                this.dataSamples.push(this.editedItem)
             }
             this.closeItem()
         },
