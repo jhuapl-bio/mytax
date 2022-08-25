@@ -63,7 +63,7 @@ export  class Orchestrator {
                 logger.error("no watcher available to cancel properly")
             });
         }
-        var watcher = chokidar.watch(`${sample.path_1}/**/${this.match}`, {ignored: /^\./, persistent: true});
+        var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true});
         this.watcher[sample.sample] = watcher
         let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
         let fullreport = path.join(outpath, sample.sample, 'full.report')
@@ -753,13 +753,13 @@ export  class Orchestrator {
     }
     async watchFastqs(ignoreSeen){
         const $this = this;
-        var watcher = chokidar.watch(`${this.watchdir}/**/${this.match}`, {ignored: /^\./, persistent: true});
+        var watcher = chokidar.watch([`${this.watchdir}/*fastq.gz`,`${this.watchdir}/*fastq`,`${this.watchdir}/*fq.gz`, `${this.watchdir}/*fq`], {ignored: /^\./, persistent: true});
         this.watcher = watcher
         let pattern = `${this.watchdir}/**/*`
         let files = await this.globFiles(pattern, {
             ignore: [`${this.watchdir}/classifications/**/*`],
             furtherfilter: $this.match,
-            nodir: true
+            nodir: true 
         })
         
         files = this.parseNames(files, 
