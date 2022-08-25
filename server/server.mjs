@@ -30,7 +30,7 @@ export  class Orchestrator {
         this.config['report-minimizer-data'] = false
         this.config['report-zero-counts'] = false
         this.config['quick'] = false
-        this.config['threads'] = 1
+        // this.config['threads'] = 1
         this.config['confidence'] = 0
         this.config['minimum-base-quality'] = 0
         this.logdata = []
