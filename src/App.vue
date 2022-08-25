@@ -458,6 +458,7 @@ export default {
           let sample = params.sample
           this.sampledata = {}
           this.stagedData = {}
+          console.log(params)
           if (sample){
             this.sendMessage(JSON.stringify({
                   type: "restart", 

@@ -11,8 +11,7 @@ RUN apt-get  --allow-releaseinfo-change  update && apt-get install git -y \
     && apt-get -qq -y remove curl \
     && apt-get install -y g++ gcc \
     && apt-get -qq -y autoremove \
-    && apt-get autoclean \
-    && rm -rf /var/lib/apt/lists/* /var/log/dpkg.log 
+    && apt-get autoclean 
 
 # Set up conda environment
 ENV PATH /opt/conda/bin:$PATH
@@ -28,7 +27,13 @@ WORKDIR /opt
 
 # RUN  echo "cloning Mytax v2 image" && git clone https://github.com/jhuapl-bio/AGAVE.git
 COPY ./package.json /opt/package.json
+RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_6.2.1_linux64.tar.gz -O /opt/guppy_6.tar.gz && \
+    tar -xvzf /opt/guppy_6.tar.gz && \
+    ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && rm /opt/guppy_6.tar.gz
+    
+
 RUN npm install 
+
 COPY ./babel.config.js /opt/babel.config.js
 COPY ./jsconfig.json /opt/jsconfig.js
 COPY ./vue.config.js /opt/vue.config.js
@@ -41,4 +46,4 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN useradd nginx 
 CMD ["conda", "run", "-n", "mytax2", "/bin/bash", "-c"]
 
-# To Run docker build . -t jhuaplbio/basestack_mytax2 ; docker container run -it --rm -p 8098:80 jhuaplbio/basestack_mytax2  bash -c "nginx; bash "
+# To Run docker build . -t jhuaplbio/basestack_mytax2 ; doacker container run -it --rm -p 8098:80 jhuaplbio/basestack_mytax2  bash -c "nginx; bash "

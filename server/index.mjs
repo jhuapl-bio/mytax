@@ -61,7 +61,6 @@ app.ws('/ws', async function(ws, req) {
             orchestrator.config = command.config
         }else if (command.type == 'extractTaxid'){ 
             orchestrator.extractTaxid(command.taxid).then((f)=>{
-                console.log("done", f,"done")
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));
             })
         } else if (command.type == 'start'){ 
@@ -99,41 +98,41 @@ app.ws('/ws', async function(ws, req) {
                 logger.error(err)
             } 
         }
-        else if (command.type == 'watch'){
-            try{
-                let i=0
-                logger.info(`Get files from ${command.watchdir}`) 
-            } catch(err){
-                logger.error(err)
-            } 
+        // else if (command.type == 'watch'){
+        //     try{
+        //         let i=0
+        //         logger.info(`Get files from ${command.watchdir}`) 
+        //     } catch(err){
+        //         logger.error(err)
+        //     } 
             
-            orchestrator.setParams(command)
+        //     orchestrator.setParams(command)
            
-            if (command.restart){
-                console.log("command restart")
-                orchestrator.removeReport().then((resolve, reject)=>{
-                    orchestrator.seenfiles = {}
-                    orchestrator.watchReport(true)
-                }).catch((err)=>{ 
-                    orchestrator.seenfiles = {}
-                    orchestrator.watchReport(true)
-                    logger.error(err)
-                })
-            } else {
-                orchestrator.watchReport()
-            }
+        //     if (command.restart){
+        //         console.log("command restart")
+        //         orchestrator.removeReport().then((resolve, reject)=>{
+        //             orchestrator.seenfiles = {}
+        //             orchestrator.watchReport(true)
+        //         }).catch((err)=>{ 
+        //             orchestrator.seenfiles = {}
+        //             orchestrator.watchReport(true)
+        //             logger.error(err)
+        //         })
+        //     } else {
+        //         orchestrator.watchReport()
+        //     }
             
             
 
-            ////////////////////////////////////////////////////////////////////////////////////
+        //     ////////////////////////////////////////////////////////////////////////////////////
             
           
             
-            ////////////////////////////////////////////////////////////////////////////////////
+        //     ////////////////////////////////////////////////////////////////////////////////////
             
        
-            ////////////////////////////////////////////////////////////////////////////////////
-        }
+        //     ////////////////////////////////////////////////////////////////////////////////////
+        // }
     });
     
 
