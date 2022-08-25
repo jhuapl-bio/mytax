@@ -674,6 +674,8 @@
             path_2: null,
             format: null,
             database: null,
+            kits: null,
+            pattern: "",
             platform: null,
           },
           defaultItem: {
@@ -683,6 +685,8 @@
             format: null,
             database: null,
             platform: null,
+            kits: null,
+            pattern: ""
           },
           dataSamples: [],
           editedIndex: -1,
@@ -746,6 +750,18 @@
                 sortable: false,
                 align:"center"                
             },
+            {
+                text: "Pattern to match barcodes",
+                value: "pattern",
+                sortable: false,
+                align:"center"                
+            },
+            {
+                text: "Barcode Kits",
+                value: "kits",
+                sortable: false,
+                align:"center"                
+            },
             
             
         ],
@@ -759,7 +775,7 @@
         this.config['report-minimizer-data'] = false
         this.config['report-zero-counts'] = false
         this.config['quick'] = false
-        this.config['threads'] = 1
+        // this.config['threads'] = 1
         this.config['confidence'] = 0
         this.config['minimum-base-quality'] = 0
         this.dataSamples = this.samplesheet

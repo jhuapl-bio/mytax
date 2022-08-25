@@ -240,15 +240,15 @@ export  class Orchestrator {
  
             $this.ws.send(JSON.stringify({ type: "current", current : sample, running: true }))
 
-
             let output_path = path.join(dirpath, 'demultiplexed')
-            var  ls = spawn('bash', ['-c', ` guppy_barcoder \
+            let command = ` guppy_barcoder \
             --require_barcodes_both_ends --compress_fastq --disable_pings  \
             -i "${dirpath}" \
             -s "${output_path}" \
-            --barcode_kits " ${kits}" ` ]);
+            --barcode_kits " ${kits}" `
+            var  ls = spawn('bash', ['-c', command ]);
             // var  ls = spawn('bash', ['-c', ` ls -lht "${output_path}"  ` ]);
-
+            logger.info(command)
             ls.stdout.on('data', (data) => { 
                 logger.info(`stdout: ${data}`);
             });
