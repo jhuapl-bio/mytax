@@ -9,6 +9,7 @@
     "server": "nodemon server/index.mjs --watch"
   },
   "dependencies": {
+    "@vue/cli": "^5.0.8",
     "core-js": "^3.8.3",
     "csv": "^6.1.0",
     "csv-parse": "^5.2.1",

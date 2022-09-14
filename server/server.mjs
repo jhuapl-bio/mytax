@@ -280,7 +280,7 @@ export  class Orchestrator {
                     let entry = {
                         sample: path.basename(directory),
                         platform: 'oxford',
-                        database: '/Users/merribb1/Desktop/mytax/flukraken2',
+                        database: null,
                         format: 'directory',
                         path_1: directory,
                         path_2: null,
