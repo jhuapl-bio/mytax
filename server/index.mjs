@@ -36,8 +36,8 @@ app.get('/', (req, res) => {
 let dirpath = '/Users/merribb1/Desktop/test-data2/demux-fastq_pass'
 let input = "/Users/merribb1/Documents/Projects/real-time-reporting/data/"
 let output = "/Users/merribb1/Documents/Projects/real-time-reporting/data/classifications"
-let nodes =  "/Users/merribb1/Desktop/mytax/flukraken2/taxonomy/nodes.dmp"
-let database = "/Users/merribb1/Desktop/mytax/flukraken2"
+// let nodes =  "/Users/merribb1/Desktop/mytax/flukraken2/taxonomy/nodes.dmp"
+// let database = "/Users/merribb1/Desktop/mytax/flukraken2"
 let websocket;
 
 let max = 0
