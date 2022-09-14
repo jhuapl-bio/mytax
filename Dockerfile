@@ -26,11 +26,11 @@ SHELL ["conda", "run", "-n", "mytax2", "/bin/bash", "-c"]
 WORKDIR /opt
 
 # RUN  echo "cloning Mytax v2 image" && git clone https://github.com/jhuapl-bio/AGAVE.git
-COPY ./package.json /opt/package.json
 RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_5.1.15_linux64.tar.gz -O /opt/guppy_5.tar.gz && \
     tar -xvzf /opt/guppy_5.tar.gz && \
     ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && rm /opt/guppy_5.tar.gz
     
+COPY ./package.json /opt/package.json
 
 RUN npm install 
 
@@ -44,6 +44,13 @@ COPY ./server /opt/server
 COPY dist /MYTAX
 COPY nginx.conf /etc/nginx/nginx.conf
 RUN useradd nginx 
+# RUN chown -R nginx:nginx /var/lib/nginx && \
+#         chown -R nginx:nginx /var/log/nginx && \
+#         chown -R nginx:nginx /etc/nginx/conf.d
+# RUN touch /var/run/nginx.pid && \
+#         chown -R nginx:nginx /var/run/nginx.pid
+RUN chmod -R 777 /MYTAX
+
 CMD ["conda", "run", "-n", "mytax2", "/bin/bash", "-c"]
 
 # To Run docker build . -t jhuaplbio/basestack_mytax2 ; doacker container run -it --rm -p 8098:80 jhuaplbio/basestack_mytax2  bash -c "nginx; bash "
