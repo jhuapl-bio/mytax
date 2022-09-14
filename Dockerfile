@@ -27,9 +27,9 @@ WORKDIR /opt
 
 # RUN  echo "cloning Mytax v2 image" && git clone https://github.com/jhuapl-bio/AGAVE.git
 COPY ./package.json /opt/package.json
-RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_6.2.1_linux64.tar.gz -O /opt/guppy_6.tar.gz && \
-    tar -xvzf /opt/guppy_6.tar.gz && \
-    ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && rm /opt/guppy_6.tar.gz
+RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_5.1.15_linux64.tar.gz -O /opt/guppy_5.tar.gz && \
+    tar -xvzf /opt/guppy_5.tar.gz && \
+    ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && rm /opt/guppy_5.tar.gz
     
 
 RUN npm install 
