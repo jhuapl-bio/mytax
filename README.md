@@ -94,11 +94,11 @@ This is the repository for mytax, a tool for building custom taxonomies, which c
 
 Clone this repo with:
 
-`git clone https://github.com/tmehoke/mytax`
+`git clone https://github.com/jhuapl-bio/mytax`
 
 Symbolically link all shell scripts into your path, for example with:
 
-`find mytax/src -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
+`find v1 -name "*.sh" | while read fn; do sudo ln -s $PWD/$fn /usr/local/bin; done`
 
 # Dependencies
 
@@ -114,7 +114,7 @@ Symbolically link all shell scripts into your path, for example with:
 
 ## Building example
 
-This pipeline is built from a central set of scripts located in the `src` directory
+This pipeline is built from a central set of scripts located in the `v1` directory
 
 Build flu-kraken example with:
 
