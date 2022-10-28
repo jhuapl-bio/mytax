@@ -231,7 +231,7 @@ export default {
             database:null,
             watchdir:null,
             playbackdata: null,
-            
+             
             nodeCountMax: 0,
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
             defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S1','S2','S3', 'S4'],
@@ -316,16 +316,20 @@ export default {
         // ws://your-url-here.com or wss:// for secure websockets.
         const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
         const port = ':3000';
-        let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
-        let data = await d3.csv(`${samplesheet}`)
-        data = data.filter((f)=>{
-          f.run = !f.run ?  "standalone" : f.run
-          return f.sample && f.sample != ''
-        })
-        this.samplesheet = samplesheet
-        this.samplesheetdata = data
-        if (this.samplesheetdata.length == 0){
-            this.drawer=true
+        try{
+          let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
+          let data = await d3.csv(`${samplesheet}`)
+          data = data.filter((f)=>{
+            f.run = !f.run ?  "standalone" : f.run
+            return f.sample && f.sample != ''
+          })
+          this.samplesheet = samplesheet
+          this.samplesheetdata = data
+          if (this.samplesheetdata.length == 0){
+              this.drawer=true
+          }
+        } catch (err){
+          console.error(err,"<<<")
         }
 
         
@@ -402,6 +406,9 @@ export default {
               this.playbackdata = parsedMessage.message;
             } else if (parsedMessage.type == 'logs'){
               this.logs.push(parsedMessage.data)
+              const lasts = this.logs.slice(-100);
+              this.logs = lasts
+
             } else if (parsedMessage.type == 'config'){
               this.config = parsedMessage.message
             } else if (parsedMessage.type == 'flushed'){
