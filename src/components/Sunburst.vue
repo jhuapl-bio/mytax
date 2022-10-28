@@ -21,16 +21,18 @@
 
 
 <template>
-  <v-container  style="padding-top: 10px; max-height:1000px; width: 97%">
+  <v-container  style="padding-top: 10px; max-height:1000px; ">
     <v-row>
-      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px; ; max-height:1000px; width: 97%">
+      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px; ; max-height:1000px; ">
         <div :id="`sunburstDiv-${samplename}`">
         </div>
       </v-col>
       <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0; pt-0 text-center">
         
-        <div :id="`legend_text-${samplename}`" style="margin:auto;  padding-bottom: 10px">
+        <div :id="`legend_text-${samplename}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
           <h5>Legend</h5>
+          <h6>Total Reads {{readCount}}</h6>
+          <h6>at Rank Code: {{selectedAttribute}}</h6>
           <span :id="`legend_text_label-${samplename}`" style="text-align:center; "/>
           <div v-if="selectedAttribute =='Deviation'" class="alert alert-info">
             <span>Color is Relative to +/- Max Abundance at a Given Rank</span>
@@ -94,7 +96,15 @@
      
     },  
     computed: {
-      
+      readCount(){
+        let d = 0
+        this.inputdata.filter((f)=>{
+          return f.rank_code == this.selectedAttribute
+        }).map((f)=>{
+          return f.num_fragments_clade ? d+=f.num_fragments_clade : ''
+        })
+        return d
+      },
       width(){
         if (this.dimensions.width){
           return this.dimensions.width
@@ -290,7 +300,7 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return val + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid;
+            return val + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid + ', fragment count: '+d.num_fragments_clade;
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
       },

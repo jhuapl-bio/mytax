@@ -402,6 +402,9 @@
                 </template>
                 </v-edit-dialog>
             </template>
+            <template v-slot:[`item.demux`]="{ item }">
+                <v-switch v-model="item.demux"> </v-switch>
+            </template>
             <template v-slot:[`item.database`]="{ item }">
                 <v-edit-dialog
                 :return-value.sync="item.database"
@@ -445,7 +448,7 @@
                         </div>
                         <v-select
                             v-model="item.format"
-                            :items="['file', 'directory', 'run']"
+                            :items="['file', 'directory']"
                             label="Edit"
                             single-line
                             counter
@@ -522,7 +525,7 @@
                     mdi-delete
                 </v-icon>
                 
-                <v-tooltip  v-if="item.format != 'run'" left>
+                <v-tooltip   left>
                     <template v-slot:activator="{ on, attrs }">
                         <v-icon
                             small color="indigo"
@@ -530,12 +533,12 @@
                             v-on="on"
                             @click="forceRestart(item)"
                         >
-                            mdi-play-circle
+                            {{ !item.demux ? `mdi-play-circle` : `mdi-view-week` }}
                         </v-icon>
                     </template>
-                    <span>Re-run the report</span>
+                    <span>{{ !item.demux ? `Re-run the report` : `Barcode and Report` }} </span>
                 </v-tooltip>
-                <v-tooltip v-else left>
+                <!-- <v-tooltip v-if="item.demux" left>
                     <template v-slot:activator="{ on, attrs }">
                         <v-icon
                             small color="indigo"
@@ -547,7 +550,7 @@
                         </v-icon>
                     </template>
                     <span>Barcode</span>
-                </v-tooltip>
+                </v-tooltip> -->
             </template>
             <template v-slot:[`item.report`]="{ item }">
                 <v-progress-circular
@@ -709,6 +712,12 @@
                 sortable: false
             },
             {
+                text: "Demultiplex?",
+                value: 'demux',
+                sortable: false,
+                align:"center"                
+            },
+            {
                 text: "Sample Name",
                 value: "sample",
                 sortable: true,
@@ -764,11 +773,12 @@
             },
             
             
+            
         ],
       }
     },
     async mounted() {
-        this.config['memory-mapping']=false
+        this.config['memory-mapping']=true
         this.config['gzip-compressed'] = false
         this.config['bzip2-compressed'] = false
         this.config['minimum-hit-groups'] = false
@@ -821,7 +831,6 @@
             console.log('Dialog closed')
         },
         deleteItem (item) {
-            console.log(item,"<<<",this.dataSamples)
             this.editedIndex = this.dataSamples.indexOf(item)
             this.editedItem = Object.assign({}, item)
             this.dialogDelete = true

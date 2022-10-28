@@ -66,14 +66,13 @@ app.ws('/ws', async function(ws, req) {
         } else if (command.type == 'start'){ 
             try{
                 let i=0
-                console.log(command,"start")
-                logger.info(`Starting run frmo samplesheet `) 
+                // console.log(command,"start")
+                logger.info(`Starting run from samplesheet `) 
                 orchestrator.setSamples(command)
             } catch(err){
                 logger.error(err)
             } 
         } else if (command.type == 'flush'){
-            console.log(command)
             try{
                 orchestrator.flush()
                 ws.send(JSON.stringify({ type: "flushed" }));
@@ -83,21 +82,20 @@ app.ws('/ws', async function(ws, req) {
         } else if (command.type == 'barcode'){
             try{
                 let i=0
-                console.log("yes")
                 logger.info(`Barcoding ${command.dirpath} ${command.kits} `) 
                 orchestrator.barcode(command.dirpath, command.sample, command.run, command.kits)
             } catch(err){
                 logger.error(err)
             } 
         } else if (command.type == 'restart'){
-            try{
+            try{ 
                 let i=0
                 logger.info(`Starting restart of a sample `) 
                 orchestrator.setSampleSingle(command)
             } catch(err){
                 logger.error(err)
             } 
-        }
+        } 
         // else if (command.type == 'watch'){
         //     try{
         //         let i=0
