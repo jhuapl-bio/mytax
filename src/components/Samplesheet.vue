@@ -622,7 +622,6 @@
       current: {
           deep:true,
           handler(val){
-              console.log("handler", val)
           }
       },
       stagedData (val){

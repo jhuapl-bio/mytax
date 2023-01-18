@@ -77,18 +77,37 @@
               {{tabItem.name}}
             </v-tab>
           </v-tabs>
+          
           <v-switch
             :label="(full ? 'Show all at rank' : 'Show under taxid')" class="text-caption; "
             hint="Show all taxa at this rank or only those under selected taxid"
             v-model="full" hide-details persistent-hint v-if="tab == 1"
           >
           </v-switch>
+          <download-excel style="cursor:pointer" :data="selectedsamplesList">
+            <v-icon >mdi-download</v-icon>Download
+            
+          </download-excel>
           
           </template>
         </v-toolbar>
         <v-tabs-items v-model="tab">
           <v-tab-item v-for="(tabItem, key) in tabs"  :key="`${key}-tabItem`">
-            <v-row v-if="tabItem.component !== 'Plates'">
+            <v-row v-if="tabItem.component == 'Datatable'">
+              
+            <Datatable
+                  @jumpTo="jumpTo"
+                  :selectedAttribute="selectedAttribute"
+                  :selectedTaxid="selectedTaxid"
+                  :samplenames="selectedsamples"
+                  :dimensions="dimensions"
+                  :legendPlacement="legendPlacement"
+                  :inputdata="selectedsamplesList" 
+                  :socket="socket"
+              >
+              </Datatable>
+            </v-row>
+            <v-row v-else-if="(tabItem.component !== 'Plates' && tabItem.components !== 'Datatable')">
               <v-col  :sm="determineSize"  v-for="[ key, sample ] of Object.entries(sampleData)" :key="`${key}-sample`" >
                 <component 
                   :is="tabItem.component" 
@@ -107,6 +126,7 @@
                 </component>
               </v-col>
             </v-row>
+            
             <v-row v-else>
               <Plates
                   @jumpTo="jumpTo"
@@ -121,9 +141,9 @@
               </Plates>
             </v-row>
           </v-tab-item>
-
+          
         </v-tabs-items>
-                    
+        
           
 
       
@@ -149,6 +169,22 @@
       Datatable
     },
     computed: {
+      selectedsamplesList(){
+        let lis =  []
+        if (this.sampleData && Object.keys(this.sampleData).length > 0){
+          Object.keys(this.sampleData).map((f)=>{
+            if (this.sampleData[f]){
+              Object.values(this.sampleData[f]).forEach((v)=>{
+                v.samplename = f
+                lis.push(v)
+              })
+
+            }
+          })
+        }
+      
+        return lis
+      },
       determineSize(){
         if (this.tab == 1){
           if (this.selectedsamples.length %3==0){

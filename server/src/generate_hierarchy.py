@@ -52,11 +52,13 @@ parser.add_argument('-taxmapCols', required = False,  type = int, nargs="+", def
 parser.add_argument('-taxd', required = False,  type = str, default="\t\t\|", help = 'Delimiter for taxdump file, defaults to \t\t| which is frome nodes.dmp')
 parser.add_argument('-download', dest="download", required = False, action='store_true', help = 'Download taxdump file for getting rank to taxid mapping (need nodes.dmp). Outputs to either -taxdump and if empty to -o')
 # parser.add_argument('--out', required = False,  type = str, help = 'Kraken  Report Out File')
+parser.add_argument('-additionals', required = False,  type = str, nargs="+",  default=['common name', 'synonym'], help = 'Attributes to additionally pull out per taxid. E.g. common name, authority, includes ')
+parser.add_argument('-names', required = False,  type = str, default=[], help = 'Names.dmp file to get the -additionals input from')
 
 args = parser.parse_args()
 # outmap = dict()
 
-def read_report(df_report, tax_map):
+def read_report(df_report, tax_map, names_map):
     # filehandle = open(file, 'r')
     nodes = []
     last_count = 0
@@ -64,12 +66,8 @@ def read_report(df_report, tax_map):
     index = 0
     mappings = dict()
     unclass = False
+   
     for index, line in df_report.iterrows():
-
-    # with open(file, 'r') as filehandle:
-    #     for line in filehandle:
-        # line = line.rstrip()
-        # line_split = line.split("\t")
         assignment = line['name'].split("  ")
         counts = assignment.count("")
         assignment_filtered = "".join([i for i in assignment if i])
@@ -82,6 +80,7 @@ def read_report(df_report, tax_map):
         else:
             if taxid > 1:
                 fullname = fullname  + "(no rank)"
+        
         if int(taxid) <= 1:
             fullname = fullname + "(no rank)"
         if counts == 0:
@@ -97,8 +96,8 @@ def read_report(df_report, tax_map):
                     nodes.append(node)
                     mappings[taxid] = node
                     break
-                        
-   
+        
+                    
     # close the pointer to that file
     # filehandle.close()
     return mappings
@@ -110,13 +109,24 @@ def read_report(df_report, tax_map):
 def get_fullstring(taxid, nodes):
     fullstring = ""
     tree = []
-   
     for ancestor in nodes[taxid].ancestors:
         tree.append(ancestor.name)
     tree.append(nodes[taxid].name)
     fullstring = "|".join(tree)
+    
     return fullstring
-
+def get_extras(taxid, names_map):
+    extra = []
+    fullstring = ""
+    additionals = vars(args)['additionals']
+    if names_map:
+        for additional in additionals:
+            if additional in names_map and taxid in names_map[additional]:
+                print("{}({})".format(names_map[additional][taxid], additional))
+                extra.append("{}({})".format(names_map[additional][taxid], additional))
+        extra = ", ".join(extra)
+        fullstring = extra
+    return fullstring
 def download_file(url, output):
     print('Beginning file download with urllib2...', url, "to: ", output)
     urllib.request.urlretrieve(url,  output )
@@ -127,7 +137,6 @@ def map_ranks(file):
     with open(file, 'r') as filehandle:
         for line in filehandle:
             line = line.rstrip()
-            # line_split = line.split(vars(args)['taxd'])
             line_split = [x for x in re.split(r"[{0}]".format(vars(args)['taxd']), line) if x]
             taxid = int(line_split[cols[0]-1])
            
@@ -144,6 +153,7 @@ def change_time(index):
 def main():
     # print(df_report)
     # sample_tree()
+    names_map = dict()
     
     if vars(args)['download']:
         print("downloading taxdump")
@@ -167,7 +177,7 @@ def main():
             file = tarfile.open(output)
             
             # extracting file
-            file.extractall(os.path.join(os.path.dirname(output), "taxdump" ) )
+            file.extractall(os.path.join(os.path.dirname(output), "taxonomy" ) )
 
             file.close()
         print("Downloaded, exiting...")
@@ -175,7 +185,18 @@ def main():
 
     # df_out = pd.read_csv(vars(args)['out'], sep="\t", names=['state', 'id', 'taxid', 'readLength', 'kmers'])
     cols_report = ["coverage", "number_covered", "number_assigned", "rank_code", "taxid", "name"]
+    cols_names = ["taxid", "value", "extr", "attribute"]
+    df_names = None
+    if vars(args)['names'] and len(vars(args)['additionals']) >= 1:
+        df_names = pd.read_csv(vars(args)['names'], sep='\t\|\t?', names=cols_names, index_col=False)
+        for f in vars(args)['additionals']:
+            names_map[f] = dict()
+        filtered = df_names[df_names['attribute'].isin(vars(args)['additionals'])]
+        for  index, row in filtered.iterrows():
+            attribute = row['attribute']
+            names_map[attribute][row['taxid']] = row['value']
     df_report = pd.read_csv(vars(args)['report'], sep="\t", names=cols_report)
+    
     aggregation_functions = {'coverage': 'mean', 'number_covered': 'sum', 'number_assigned': 'sum',  "rank_code": "first", 'taxid': "first", "name": "first"}
     # df_report = df_report.groupby(df_report['taxid']).aggregate(aggregation_functions)
     # df_report.reset_index(drop=True, inplace=True)
@@ -186,15 +207,14 @@ def main():
     tax_map = dict()
     if vars(args)['taxdump']:
         tax_map = map_ranks(vars(args)['taxdump'])
-    nodes = read_report(df_report, tax_map)
+    nodes = read_report(df_report, tax_map, names_map)
     # nodes = df_report.apply(read_report, args=(tax_map,))
     # outmap = df_out.set_index('id').to_dict('index') # make a dict from the out file to use the tax mapping with
     # print(outmap)
     # write_report(file=vars(args)['o'], nodes=nodes, df=df_out)
     df_report['fullstring'] = df_report['taxid'].apply(get_fullstring, args=(nodes, )   )
+    df_report['extras'] = df_report['taxid'].apply(get_extras, args=(names_map, )   )
     # df_out_merged = df_out.merge(df_report, right_on="taxid", left_on="taxid")
-    print(df_report.tail())
-
     df_report.to_csv(vars(args)['o'], sep="\t", index=False, header=False)    # make the final fullstring file
     # bash krakenreport2json.sh -i /opt/data/${data.data.filename}.fullstring -o /opt/data/${data.data.filename}.json`
 

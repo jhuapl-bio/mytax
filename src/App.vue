@@ -207,6 +207,7 @@ export default {
             selectedsamples: [],
             config: {},
             current: {},
+            names_file: "@/assets/js/names.tsv",
             seen: [],
             samplekeys: [],
             database_file: null,
@@ -316,11 +317,14 @@ export default {
         // ws://your-url-here.com or wss:// for secure websockets.
         const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
         const port = ':3000';
+        this.importNames(this.names_file)
         try{
           let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
           let data = await d3.csv(`${samplesheet}`)
           data = data.filter((f)=>{
             f.run = !f.run ?  "standalone" : f.run
+            f.demux = (f.demux == "true" || f.demux == "TRUE" || f.demux == "True" ? true : false )
+            f.compressed = (f.compressed == "true" || f.compressed == "TRUE" || f.compressed == "True" ? true : false )
             return f.sample && f.sample != ''
           })
           this.samplesheet = samplesheet
@@ -594,6 +598,15 @@ export default {
             return  v
           })
           return data
+        },
+        async importNames(filepath){
+          try{
+            console.log(filepath)
+            let text = await d3.tsv(filepath)
+            console.log(text)
+          } catch (Err){
+            console.error(Err)
+          }
         },
         async importData(information, type, sample){
           let text;
