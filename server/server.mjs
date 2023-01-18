@@ -110,7 +110,7 @@ export  class Orchestrator {
                 logger.error(`${err}`)
             })
         }
-        if (sample.demux){
+        if (sample.demux && sample.demux !== 'false' && sample.demux !== 'FALSE'){
             if (overwrite){
                 this.seenfiles.bcs = []
             }

@@ -1,4 +1,7 @@
 .DS_Store
+taxonomy
+taxdump
+output
 node_modules
 example-data/classifications/*
 /dist

@@ -82,10 +82,7 @@
     },  
     data(){
       return {
-        filename: "/Users/merribb1/Documents/Projects/real-time-reporting/data/classifications/flu_BC01.report",
-        csv:"energy.csv" ,
         nodeCountMax: 0,
-        filepath: "flu_BC01.report",
         edgeColor: "default",
         
         options: [
@@ -94,7 +91,12 @@
           "default"
         ],
         headers: [
-            
+            {
+                text: "Sample",
+                value: "samplename",
+                align:"center"  ,              
+                sortable: true
+            },
             {
                 text: "Percent",
                 value: "value",
@@ -160,7 +162,6 @@
       }
     },
     async mounted() {
-      
     },
  
     methods: {
