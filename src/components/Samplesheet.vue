@@ -152,34 +152,87 @@
                                     Advanced
                                 </v-btn>
                             </template>
-
-                            <v-card>
-                                <v-card-title class="text-h5 grey lighten-2">
-                                Kraken2 Advanced commands
-                                </v-card-title>
-                                <v-list>
-                                <v-list-item
-                                    v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
-
-                                >
-                                    <v-checkbox 
-                                    v-if="typeof value == 'boolean'"
-                                    v-model="config[key]" :label="`--${key}?`"
+                            <v-toolbar extended
+                                dark
+                            >
+                                <template v-slot:extension>
+                                    
+                                    <v-tabs v-model="tab" align-with-title
+                                        color="basil" 
                                     >
-                                    </v-checkbox>
-                                    <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
-                                    </v-text-field>
-                                    <v-text-field v-model="config[key]" v-else :label="`--${key}`">
-                                    </v-text-field>
-                                </v-list-item>
+                                        <v-tabs-slider color="purple"></v-tabs-slider>          
+                                        <v-tab  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
+                                            {{tabItem}}
+                                        </v-tab>
+                                    </v-tabs>
+                                </template>
+                            </v-toolbar>
+                            <v-tabs-items height="100%" width="100%"
+                                v-model="tab" 
+                            >
+                                <v-tab-item :key="`one`" >
+                                    <v-card v-if="stagedBundleConfig">
+                                        <v-card-title class="text-h5 grey lighten-2">
+                                            Names Mapping Config
+                                        </v-card-title>
+                                        <v-list>
+                                        <v-list-item 
+                                            v-for="[key,value] of Object.entries(stagedBundleConfig)" :key="`${key}-advancedbundled`"
 
-                                </v-list>
-                                <v-card-actions>
-                                <v-btn small type="info"  x-small @click="updateConfig()">
-                                    Update Config
-                                </v-btn>
-                                </v-card-actions>
-                            </v-card>
+                                        > 
+                                            <v-sheet  v-if="(!value || typeof value =='object')" width="100%">
+                                                <v-checkbox 
+                                                    v-if="typeof value.value == 'boolean'"
+                                                    v-model="stagedBundleConfig[key].value" :label="`${key}: -${stagedBundleConfig[key].arg}`"
+                                                >
+                                                </v-checkbox>
+                                                <v-text-field v-model="stagedBundleConfig[key].value" type="number" :label="`${key}: -${stagedBundleConfig[key].arg}`" v-else-if="typeof value.value == 'number'" >
+                                                </v-text-field>
+                                                <v-text-field v-model="stagedBundleConfig[key].value" v-else :label="`${key}: -${stagedBundleConfig[key].arg}`">
+                                                </v-text-field>
+                                            </v-sheet>
+                                        </v-list-item>
+
+                                        </v-list>
+                                        <v-card-actions>
+                                        <v-btn small type="info"  x-small @click="updateConfig('bundle')" >
+                                            Update Config
+                                        </v-btn>
+                                        </v-card-actions>
+                                    </v-card>
+                                </v-tab-item>
+                                <v-tab-item :key="`two`">
+                                    <v-card>
+                                        <v-card-title class="text-h5 grey lighten-2">
+                                            Kraken2 Advanced commands
+                                        </v-card-title>
+                                        <v-list>
+                                        <v-list-item
+                                            v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
+
+                                        >
+                                            <v-checkbox 
+                                            v-if="typeof value == 'boolean'"
+                                            v-model="config[key]" :label="`--${key}?`"
+                                            >
+                                            </v-checkbox>
+                                            <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
+                                            </v-text-field>
+                                            <v-text-field v-model="config[key]" v-else :label="`--${key}`">
+                                            </v-text-field>
+                                        </v-list-item>
+
+                                        </v-list>
+                                        <v-card-actions>
+                                        <v-btn small type="info"  x-small @click="updateConfig('kraken2')">
+                                            Update Config
+                                        </v-btn>
+                                        </v-card-actions>
+                                    </v-card>
+                                </v-tab-item>
+                            
+                            </v-tabs-items>
+                            
                         </v-dialog>
                         <v-btn
                             color="primary"
@@ -599,7 +652,7 @@
 
   export default {
     name: 'Samplesheet',
-    props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs'],
+    props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs', 'bundleconfig'],
     components: {
         VueJsonToCsv,
         
@@ -615,6 +668,9 @@
     watch: {
       dialog (val) {
         val || this.closeItem()
+      },
+      bundleconfig (val){
+        this.stagedBundleConfig = val
       },
       paused(val){
           this.$emit("pausedChange", val)
@@ -664,11 +720,14 @@
           snack: false,
           name: null,
           scroll:true,
+          tab:0,
+          dialogAdvanced: false,
+          tabs: ['Script Config for Name mapping', 'Kraken2 Advanced Config'],
+          advanced:true,
           sheet:false,
           stagedData: [],
           config: {},
           paused: false,
-          dialogAdvanced: false,
           snackColor: '',
           editedItem: {
             sample: '',
@@ -695,6 +754,7 @@
           dialog: false,
           dialogDelete: false,
           snackText: '',
+          stagedBundleConfig:  {}, 
           containsPlatform: v => (v=='oxford' || v == 'illumina' ) || 'Must be oxford or illumina! (case sensitive)',
           containsFormat: v => (v=='fil2e' || v == 'directory') || 'Must be file or directory! (case sensitive)',
           headers: [
@@ -788,11 +848,12 @@
         this.config['confidence'] = 0
         this.config['minimum-base-quality'] = 0
         this.dataSamples = this.samplesheet
+        
     },
  
     methods: {
-        updateConfig(){
-            this.$emit("updateConfig", this.config)
+        updateConfig(type){
+            this.$emit("updateConfig", (type == 'bundle' ? this.stagedBundleConfig : this.config ), type)
         },
         barcode(item){
             this.$emit("barcode", item)

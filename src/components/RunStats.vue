@@ -32,13 +32,67 @@
         >
           <v-toolbar-title>Sample Reports</v-toolbar-title>
           <v-spacer></v-spacer>
+          
+          <v-spacer></v-spacer>
+          <v-autocomplete
+            v-model="selectedName"
+            :items="selectedsamplesList"  
+            @change="updateSelected($event)"  
+            color="white" style="padding-top: 50px"
+            width="5px"
+            :key="'selectsearchcomplete'"
+            item-text="full"
+            return-object
+            label="Search Name"
+          >
+          </v-autocomplete>
           <v-btn icon-and-text small v-if="tab == 1" class="mb-1 mr-7" type="info" @click="selectedTaxid = -1">
               Reset
               <v-icon>mdi-recycle
               </v-icon>
           </v-btn>
+          <v-switch
+            :label="(full ? 'Show all at rank' : 'Show under taxid')" class="text-caption; "
+            hint="Show all taxa at this rank or only those under selected taxid"
+            v-model="full" hide-details persistent-hint v-if="tab == 1"
+          >
+          </v-switch>
           <v-spacer>
           </v-spacer>
+          <download-excel style="cursor:pointer" :data="selectedsamplesList">
+            <v-icon >mdi-download</v-icon>Download
+            
+          </download-excel>
+          
+          
+
+          
+          
+          
+          <template v-slot:extension>
+            
+            <v-tabs v-model="tab" align-with-title
+              color="basil" >
+            <v-tabs-slider color="purple"></v-tabs-slider>          
+            <v-tab  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
+              <v-icon class="mr-2">
+                mdi-{{tabItem.icon}}
+              </v-icon>
+              {{tabItem.name}}
+            </v-tab>
+          </v-tabs>
+          <v-select
+            v-model="legendPlacement"
+            v-if="tab == 1 || tab == 2"
+            :items="legendPlacements"    
+            color="white" style="padding-top: 50px"
+            width="5px"
+            :key="legendPlacement"
+            label="Legend Placement Position"
+          >
+            
+
+          </v-select>
           <v-select
             v-model="selectedAttribute"
             :items="ranks"    
@@ -53,41 +107,22 @@
           >
           </v-select>
           <v-select
-            v-model="legendPlacement"
-            v-if="tab == 1 || tab == 2"
-            :items="legendPlacements"    
+            v-model="selectedNameAttr"
+            :items="Object.keys(namesData)"    
             color="white" style="padding-top: 50px"
             width="5px"
-            :key="legendPlacement"
-            label="Legend Placement Position"
+            :key="'selectednameattr'"
+            persistent-hint
+            hint="Change Name Display Type"
+            label="Name Type"
           >
-            
-
           </v-select>
+
           
-          <template v-slot:extension>
-            
-            <v-tabs v-model="tab" align-with-title
-              color="basil" >
-            <v-tabs-slider color="purple"></v-tabs-slider>          
-            <v-tab  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
-              <v-icon class="mr-2">
-                mdi-{{tabItem.icon}}
-              </v-icon>
-              {{tabItem.name}}
-            </v-tab>
-          </v-tabs>
           
-          <v-switch
-            :label="(full ? 'Show all at rank' : 'Show under taxid')" class="text-caption; "
-            hint="Show all taxa at this rank or only those under selected taxid"
-            v-model="full" hide-details persistent-hint v-if="tab == 1"
-          >
-          </v-switch>
-          <download-excel style="cursor:pointer" :data="selectedsamplesList">
-            <v-icon >mdi-download</v-icon>Download
-            
-          </download-excel>
+          
+          
+          
           
           </template>
         </v-toolbar>
@@ -112,8 +147,10 @@
                 <component 
                   :is="tabItem.component" 
                   :samplename="key"
+                  :namesData="namesData"
                   v-if="sample"
                   @jumpTo="jumpTo"
+                  :selectedNameAttr="selectedNameAttr"
                   :selectedAttribute="selectedAttribute"
                   @changeAttribute="changeAttribute"
                   :full="full"
@@ -132,6 +169,7 @@
                   @jumpTo="jumpTo"
                   :selectedAttribute="selectedAttribute"
                   :selectedTaxid="selectedTaxid"
+                  :selectedNameAttr="selectedNameAttr"
                   :samplenames="selectedsamples"
                   :dimensions="dimensions"
                   :legendPlacement="legendPlacement"
@@ -185,6 +223,35 @@
       
         return lis
       },
+      attrs(){
+        let returnable = []
+        console.log(this.namesData,"<<<")
+        return (Object.keys(this.namesData))
+        // for(let values of Object.values(this.sampleData)){
+        //   if (values){
+        //     values.forEach((entry)=>{
+        //       console.log(entry)
+        //       let split = entry['full'].split(";")
+        //       console.log(split)
+        //       if (split.length >1){
+        //         split = split[1]
+        //       } else {
+        //         split = entry.full
+        //       }
+        //       var regExp = /\(([^)]+)\)/;
+        //       var matches = regExp.exec("split");
+        //       console.log(matches, entry)
+
+        //     })
+        //   }
+          
+        // }
+        // if (!this.selectedNameAttr && returnable.length >0){
+        //   this.selectedNameAttr = returnable[0]
+        // }
+        return returnable
+
+      },
       determineSize(){
         if (this.tab == 1){
           if (this.selectedsamples.length %3==0){
@@ -206,7 +273,7 @@
           
       }
     },
-    props: ["socket", "selectedsamples", "sampleData"],
+    props: ["socket", "selectedsamples", "sampleData", "namesData", 'bundleconfig'],
     watch: {
       sampleData: {
         deep:true, 
@@ -218,9 +285,16 @@
             }
             
           }
+          
           unique_ranks = [ ... new Set(unique_ranks.flat() ) ]
           this.ranks = unique_ranks
           this.getUniqueLabels()
+        }
+      },
+      selectedNameAttr: {
+        deep:true,
+        handler(newVal){
+          console.log(newVal,"<<<")
         }
       },
       selectedAttribute: {
@@ -233,10 +307,12 @@
     data() {
       return {
         selectedTaxid: 0,
+        selectedName: null,
         full: false,
+        selectedNameAttr: 'default (scientific name)',
         taxa: [],
         selectedAttribute: "S",
-        legendPlacement: 'side',
+        legendPlacement: 'bottom',
         legendPlacements: ['bottom', 'side'],
         dimensions: {
           windowHeight:0,
@@ -297,6 +373,9 @@
         this.selectedTaxid = event
         // 
       },
+      updateSelected(event){
+        this.selectedTaxid=event.taxid
+      },
       changeAttribute(rank){
         this.selectedAttribute = (rank ? rank  : 'base' )
         this.getUniqueLabels()
@@ -310,6 +389,7 @@
       this.dimensions.windowWidth = window.innerWidth
       this.dimensions.height = this.$refs.boxContainer.clientHeight*2
       this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
+      
     },
   };
 </script>

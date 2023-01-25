@@ -16,6 +16,33 @@ export  class Orchestrator {
         this.config = {}
         this.watcher = {}
         this.watcherBC = {}
+
+        
+        
+
+
+        this.bundleconfigDefaults= [
+            {
+                name: "NCBI names.dmp file",
+                'Names File': { "arg": "y", "value": null},
+                'Attributes': {"arg": "p", "value": ['common name']},
+                'Value Index': { "arg": "v", "value": 3},
+                'Column Index': { "arg": "c", "value": 7},
+            },
+            {
+                name: "Pre-Bundled", 
+                'Names File': { "arg": "y", "value": `${path.join(__dirname, 'data', 'names.tsv')}`},
+                'Attributes': {"arg": "p", "value": []},
+                'Value Index': { "arg": "v", "value": 2},
+                'Column Index': { "arg": "c", "value": null}
+            },
+        ],
+
+        this.bundleconfig = this.bundleconfigDefaults[1]
+        this.runBundle = true
+
+
+        
         this.samples = []
         this.watchdir = null
         this.reportfile = null
@@ -295,6 +322,7 @@ export  class Orchestrator {
         let basename = this.removeExtension(filepath)
         return (this.seenfiles.bcs.indexOf(basename) == -1 || overwrite)
     }
+    
     async  barcode(filepath, sample){
         const $this = this
         
@@ -920,8 +948,29 @@ export  class Orchestrator {
                 if (value && value == true && typeof value == 'boolean'){
                     additionals = `${additionals} --${key}` 
                 } else if (value && value !== true){
-                    additionals = `${additionals} --${key} ${value}`
+                    if (Array.isArray(value)){
+                        if (value.length >0){
+                            additionals = `${additionals} --${key} ${value.join(",")}`
+                        }
+                    } else {
+                        additionals = `${additionals} --${key} ${value}`
+                    }
                 } 
+            }
+            if (this.runBundle){
+                for(let [key, value] of Object.entries(this.bundleconfig))
+                {
+                    
+                    if (value && value.arg && Array.isArray(value.value)){
+                        if (value.value && value.value.length >0){
+                             
+                            command = `${command} -${value.arg} ${value.value.join(",")}`
+                        }
+                    } else if (value && value.arg && value.value) {
+                            command = `${command} -${value.arg} ${value.value}`    
+                    }
+                }
+
             }
             if (compressed == 'TRUE' && !additionals.match(/--gzip-compressed/g)){
                 additionals = `${additionals} --gzip-compressed `
@@ -930,6 +979,7 @@ export  class Orchestrator {
             if (additionals !== ''){
                 command = `${command} -a "${additionals}"`
             }
+            logger.info(`${command} `);
             let classify = spawn('bash', ['-c', command]);
             classify.stdout.on('data', (data) => {
                 logger.info(`${data} `);

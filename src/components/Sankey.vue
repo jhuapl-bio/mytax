@@ -187,7 +187,7 @@
           target: sankeyLeft,
           value: "left",
         },
-        width: 500,
+        width: 1500,
         options: [
           "path",
           "input",
@@ -360,7 +360,7 @@
         // Relative to container/ node rect
         node.append("text").classed("nodeText", true)
                 .attr("font-family", "sans-serif")
-                .attr("font-size",12)
+                .attr("font-size",9)
                 .attr("x", d => d.x0 < width / 2 ? 6 + (d.x1 - d.x0) : - 6) // +/- 6 pixels relative to container
                 .attr("y", (d,i) => {
                   if (i %3 == 1){
@@ -377,7 +377,7 @@
                 .text(d => d.name.split("-")[0]); 
         node.append("text").classed("nodeText", true)
                 .attr("font-family", "sans-serif")
-                .attr("font-size",10)
+                .attr("font-size",9)
                 .attr("dy", "-0.2em")
                 .attr("text-anchor", "start")
                 .text(d => Math.round((d.value + Number.EPSILON) * 100) / 100); 
