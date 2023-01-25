@@ -11,7 +11,11 @@
         <v-spacer>
         </v-spacer>
         <span style="margin-right: 10px" v-if="!samplesheetdata || samplesheetdata.length <= 0 ">No Data Loaded</span>
-        
+        <v-checkbox 
+            v-model="runBundle" style="text-align:center" @click="runBundleUpdate($event)" :label="`Enable Name Mapping`"
+        >
+        </v-checkbox>
+        <v-spacer></v-spacer>
         
         <v-btn btn-and-icon color="blue"   @mouseover="drawer=true" @click="drawer = true" >
           Data Sheet
@@ -27,6 +31,7 @@
         >
             <Samplesheet
               :samplesheet="samplesheetdata"
+              :bundleconfig="bundleconfig"
               :seen="samplekeys"
               :current="current"
               @sendNewWatch="sendNewWatch"
@@ -80,6 +85,7 @@
               </v-autocomplete>
               
               <v-spacer class="py-0"></v-spacer>
+              
               <v-text-field
                 hint="Max Depth of Tax Tree"
                 v-model="maxDepth"
@@ -136,6 +142,17 @@
               </v-select>
             </v-sheet>
           </v-col>
+          <!-- <v-select
+            v-model="selectedNameAttr"
+            :items="Object.keys(uniquenametypes)"    
+            color="white" style="padding-top: 50px"
+            width="5px"
+            :key="'selectednameattr'"
+            persistent-hint
+            hint="Change Name Display Type"
+            label="Name Type"
+          >
+          </v-select> -->
           <v-col
               sm="10"
               id=""
@@ -148,11 +165,12 @@
                   align-with-title v-for="(tabItem, key) in tabs" 
                   :key="`${key}-item`"
               >   
-
                   <v-container class="my-3">
                       <component
                           :is="tabItem.component"
                           :sampleData="selectedData"
+                          :bundleconfig="bundleconfig"
+                          :namesData="uniquenametypes"
                           :selectedsamples="selectedsamples"
                           :socket="socket"
                       >
@@ -180,6 +198,8 @@ import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
 import _ from 'lodash'
 
+
+
 export default {
     name: 'App',
     components: {
@@ -199,16 +219,26 @@ export default {
       selectedSomeRanks () {
         return this.defaults.length > 0 && !this.selectedAllRanks
       },
+      
     },
     
     data() {
         return {
             socket: {},
+            drawer: false,
             selectedsamples: [],
+            uniquenametypes: {
+              'default (scientific name)': 1
+            },
+            uniquenametypesarr: [],
             config: {},
             current: {},
-            names_file: "@/assets/js/names.tsv",
+            bundleindex:1,
+            
+            names_file_input: null,
+            names_file: "/names.tsv",
             seen: [],
+            mapped_names : {},
             samplekeys: [],
             database_file: null,
             db_option: "file",
@@ -220,7 +250,6 @@ export default {
             stagedData: {},
             paused: false,
             dialog: false,
-            drawer: false,
             connectedStatus: 'Not connected!',
             message: 'No message yet!',
             inputdata: null,
@@ -232,7 +261,8 @@ export default {
             database:null,
             watchdir:null,
             playbackdata: null,
-             
+            bundleconfig: null,
+            runBundle: true,
             nodeCountMax: 0,
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
             defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S1','S2','S3', 'S4'],
@@ -277,14 +307,34 @@ export default {
     watch: {
       selectedsamples(val){
         let data = {}
+        let unique_names = []
         val.map((sample)=>{
+          
+
+          
+
+        
           return data[sample] = this.sampledata[sample]
+        
+        
         })
+        
         this.selectedData = data
+      },
+      async names_file_input(newVal){
+        let reader = new FileReader(); // no arguments
+        const $this = this;
+        reader.addEventListener("load", parseFile, false);
+        reader.readAsText(newVal);
+        async function parseFile(){
+          let data = await d3.tsvParse(reader.result)
+          $this.mapData(data)
+        }
       },
       maxDepth(){
         this.filter()
       },
+      
       paused(newValue){
         if (!newValue){
           let keys = Object.keys(this.stagedData)
@@ -335,8 +385,10 @@ export default {
         } catch (err){
           console.error(err,"<<<")
         }
-
-        
+        let mappings = {}
+        const $this = this
+        let value = "Acinetobacter johnsonii;Acinetobacter genomospecies 7 (synonym), Acinetobacter genomosp. 7 (not a cat) (synonym)"
+        let val = $this.extractValue(value)
         // this.matchPaired = process.env.VUE_APP_paired_string
         // this.matchSingle = process.env.VUE_APP_single_string
         
@@ -347,16 +399,13 @@ export default {
         // Define socket and attach it to our data object
         this.socket = await new WebSocket(echoSocketUrl); 
         // When it opens, console log that it has opened. and send a message to the server to let it know we exist
-        this.socket.onopen = () => {
+        this.socket.onopen = (basepath) => {
             console.log('Websocket connected.');
             this.connectedStatus = 'Connected';
-
             
 
             this.sendMessage(JSON.stringify({type: "message", "message" : "Hello, server."}));
-            // this.sendNewWatch()
             this.sendMessage(JSON.stringify({type: "start", samplesheet: this.samplesheetdata, overwrite: false }));
-            // this.sendMessage(JSON.stringify({type: "playback", target: "/Users/merribb1/Documents/Projects/real-time-reporting/data/playback", "message" : "Begin watching"}));
         }
         // When we receive a message from the server, we can capture it here in the onmessage event.
         this.socket.onmessage = (event) => {
@@ -364,20 +413,12 @@ export default {
             let parsedMessage = JSON.parse(event.data);
             // If those data attributes exist, we can then console log or show data to the user on their web page.
             if (parsedMessage.type == 'data'){
-              // const $this = this;
-              // this.jsondata = JSON.parse(parsedMessage.data)
               ( async ()=>{
-                // if (!this.selectedsamples || this.selectedsamples.length <= 1 ){
-                //   this.selectedsamples.push(parsedMessage.samplename)
-                // }
                 let indexSamples = this.selectedsamples.indexOf(parsedMessage.samplename)
                 if(indexSamples == -1){
                   this.selectedsamples.push(parsedMessage.samplename)
                 }
                 let data  = await this.importData(parsedMessage.data, null, parsedMessage.samplename)
-                // this.fullData[parsedMessage.samplename ] = _.cloneDeep(data)
-                // data = data.splice(0,5)
-                // data[ data.length - 1 ].num_fragments_clade = 15
                 this.stagedData[parsedMessage.samplename] = data
                 if (!this.paused){
                   
@@ -389,12 +430,7 @@ export default {
                   } else  if (index == -1 && this.selectedData[parsedMessage.samplename]){
                     delete this.selectedData[parsedMessage.samplename]
                   }
-                  // setTimeout(()=>{
-                  //   $this.selectedData[parsedMessage.samplename] = fulldata.splice(0,9)
-                    // .splice(0,47)
-                    // $this.sampledata[parsedMessage.samplename] = fulldata.splice(0,9)
-                    // .splice(0,47)
-                  // },2000)
+              
                 } 
                   
                 this.samplekeys = Object.keys(this.selectedData)
@@ -408,6 +444,10 @@ export default {
               this.samplesheetdata.push(parsedMessage.data)
             } else if (parsedMessage.type == 'playback'){
               this.playbackdata = parsedMessage.message;
+            } else if (parsedMessage.type == 'basepathserver'){
+              this.basepathserver = parsedMessage.data;
+            } else if (parsedMessage.type == 'getbundleconfig'){
+              this.bundleconfig = parsedMessage.data;
             } else if (parsedMessage.type == 'logs'){
               this.logs.push(parsedMessage.data)
               const lasts = this.logs.slice(-100);
@@ -435,13 +475,80 @@ export default {
         pausedChange(val){
           this.paused = val
         },
-        updateConfig(val){
+        extractValue(value){
+          let mappings = {}
+          if (value){
+            let split =value.split(";")
+            if (split.length >1){
+              split = split[1]
+              split=split.split(", ")
+              if (split && split.length > 0 ){
+                  split.forEach((f)=>{
+                    var regExp = new RegExp(/(?<=\()(.*?)(?=\))|(?<=^)(.*)(?=\()/, "g");
+                    
+                    var matches = f.match(regExp)
+                    let attr = null
+                    let val = null
+                    if(matches && matches.length>1){
+                      val = matches[0].trim()
+                      attr = matches[1].trim()
+                      if (!this.uniquenametypes[attr]){
+                        this.uniquenametypes[attr] = 1
+                      }
+                      if (!mappings[attr]){
+                        mappings[attr] = [val]
+                      } else {
+                        mappings[attr].push(val)
+
+                      }
+
+                    }
+                  })
+
+              }
+            } else {
+              split =  value
+            }
+          }
+        return mappings
+      },
+      async getbasepath(){
+            try{
+                let data = await $this.ws.send(JSON.stringify({ type: "basepathserver" }))
+                console.log(data)
+            } catch {
+                console.error(err)
+            }
+        },
+        addDropFile(e) { 
+            this.names_file_input = e.dataTransfer.files[0]; 
+        },
+        runBundleUpdate(){
+          console.log(this.runBundle)
           this.sendMessage(JSON.stringify({
-                type: "updateConfig", 
-                config: val,
-                  "message" : `Config Updated for data, select restart run  next please `
+                type: "runbundle", 
+                config: this.runBundle,
+                  "message" : `Run Bundle config updates ${this.runBundle} `
               }
           ));
+        },
+        updateConfig(data, val){
+          if (val =='kraken2'){
+            this.sendMessage(JSON.stringify({
+                  type: "updateConfig", 
+                  config: data,
+                   "message" : `Config Updated for data, select restart run  next please `
+                }
+            ));
+          } else if (val =='bundle'){
+            console.log(val, data)
+            this.sendMessage(JSON.stringify({
+                  type: "updateBundleconfig", 
+                  config: data,
+                    "message" : `Bundle Config Updated for data, select restart run  next please `
+                }
+            ));
+          }
 
         },
         filter(){
@@ -469,7 +576,6 @@ export default {
           let sample = params.sample
           this.sampledata = {}
           this.stagedData = {}
-          console.log(params)
           if (sample){
             this.sendMessage(JSON.stringify({
                   type: "restart", 
@@ -513,7 +619,6 @@ export default {
             } else {
               this.defaults = this.defaultsList
             }
-            console.log(this.defaults,"<<<")
           })
         },
         waitForOpenConnection: function() {
@@ -599,11 +704,17 @@ export default {
           })
           return data
         },
+        mapData(data){
+          data.forEach((entry)=>{
+            this.mapped_names[entry.Taxid] = entry
+          })
+          
+        },
         async importNames(filepath){
+          
           try{
-            console.log(filepath)
             let text = await d3.tsv(filepath)
-            console.log(text)
+            this.mapData(text)
           } catch (Err){
             console.error(Err)
           }
@@ -615,6 +726,7 @@ export default {
           } else {
             text = information
           }
+          const $this = this
           let uniques  = {}
           let base = {
               value: 0,
@@ -633,6 +745,13 @@ export default {
             
             d[5] = d[5].trim()
             let size = 0
+            let value =  ( d[5] ? `${d[5]}` : "root" )
+            let target = value.replace(/\;.*/, "")
+            let fullMap = {}
+            let mappings = {}
+            
+            
+            let val = $this.extractValue(value)
             let data = {
               value: parseFloat(d[0]),
               num_fragments_clade: parseInt(d[1]),
@@ -640,7 +759,9 @@ export default {
               rank_code: d[3],
               taxid: d[4],
               size: size ,
-              target: ( d[5] ? `${d[5]}` : "root" ),
+              target: target,
+              full: value,
+              objfull: val,
               source: null,
               depth: found
             }

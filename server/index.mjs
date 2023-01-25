@@ -46,8 +46,10 @@ let max = 0
 app.ws('/ws', async function(ws, req) {
     logger.info("App Initiated") 
     let orchestrator = new Orchestrator(ws);
+    ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
     orchestrator.enableQueue()
     orchestrator.ws = ws  
+    ws.send(JSON.stringify({ type: "getbundleconfig", data: orchestrator.bundleconfig }));
     orchestrator.ws.on('message', async function(command) {
         // Let's put our message in JSON.stringify, and send it to the user who just sent the message
         // logger.info(`${command}`)
@@ -57,6 +59,19 @@ app.ws('/ws', async function(ws, req) {
             ws.send(JSON.stringify({ "message" : "hello" }));
         } else if (command.type == 'config'){
             ws.send(JSON.stringify({ type: "config", "message" : orchestrator.config }));
+        } else if (command.type == 'getbundleconfig'){
+            ws.send(JSON.stringify({ type: "getbundleconfig", "message" : orchestrator.bundleconfig }));
+        } else if (command.type == 'runbundle'){
+            orchestrator.runBundle = command.config
+        } else if (command.type == 'updateBundleconfig'){
+            if (typeof command.config == 'object'){
+                for (let[ key, value] of Object.entries(command.config)){
+                    if (orchestrator.bundleconfig.hasOwnProperty(key)){
+                        orchestrator.bundleconfig[key] = value
+                    }
+                }
+            }
+            orchestrator.bundleconfig = command.config
         } else if (command.type == 'updateConfig'){
             orchestrator.config = command.config
         }else if (command.type == 'extractTaxid'){ 
@@ -96,30 +111,15 @@ app.ws('/ws', async function(ws, req) {
                 logger.error(err)
             } 
         } 
-        // else if (command.type == 'watch'){
-        //     try{
+        // else if (command.type == 'basepathserver'){
+        //     try{ 
         //         let i=0
-        //         logger.info(`Get files from ${command.watchdir}`) 
+        //         ws.send(JSON.stringify({ type: "basepathserver", value: __dirname }));
         //     } catch(err){
         //         logger.error(err)
         //     } 
-            
-        //     orchestrator.setParams(command)
-           
-        //     if (command.restart){
-        //         console.log("command restart")
-        //         orchestrator.removeReport().then((resolve, reject)=>{
-        //             orchestrator.seenfiles = {}
-        //             orchestrator.watchReport(true)
-        //         }).catch((err)=>{ 
-        //             orchestrator.seenfiles = {}
-        //             orchestrator.watchReport(true)
-        //             logger.error(err)
-        //         })
-        //     } else {
-        //         orchestrator.watchReport()
-        //     }
-            
+        // } 
+        
             
 
         //     ////////////////////////////////////////////////////////////////////////////////////

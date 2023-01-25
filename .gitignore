@@ -8,6 +8,7 @@ example-data/classifications/*
 tmp/*
 tmp.*
 data
+!server/data
 logs
 output
 # local env files
