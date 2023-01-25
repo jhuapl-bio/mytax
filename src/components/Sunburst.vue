@@ -75,11 +75,14 @@
       selectedTaxid(val){
         let ele = d3.select("#sunburstDiv-"+this.samplename).select(this.fetchArc("#sliceMain", val))
         let data = ele.data()[0]
-        this.$emit("changeAttribute", data.data.data.rank_code)
-        this.focusOn(data)  
-        if (this.madeFirst){
-          this.updateColors()     
-          this.updateLegendTax()
+        if (!ele.empty()){
+          this.$emit("changeAttribute", data.data.data.rank_code)
+          this.focusOn(data)  
+          if (this.madeFirst){
+            this.updateColors()     
+            this.updateLegendTax()
+          }
+
         }
       },
       inputdata(
@@ -199,7 +202,7 @@
         this.inputdata.map((f)=>{
           if (taxValues.indexOf(f.target) == -1 && f.rank_code == this.selectedAttribute){
             
-            taxValues.push({label: f.target, taxid: f.taxid , rank_code: f.rank_code, abu: f.value, text: this.getText(f) })
+            taxValues.push({label: f.target, taxid: f.taxid , rank_code: f.rank_code, abu: f.value, text: this.getText(f), num_fragments_clade: f.num_fragments_clade })
           }
         })
         return taxValues
@@ -229,13 +232,14 @@
         const defaultColor = this.defaultColor
         let taxValues = this.getTaxValues()
         // const taxValues = this.taxValues 
-        const piechartLegendSVG = d3.select("#legendSVG-"+this.samplename)
-        
+        const piechartLegendSVG = d3.select("#legendSVG-"+this.samplename).classed("svgPieChartLegend", true)
+          
         let legend_wrapper = d3.select(`#legend_wrapper-${this.samplename}`)
         let legend_text_label = d3.select(`#legend_text_label-${this.samplename}`)
         legend_text_label.text("Rank: " + selectedAttribute)
         legend_text_label.text("Sample: " + this.samplename)
         legend_wrapper.style("overflow-y", "auto").style("overflow-x", "auto")
+          
         piechartLegendSVG.selectAll(".legendElement").remove()
         let childrenTaxes = this.childrenTaxes
         var legendElement ;
@@ -312,7 +316,8 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return d.text + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid + ', fragment count: '+d.num_fragments_clade;
+            console.log(d)
+            return d.text + ' (' + $this.roundNumbers(abu, 3) + '%) ' + `(${d.num_fragments_clade} fragments classified) taxid: ${d.taxid}`;
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
       },
@@ -781,7 +786,8 @@
               abu: f.data.data.value,
               rank_code: f.data.data.rank_code,
               label: f.data.data.target,
-              text: $this.getText(data),
+              num_fragments_clade: f.data.data.num_fragments_clade,
+              text: $this.getText(f.data.data),
               taxid: f.data.data.taxid
             })
             return f.data.data.rank_code
@@ -833,6 +839,10 @@
 
 .link:hover {
   stroke-opacity: .5;
+}
+.svgPieChartLegend {
+    min-width: 50vw;
+    overflow-x: auto;
 }
 .d3-zoom-controls {
       position: absolute;
