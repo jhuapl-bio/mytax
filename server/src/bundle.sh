@@ -24,6 +24,10 @@ usage() {
 	echo -e "   -s      paired pattern for sample"
 	echo -e "   -d      database path"
 	echo -e "   -a      additional kraken2 specific commands"
+	echo -e "   -y      appendable names.tsv designations file (must be in tsv format)"
+	echo -e "   -p      appendable names.tsv attributes from -y argument file"
+	echo -e "   -c      column in which the attribute is located in -y argument file"
+	echo -e "   -v      column in which the value is located in -y argument file"
 	echo -e "   -o      output kraken2 base path directory "
 	echo -e "" 
 }
@@ -35,7 +39,8 @@ awk_install() {
 	echo -e "" >&2
 }
 awk_version=$(awk --version  | head -n1)
-
+column=7
+value=5
 type="single"
 additional=""
 
@@ -44,7 +49,7 @@ additional=""
 
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hi:o:d:t:s:a:p:" OPTION
+while getopts "hi:o:d:t:s:a:p:y:c:v:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -53,8 +58,11 @@ do
 		o) output=$OPTARG ;;
 		a) additional=$OPTARG ;;
 		s) samplename=$OPTARG ;;
-		p) samplepattern=$OPTARG;;
+		p) namesAttrs=$OPTARG;;
+		y) names=$OPTARG;;
+		c) column=$OPTARG;;
 		d) database=$OPTARG ;;
+		v) value=$OPTARG ;;
 		?) usage; exit ;;
 	esac
 done
@@ -74,10 +82,11 @@ fi
 
 # check input arguments
 if [[ -z "$filepath" ]] ; then
-	echo -e "${RED}Error: specify an input kraken fastq file with -i OR sampleane with -s and paired end read ext with -p${NC}" >&2
+	echo -e "${RED}Error: specify an input kraken fastq file with -i OR sampleane with -s and paired end read ext with -p" >&2
 	usage
 	exit 2
 fi
+
 function real {
     if hash realpath; then
         realpath $1
@@ -114,42 +123,48 @@ echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report $
 
 kraken2 --db ${database} --output ${outputBase}.out $additional --report ${outputBase}.report $paired ${filepath} 
 
+
+if [[ ! -z "$names" ]] ; then
+	echo -e "${CYAN}Specified a names file with -p, appending to full.report" 
+fi
+if [[ ! -z $names ]] && [[  -f ${outputBase}.report ]]; then
+	if [[  ! -z $namesAttrs ]]; then
+		namesAttrs="-a $namesAttrs"
+	else 
+	echo "Unset"
+		unset namesAttrs
+	fi 
+	echo $namesAttrs | wc -c
+	echo -e "output report exists, $(ls -hlt $outputBase.report)"
+	echo -e "$namesAttrs are the identified attributes to map to a taxid"
+	echo "$outputBase.merged.report "
+	bash ${__dirname}/map_calls.sh \
+		-i $names \
+		-c $column  \
+		-o $outputBase.merged.report \
+		-v $value \
+		-m ${outputBase}.report "$namesAttrs" 
+	if [[  -s $outputBase.merged.report ]]; then
+		echo "adjusting to" $outputBase.merged.tsv "from " $outputBase.report
+		outputReport=$outputBase.merged.report
+	else 
+		echo "File doesn't exists $outputBase.merged.tsv, skipping"
+	fi 
+fi 
+
 files=$( find ${output} -name "*report" -not -name "full.report" )
 fullReport="${output}/full.report"
 echo "Combining all reports into aggregated report file $outputCombinedReport"
 
 if [[ -s ${fullReport} ]]; then 
 	echo "found existing full report" ${fullReport} 
-	bash ${__dirname}/combine.sh -i "${outputReport} $fullReport" -o $fullReport
+	head $fullReport
+	bash ${__dirname}/combine.sh \
+		-i "${outputReport} $fullReport" \
+		-o $fullReport
 else 
 	cp ${outputReport} $fullReport
 fi 
-
-
-# if [[ -s $outputFullOut ]]; then
-# 	s="${outputBase}.out $outputFullOut"
-# 	cat ${outputBase}.out >> $outputFullOut 
-# 	cat $outputFullOut  | sort | uniq  >  "$outputFullOut".tmp 
-# 	mv  "$outputFullOut".tmp  $outputFullOut
-# else 
-# 	s="${outputBase}.out" 
-# 	cp $s $outputFullOut
-# fi
-# if [[ -s $outputCombinedReport ]]; then
-# 	echo "bash ${__dirname}/combine.sh  -o $outputCombinedReport -i \"$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' )\" "
-# 	bash ${__dirname}/combine.sh -o $outputCombinedReport -i "$(find $output/reports -maxdepth 1 -path "*.report" -print0  | tr '\0' ' ' ) " 
-# 	# cp $outputCombinedReport $outputLastReport
-# else 
-# 	s="${outputBase}.report"
-# 	cp $s $outputCombinedReport
-# fi
-# for file in $files; do    
-# 	s="$s $file"
-# done  
-
-
-
-
 
 
 

@@ -11,6 +11,7 @@
             persistent-hint 
             single-line
             type="number"
+            min=1
           ></v-text-field>
           <div :id="`platesDiv`" 
             style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; height: 500px; overflow-y:auto;overflow-x:auto"
@@ -26,12 +27,15 @@
 // 
   export default {
     name: 'Plates',
-    props: ["inputdata", "dimensions", "socket", 'samplenames', 'selectedTaxid', 'selectedAttribute',  'legendPlacement'],
+    props: ["inputdata", "dimensions", "socket", 'samplenames', 'selectedTaxid', 'selectedAttribute',  'legendPlacement', 'selectedNameAttr'],
     watch: {
       selectedAttribute(val){
         if (val){
           this.makePlot()
         }
+      },
+      selectedNameAttr(val){
+        this.makePlot()
       },
       top_n(){
         this.makePlot()
@@ -57,9 +61,18 @@
 
     }),
     methods: {
+      getText(d){
+        const $this = this
+        
+        return ($this.selectedNameAttr ? ( $this.selectedNameAttr == 'default (scientific name)' ? 
+          d.target : ( d.objfull && d.objfull[$this.selectedNameAttr] && d.objfull[$this.selectedNameAttr].length >0 ? 
+            d.objfull[$this.selectedNameAttr][0] : d.target )   ) 
+          : d.target )
+
+      },
       makePlot(){
         let div = d3.selectAll("#platesDiv")
-        div.selectAll("#svgPlates").remove()
+        d3.selectAll("#svgPlates").remove()
         d3.selectAll("#svgLegend").remove()
         let samplenames = Object.keys(this.inputdata)
         let tops = []
@@ -81,16 +94,7 @@
                   })
                 } 
               }
-            
-            // let max = d3.maxIndex(data, (f)=>{
-            //   return f.value
-            // })
-            // if (max > -1){
-            //   tops.push({
-            //     name: samplename, 
-            //     top: data[max],
-            //     abu: data[max].value
-            //   })
+       
             } else {
               tops.push({
                 name: samplename,
@@ -101,15 +105,23 @@
             
           }
         }
+        const $this = this
+        let attribute = 'target'
+        if (this.selectedNameAttr && !this.selectedNameAttr == 'default (scientific name)'){
+          attribute = this.selectedNameAttr
+        }
+        let seentaxids = {}
         let unique_taxids = [ ... new Set(tops.map((f)=>{
-          return `${f.top.target}`
+          seentaxids[f.top.taxid] = `${this.getText(f.top)}`
+          return f.top.taxid
+          // return 
         }))]
         tops = []
         let scalesHeatmap = {}
         for (let [samplename, sample] of Object.entries(this.inputdata)){
           if (sample){
             let data = sample.filter((f)=>{
-              return unique_taxids.indexOf(f.target) > -1
+              return seentaxids[f.taxid]
             })
             data.forEach((entry)=>{
               tops.push({
@@ -150,10 +162,8 @@
               .attr("transform", 
                     "translate(" + margin.left + "," + margin.top + ")");
         
-
-        
-
-        var taxidScale = d3.scaleOrdinal().domain(unique_taxids).range(unique_taxids.map((_,i)=>{
+        console.log(unique_taxids)
+        var taxidScale = d3.scaleOrdinal().domain([]).range(unique_taxids.map((_,i)=>{
           return ((i) * this.boxWidth ) + this.margin.left - this.margin.right
         }))
         var sampleScale = d3.scaleOrdinal().domain(samplenames).range(samplenames.map((_,i)=>{
@@ -163,7 +173,7 @@
                         .data(tops)
                         .join("g").attr("class", "nodes")
                         .attr('transform', (d) => {
-                          return `translate(${taxidScale(d.top.target)}, ${sampleScale(d.name)})`
+                          return `translate(${taxidScale(d.top.taxid)}, ${sampleScale(d.name)})`
                         });  
 
 
@@ -192,14 +202,17 @@
                 .text(d => `${d.abu}%`); 
         // Add scales to axis
         var x_axis = d3.axisTop()
-                      .scale(taxidScale);
+                      .scale(taxidScale)
+                      .tickFormat((d,i) => { 
+                        return seentaxids[d]
+                      });
     
         //Append group and insert axis
         svg
           .append("g")
           .attr("transform", 
                     "translate(" + this.boxWidth/2 + "," + margin.top / 4 + ")")
-          .attr("class", "xAxis")
+          .attr("class", "xAxisPlate")
           .call(x_axis)
           .selectAll("text")
             .attr("x", 0)
@@ -223,38 +236,6 @@
           .call(y_axis);
 
 
-        // let r = 10
-        // let colorScalePiechart = d3.schemeCategory10.slice(1)        
-        // let colorRampPieChart = d3.scaleOrdinal(colorScalePiechart)
-        //   .domain(unique_taxids)
-        // var legendSvg = d3.select("#platesLegend").append('svg').attr("id", "svgLegend")
-        //       .attr("width", width + margin.left)
-        //       .attr("height", height + margin.top )
-        //     .append("g")
-        //       .attr("transform", 
-        //             "translate(" + 10 + "," + 10 + ")");
-        // const legendNodes = legendSvg.selectAll("g.legendNodes")
-        //   .data(unique_taxids)
-        //   .join("g")
-        //   .attr('transform', (d,i) => {
-        //     return `translate(${10}, ${(i)*r*2})`
-        //   })
-        //   .attr("class", 'legendNodes')
-        //   ; 
-        // legendNodes.append("circle").attr("r", r).style("fill", (d)=>{
-        //   return colorRampPieChart(d)
-        // })
-        // legendNodes.append("text").classed("nodeText", true)
-        //         .attr("font-family", "sans-serif")
-        //         .classed("text-caption", true)
-        //         .attr("dy", "0.25em")
-        //         .text((d)=>{
-        //           return d
-        //         })
-        //         .attr("text-anchor", "start")
-        //         .attr("dx", "1em")
-
-        
         
       }
     },

@@ -53,8 +53,16 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions", 'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
+    props: ["inputdata", "namesData", "selectedNameAttr", "dimensions", 'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
+      selectedNameAttr(val){
+        this.updateText()
+      },
+      namesData: {
+        deep:true,
+        handler(newVal){
+        }
+      },
       full(){
         if (this.madeFirst){
           this.updateColors()
@@ -190,7 +198,8 @@
         let taxValues = []
         this.inputdata.map((f)=>{
           if (taxValues.indexOf(f.target) == -1 && f.rank_code == this.selectedAttribute){
-            taxValues.push({label: f.target, taxid: f.taxid , rank_code: f.rank_code, abu: f.value })
+            
+            taxValues.push({label: f.target, taxid: f.taxid , rank_code: f.rank_code, abu: f.value, text: this.getText(f) })
           }
         })
         return taxValues
@@ -263,7 +272,8 @@
           .attr("id", (d)=>{
 
             return "legendElement-"+$this.samplename+d.taxid
-          });
+          })          
+          ;
 
         legendEnter.append('rect')
           .attr('x', 0)
@@ -271,12 +281,14 @@
           .attr('width', 25)
           .attr('height', 25)
           .attr("class", "legendRect")
+          
           .style('fill', defaultColor);
 
         legendEnter.append('text')
           .attr('x', 35)
-          .attr('y', 18)
+          .attr('y', 18)          
           .style('font-size', '14px');
+
         var legendUpdate = legendElement.merge(legendEnter)
           .transition().duration(0)
           .attr('transform', function (d, i) {
@@ -300,9 +312,50 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            return val + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid + ', fragment count: '+d.num_fragments_clade;
+            return d.text + ' (' + $this.roundNumbers(abu, 3) + ' %), taxid: '+d.taxid + ', fragment count: '+d.num_fragments_clade;
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)
+      },
+      getText(d){
+        const $this = this
+        
+        return ($this.selectedNameAttr ? ( $this.selectedNameAttr == 'default (scientific name)' ? 
+          d.target : ( d.objfull && d.objfull[$this.selectedNameAttr] && d.objfull[$this.selectedNameAttr].length >0 ? 
+            d.objfull[$this.selectedNameAttr][0] : d.target )   ) 
+          : d.target )
+
+      },
+      updateText(){
+        const $this = this
+        this.svg.selectAll(".textfull").remove()
+        let slices = this.svg.selectAll(".slice")
+        
+        let text = slices.append('text').classed("textfull",true)
+              // .attr('display', (d) => { return true} );
+              .attr('display', (d) => { return $this.textFits(d) ? null : 'none' } )
+              .style('fill', '#484848')
+
+              ;
+              // Add white contour
+              text.append('textPath').classed("whitecontour",true)
+                .attr('startOffset', '50%')
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .text((d =>{ 
+                  return $this.getText(d.data.data)
+                }))
+                .style('font-size', '10px')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2.5)
+                .style('stroke-linejoin', 'round')
+                .attr("dominant-baseline", "middle")
+
+              text.append('textPath').classed("hiddentext",true)
+                .attr('startOffset', '50%')
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .text(d =>  $this.getText(d.data.data))
+                .style('font-size', '10px')
+                .attr("dominant-baseline", "middle")
+        this.updateLegendTax()
       },
       updateColors(){
         let svg = this.svg
@@ -379,6 +432,7 @@
               name: data.target,
               totalabu: data.num_fragments_clade,
               originalsize: data.num_fragments_clade,
+              text: $this.getText(data),
               label: data.rank_code + " " + data.target + " " + data.taxid
             })
             d.data.totalabu =  data.num_fragments_clade
@@ -423,7 +477,7 @@
             alreadyseen[d.data.label].x1 = d.x1 
             alreadyseen[d.data.label].y1 = d.y1 
           }
-          return d.data.label 
+          return d.data.label
         }).join(
             function(enter){
               let returnable = enter.append('g').attr('class', 'slice')
@@ -435,7 +489,7 @@
               });
 
               returnable.append("title").text(function (d) {
-                return "Sample: " + $this.samplename + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
+                return "Sample: " + $this.samplename + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
                   "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
               })
               returnable.append('path')
@@ -497,26 +551,8 @@
               return exit.remove()
             }
         )
-        svg.selectAll(".textfull").remove()
-        let slices = svg.selectAll(".slice")
-        let text = slices.append('text').classed("textfull",true)
-              .attr('display', (d) => { return $this.textFits(d) ? null : 'none' } );
-              // Add white contour
-              text.append('textPath').classed("whitecontour",true)
-                .attr('startOffset', '50%')
-                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
-                .text(d => d.data.data.target)
-                .style('font-size', '12px')
-                .style('fill', 'none')
-                .style('stroke', '#fff')
-                .style('stroke-width', 4)
-                .style('stroke-linejoin', 'round');
+        this.updateText()
 
-              text.append('textPath').classed("hiddentext",true)
-                .attr('startOffset', '50%')
-                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
-                .text(d => d.data.data.target)
-                .style('font-size', '12px');   
 
         d3.zoom()
           .scaleExtent([1, 8])
@@ -703,7 +739,7 @@
       textFits(d) {
         const x = this.x;
         const y = this.y;
-        const CHAR_SPACE = 8;
+        const CHAR_SPACE = 5;
         const deltaAngle = x(d.x1) - x(d.x0);
         const r = Math.max(0, (y(d.y0) + y(d.y1)) / 2);
         const perimeter = r * deltaAngle;
@@ -738,12 +774,14 @@
       },
       setChildren(el){
         let taxes = []
+        const $this =this
         if (el.children){
           let ranks = el.children.map((f)=>{
             taxes.push({
               abu: f.data.data.value,
               rank_code: f.data.data.rank_code,
               label: f.data.data.target,
+              text: $this.getText(data),
               taxid: f.data.data.taxid
             })
             return f.data.data.rank_code
@@ -771,6 +809,7 @@
       {
         this.makeSunburst(this.inputdata)
       }
+      
     }, 
     
   };
