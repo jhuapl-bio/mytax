@@ -36,7 +36,7 @@
           <v-spacer></v-spacer>
           <v-autocomplete
             v-model="selectedName"
-            :items="selectedsamplesList"  
+            :items="Object.values(selectedsamplesList)"  
             @change="updateSelected($event)"  
             color="white" style="padding-top: 50px"
             width="5px"
@@ -51,15 +51,15 @@
               <v-icon>mdi-recycle
               </v-icon>
           </v-btn>
-          <v-switch
+          <!-- <v-switch
             :label="(full ? 'Show all at rank' : 'Show under taxid')" class="text-caption; "
             hint="Show all taxa at this rank or only those under selected taxid"
             v-model="full" hide-details persistent-hint v-if="tab == 1"
           >
-          </v-switch>
+          </v-switch> -->
           <v-spacer>
           </v-spacer>
-          <download-excel style="cursor:pointer" :data="selectedsamplesList">
+          <download-excel style="cursor:pointer" :key="`${fullArray.length}-downloadexcel`" :data="fullArray">
             <v-icon >mdi-download</v-icon>Download
             
           </download-excel>
@@ -137,7 +137,7 @@
                   :samplenames="selectedsamples"
                   :dimensions="dimensions"
                   :legendPlacement="legendPlacement"
-                  :inputdata="selectedsamplesList" 
+                  :inputdata="fullArray" 
                   :socket="socket"
               >
               </Datatable>
@@ -207,51 +207,8 @@
       Datatable
     },
     computed: {
-      selectedsamplesList(){
-        let lis =  []
-        if (this.sampleData && Object.keys(this.sampleData).length > 0){
-          Object.keys(this.sampleData).map((f)=>{
-            if (this.sampleData[f]){
-              Object.values(this.sampleData[f]).forEach((v)=>{
-                v.samplename = f
-                lis.push(v)
-              })
-
-            }
-          })
-        }
       
-        return lis
-      },
-      attrs(){
-        let returnable = []
-        console.log(this.namesData,"<<<")
-        return (Object.keys(this.namesData))
-        // for(let values of Object.values(this.sampleData)){
-        //   if (values){
-        //     values.forEach((entry)=>{
-        //       console.log(entry)
-        //       let split = entry['full'].split(";")
-        //       console.log(split)
-        //       if (split.length >1){
-        //         split = split[1]
-        //       } else {
-        //         split = entry.full
-        //       }
-        //       var regExp = /\(([^)]+)\)/;
-        //       var matches = regExp.exec("split");
-        //       console.log(matches, entry)
-
-        //     })
-        //   }
-          
-        // }
-        // if (!this.selectedNameAttr && returnable.length >0){
-        //   this.selectedNameAttr = returnable[0]
-        // }
-        return returnable
-
-      },
+     
       determineSize(){
         if (this.tab == 1){
           if (this.selectedsamples.length %3==0){
@@ -285,10 +242,24 @@
             }
             
           }
-          
+          let lis =  []
+          const $this=this
+          if (val && Object.keys(val).length > 0){
+            Object.keys(val).map((f)=>{
+              if (val[f]){
+                Object.values(val[f]).forEach((v)=>{
+                  v.samplename = f
+                  $this.$set($this.selectedsamplesList, v.taxid, v.full )
+                  lis.push(v)
+                })
+
+              }
+            })
+          }
           unique_ranks = [ ... new Set(unique_ranks.flat() ) ]
           this.ranks = unique_ranks
           this.getUniqueLabels()
+          this.$set(this, 'fullArray', lis)
         }
       },
       selectedNameAttr: {
@@ -308,6 +279,8 @@
       return {
         selectedTaxid: 0,
         selectedName: null,
+        fullArray: [],
+        selectedsamplesList: {},
         full: false,
         selectedNameAttr: 'default (scientific name)',
         taxa: [],

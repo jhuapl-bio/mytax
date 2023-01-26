@@ -316,7 +316,6 @@
               val = 'No ' + selectedAttribute + ' listed';
             }
             const abu = d.abu
-            console.log(d)
             return d.text + ' (' + $this.roundNumbers(abu, 3) + '%) ' + `(${d.num_fragments_clade} fragments classified) taxid: ${d.taxid}`;
           })
         piechartLegendSVG.attr("height", legendEnter.size() * 30)

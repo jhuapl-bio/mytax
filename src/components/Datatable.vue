@@ -32,7 +32,8 @@
             :items-per-page="100" 
             :search="search"
             :custom-filter="filter"
-            class="elevation-1 mx-5 px-6"					        
+            class="elevation-1 mx-5 px-6"
+            :width="1000"  
         >	
           <template v-slot:[`item.extract`]="{ item }">
               <v-btn
@@ -109,14 +110,8 @@
                 align:"center"  ,              
                 sortable: true
             },
-            // {
-            //     text: "Extract",
-            //     value: "extract",
-            //     align:"center"  ,              
-            //     sortable: true
-            // },
             {
-                text: "Name",
+                text: "Scientific Name",
                 value: "target",
                 align:"center"  ,              
                 sortable: true
@@ -142,6 +137,12 @@
             {
                 text: "Fragments Assigned",
                 value: "num_fragments_assigned",
+                align:"center"  ,              
+                sortable: true
+            },
+            {
+                text: "Fullname",
+                value: "full",
                 align:"center"  ,              
                 sortable: true
             },
