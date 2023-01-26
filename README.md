@@ -57,17 +57,22 @@ test,test2.fastq,,file,illumina,<path_to_database_directory>/flukraken2,
 
 An [example samplesheet](../examples/Samplesheet.csv) has been provided with the pipeline alongside some demo data.
 
-## Creating a Docker image
+## Creating a Docker image using the pre-built code.
+
+
+
 
 ```
 conda activate mytax2
 
 npm run build;
 
-
 docker build . -t jhuaplbio/basestack_mytax2; 
 
 ```
+
+This will first activate the necessary conda env `mytax2`. Then, it will build the compressed and compiled production app. Finally, it will make the Docker image and copy the bundled files into the image for use
+
 
 ## Get minikraken2 database
 
