@@ -760,7 +760,7 @@ export default {
               taxid: d[4],
               size: size ,
               target: target,
-              full: value,
+              full: `${d[4]} ${value}`,
               objfull: val,
               source: null,
               depth: found
