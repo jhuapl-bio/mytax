@@ -1,4 +1,4 @@
-FROM continuumio/miniconda3:4.9.2
+FROM nvidia/cuda:11.5.1-base-ubuntu18.04
 
 
 # Make RUN commands use `bash --login` (always source ~/.bashrc on each RUN)
@@ -12,6 +12,10 @@ RUN apt-get  --allow-releaseinfo-change  update && apt-get install git -y \
     && apt-get install -y g++ gcc \
     && apt-get -qq -y autoremove \
     && apt-get autoclean 
+
+
+ENV CONDA_DIR /opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && /bin/bash ~/miniconda.sh -b -p /opt/conda
 
 # Set up conda environment
 ENV PATH /opt/conda/bin:$PATH
