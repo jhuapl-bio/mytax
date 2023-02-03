@@ -1,5 +1,10 @@
 const winston = require('winston');
-
+const myformat = winston.format.combine(
+  winston.format.colorize(),
+  winston.format.timestamp(),
+  winston.format.align(),
+  winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
+);
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.json(),
@@ -20,7 +25,7 @@ const logger = winston.createLogger({
 //
 if (process.env.NODE_ENV !== 'production') {
   logger.add(new winston.transports.Console({
-    format: winston.format.simple(),
+    format: myformat
   }));
 }
 

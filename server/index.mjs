@@ -74,15 +74,21 @@ app.ws('/ws', async function(ws, req) {
             orchestrator.bundleconfig = command.config
         } else if (command.type == 'updateConfig'){
             orchestrator.config = command.config
-        }else if (command.type == 'extractTaxid'){ 
+        } else if (command.type == 'cancel'){
+            logger.info(`${command.index}: ${command.sample}, canceling....`)
+            orchestrator.cancel(command.index, command.sample)
+        } else if (command.type == 'rerun'){
+            logger.info(`${command.index}: ${command.sample}, canceling....`)
+            orchestrator.rerun(command.index, command.sample)
+        } else if (command.type == 'extractTaxid'){ 
             orchestrator.extractTaxid(command.taxid).then((f)=>{
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));
             })
         } else if (command.type == 'start'){ 
             try{
                 let i=0
-                // console.log(command,"start")
                 logger.info(`Starting run from samplesheet `) 
+                orchestrator.flush()
                 orchestrator.setSamples(command)
             } catch(err){
                 logger.error(err)
@@ -94,23 +100,36 @@ app.ws('/ws', async function(ws, req) {
             } catch(err){
                 logger.error(err)
             } 
-        } else if (command.type == 'barcode'){
+        } else if (command.type == 'gpu'){
             try{
                 let i=0
-                logger.info(`Barcoding ${command.dirpath} ${command.kits} `) 
-                orchestrator.barcode(command.dirpath, command.sample, command.run, command.kits)
+                orchestrator.setGpu(command.gpu)
+                logger.info(`Barcoding: GPU ${command.gpu ? 'Enabled' : 'Disabled'} `) 
             } catch(err){
                 logger.error(err)
             } 
         } else if (command.type == 'restart'){
             try{ 
                 let i=0
-                logger.info(`Starting restart of a sample `) 
-                orchestrator.setSampleSingle(command)
+                logger.info(`Starting restart of a sample ${command.sample}, ${command.overwrite}`) 
+                orchestrator.setSampleSingle(command.sample, command.overwrite)
+               
             } catch(err){
                 logger.error(err)
-            } 
-        } 
+            }  
+        } else if (command.type == 'pause'){
+            try{ 
+                let i=0
+                logger.info(`Pausing Run(s) value: ${command.pause}`) 
+                if (command.pause){
+                    orchestrator.pause()
+                } else {
+                    orchestrator.resume()
+                }
+            } catch(err){
+                logger.error(err)
+            }  
+        }
         // else if (command.type == 'basepathserver'){
         //     try{ 
         //         let i=0

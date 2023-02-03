@@ -1,9 +1,14 @@
 import chokidar from 'chokidar'
 import glob from "glob-all"
 import {logger} from './logger.js'
-import Queue from "queue-promise";
+import Queue from "queue";
 import path, { resolve } from 'path'
 import { fileURLToPath } from 'url'
+import {Barcoder} from "./barcoder.mjs"
+import {Classifier} from "./classifier.mjs"
+import {Sample} from "./sample.mjs"
+
+import { removeExtension , rmFile } from './controllers.mjs';
 import fs, { watch } from "fs"
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,18 +17,17 @@ import  { spawn } from 'child_process';
 export  class Orchestrator { 
     constructor(socket){         
         this.queue = null
+        this.queueList = []
         this.ws = socket
-        this.config = {}
         this.watcher = {}
-        this.watcherBC = {}
+        this.watcherBC = {} 
 
-        
         
 
 
         this.bundleconfigDefaults= [
             {
-                name: "NCBI names.dmp file",
+                name: "NCBI names.dmp file", 
                 'Names File': { "arg": "y", "value": null},
                 'Attributes': {"arg": "p", "value": ['common name']},
                 'Value Index': { "arg": "v", "value": 3},
@@ -51,6 +55,7 @@ export  class Orchestrator {
         this.database = null
         this.type = "single"
         this.logger = logger
+        this.config = {}
         this.config['memory-mapping']=true
         this.config['gzip-compressed'] = false
         this.config['bzip2-compressed'] = false
@@ -58,6 +63,7 @@ export  class Orchestrator {
         this.config['report-minimizer-data'] = false
         this.config['report-zero-counts'] = false
         this.config['quick'] = false
+        
         // this.config['threads'] = 1
         this.config['confidence'] = 0
         this.config['minimum-base-quality'] = 0
@@ -73,8 +79,8 @@ export  class Orchestrator {
         this.compressed = false
         this.ext = ".fastq"
         this.seenfile = null
+        this.queue = this.enableQueue()
         this.streamoutseen = null
-        this.enableQueue()
         logger.on("data", (stream)=>{
             let output = stream
             try{
@@ -87,151 +93,70 @@ export  class Orchestrator {
 
 
     } 
-    async watchDirectory(sample, overwrite){
-        const $this = this;
-        if (this.watcher[sample.sample] ){
-            this.watcher[sample.sample].close().then(() => console.log('closed')).catch((err)=>{
-                logger.error("no watcher available to cancel properly")
-            });
-        }
-        var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true});
-        this.watcher[sample.sample] = watcher
-        let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
-        let fullreport = path.join(outpath, sample.sample, 'full.report')
-        let exists_returned = await fs.existsSync(fullreport)
-        if (exists_returned && overwrite){
-            try{
-                await this.rmFile(fullreport)
-            } catch(err){
-                logger.error(err)
-            }
-        }
-        
-        function check_barcode(filepath){
-            // logger.info(`${filepath}: check file that is not a pre-barcoded fastq file`)
-            $this.seenfiles.bcs.push(filepath)
-            $this.check_and_barcode(filepath, sample, overwrite).then((runBC)=>{
-                
-                if (runBC){
-                    logger.info(`output from ${filepath} doesn't exist, demuxing now`)
-                    $this.checkAndAddFileToQueue(sample, filepath, null, 'barcode')
-                } else {
-                    logger.info(`skipping demux for ${filepath}`)
-                } 
-            }).catch((err)=>{
-                logger.error(`${err}`)
-            })
-        }
-        function check_file(filepath){
-            // logger.info(`${filepath}: check file that is not a pre-barcoded fastq file`)
-            $this.seenfiles.fastqs.push(filepath)
-            $this.check_and_classify(filepath, null,  sample.sample, overwrite).then((runClassify)=>{ 
-                
-                if (runClassify){
-                    logger.info(`report from ${filepath} doesn't exists, classifying now`)
-                    $this.checkAndAddFileToQueue(sample, filepath, runClassify, 'classify')
-                } else {
-                    // logger.info(`skipping report making for ${filepath}`)
-                } 
-            }).catch((err)=>{
-                logger.error(`${err}`)
-            })
-        }
-        if (sample.demux && sample.demux !== 'false' && sample.demux !== 'FALSE'){
-            if (overwrite){
-                this.seenfiles.bcs = []
-            }
-            try{
-                await this.barcodeWatch(sample.path_1, sample)
-            } catch (Err){
-                logger.error(Err)
-            }
-        } 
-        let files = await this.globFiles([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], { nodir: true })
-        // let files = await this.globFiles(`${sample.path_1}/**/**/${this.match}`, { nodir: true })
-        if (files){
-            files.forEach((filepath)=>{
-                if (!sample.demux){
-                    check_file(filepath)
-                } else {
-                    check_barcode(filepath, sample)
-                }
     
-            })
-        }
-        if (!sample.demux){
-
-        
-            watcher  
-                .on('add', function(filepath) {
-                    if ($this.seenfiles.fastqs.indexOf(filepath) == -1){
-                        logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
-                        $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                        check_file(filepath)
-                    } else { 
-                        logger.info(`File ${filepath} has already been seen for sample: ${sample.sample}`)
-                    }
-                        
-                        
-                    
-                }) 
-                .on('change', function(filepath) {
-                    logger.info(`File ${filepath} has been changed`);
-                })
-                .on('unlink', function(filepath) {
-                    logger.info(`File ${filepath} has been removed`);
-                })
-                .on('error', function(error) {
-                    logger.error(`Error happened ${error}`); 
-                })  
-        }
-        
-        
-    
-    
-    } async setSampleSingle(sample){
+    async setSampleSingle(s, overwrite){
         try{
-            await this.setupSample(sample.sample, sample.overwrite)
+            if (this.samples[s.sample]){
+                this.samples[s.sample].cancel()
+                delete this.samples[s.sample]
+            }
+        } catch (err){
+            logger.error(err)
+        }
+        try{
+            let sample = new Sample(s, this.queue)
+            sample.gpu = this.gpu
+            sample.ws = this.ws 
+            sample.overwrite = overwrite
+            sample.config = this.config
+            sample.bundleconfig = this.bundleconfig
+            this.samples[sample.sample] = sample
+            sample.setupSample()
         } catch (err){
             logger.error(`${err}`)
         }
     }
-    async setSamples(samples){
+    async setSamples(samples, overwrite){
         logger.info(`${process.env} ${path.cwd}-----${samples}`)
         const $this = this
-        if (this.samples){
-            this.samples.forEach((sample)=>{
-                if (sample.watcher){
-                    try{ 
-                        sample.watcher.close()                        
-                    } catch (err){
-                        console.error(`${err} error in closing existing watcher`)
-                    }
-                }
+        this.samples = {}
+        if (samples.samplesheet){
+            samples.samplesheet.forEach((s)=>{
+                $this.setSampleSingle(s, samples.overwrite)
             })
         }
-        try{ 
-            console.log("close queue..............")
-            this.queue.close()
-        } catch (err){
-            console.error(`${err} error in closing queue`)
-        } finally{
-            for (let i = 0; i < samples.samplesheet.length; i++){
-                await $this.setupSample(samples.samplesheet[i], samples.overwrite)
+    }
+    setGpu(gpu){
+        logger.info(`${gpu}, setting the gpu for barcoding purposes`)
+        this.gpu = gpu ?  ' -x cuda:0' : ''
+        if (this.samples){
+            const $this = this
+            try{    
+                for (let[key, sample] of Object.entries(this.samples)){
+                    sample.gpu = ( gpu ? '-x cuda:0' : '')
+                    sample.queueList.forEach((job)=>{
+                        if (job.job){
+                            job.job.gpu = ( gpu ? '-x cuda:0' : '')
+                            job.job.generateCommandString()
+                        }
+                    })
+                }
+            } catch (err){
+                logger.error(`${err}, error in setting gpu for commands`)
             }
         }
-        
-        
     }
-    async setupSample(sample, overwrite){
+    async createSample(sample, overwrite){
         const $this = this
+        let sampleObj = new Sample(sample)
+
         if (overwrite){
             let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
             let fullreport = path.join(outpath, 'full.report')
             let exists_returned = await fs.existsSync(fullreport)
             if (exists_returned){
                 try{
-                    await this.rmFile(fullreport)
+                    await rmFile(fullreport)
                 } catch(err){
                     logger.error(err)
                 }
@@ -250,130 +175,31 @@ export  class Orchestrator {
             sample.files = []
             this.watchDirectory(sample, overwrite)
         }  
-        // else if (sample.path_1 && sample.format == 'run'){
-        //     sample.files = []
-        //     this.barcodeWatch(sample.path_1, sample, ( sample.kits ? sample.kits.split(" ") : ['barcode_arrs_nb12.cfg'] ) )
-        // } 
+        
         return 
     }
-    removeExtension(filename) {
-        return path.basename(filename.replace(/\.[^\/.]+/g, ''));
-    }
+    
     resetSeenfiles(){
         this.seenfiles = {
             bcs: [],
             fastq: []
         }
     }
-    async barcodeWatch(dirpath, sample){
-        const $this = this;
-        if (this.watcherBC[sample.sample] ){ 
-            this.watcherBC[sample.sample].close().then(() => console.log('closed')).catch((err)=>{
-                logger.error("no barcoding watcher available to cancel properly")
-            }); 
-        }
-        this.watcherBC[sample.sample] = chokidar.watch([`${dirpath}/*fastq.gz`,`${dirpath}/*fastq`,`${dirpath}/*fq.gz`, `${dirpath}/*fq`], {ignored: /^\./, persistent: true});
-        let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
-        let fullreport = path.join(outpath, sample.sample, 'full.report')
-         
-        try{
-            let demuxoutpath = path.join(dirpath, 'demultiplexed') 
-            let files = await this.globFiles([`${demuxoutpath}/**/*fastq.gz`,`${demuxoutpath}/**/*fastq`,`${demuxoutpath}/**/*fq.gz`, `${demuxoutpath}/**/*fq`], {})     
-            if (files){
-                files.forEach((file)=>{
-                    $this.seenfiles.bcs.push($this.removeExtension(file))
-                })
-            }
-        } catch (Err){
-            logger.error(Err)
-            return null 
-        }
-        console.log("watch1", sample.sample)
-        this.watcherBC[sample.sample]
-            .on('add', function(filepath) {
-                logger.info(`File ${filepath} has been added for barcoding demux`);
-                $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                $this.checkAndAddFileToQueue(sample, filepath, null, 'barcode')
-            })
-
-            .on('unlink', function(filepath) {
-                logger.info(`File ${filepath} has been removed`);
-            })
-            .on('error', function(error) { 
-                logger.error(`Error happened ${error}`);
-            }) 
-        let exists_returned = await fs.existsSync(dirpath) 
-        if (exists_returned ){
-            try{
-                $this.queue.enqueue(async () =>{ 
-                    let output_path = path.join(dirpath, 'demultiplexed')
-                    $this.addSamples(output_path, sample.pattern, sample.run, sample)
-                } ); 
-                
-            } catch(err){
-                logger.error(err)
-            }
-        }
-        
-
-       
-    }
-    async check_and_barcode(filepath, sample, overwrite){
-        let basename = this.removeExtension(filepath)
-        return (this.seenfiles.bcs.indexOf(basename) == -1 || overwrite)
-    }
+    
+    
     
     async  barcode(filepath, sample){
         const $this = this
         
         return new Promise((resolve, reject)=>{
-            let kits = sample.kits
-            $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
-            let dirpath = path.dirname(filepath)
-            const millis = Date.now().toString();
-            let basename = this.removeExtension(filepath);
-            let stagepath_demux = path.join(dirpath, 'staged', path.basename(filepath))
-            let stagepath_Demux_filename = path.join(stagepath_demux, path.basename(filepath))
-            let output_path = path.join(dirpath, 'demultiplexed')
-            let ext = ".fastq.gz"
-            let individual_output_path = path.join(stagepath_demux, 'demultiplexed')
-            let command = `rm -r ${stagepath_demux}; mkdir -p ${stagepath_demux};  \
-            ln -s ${filepath} ${stagepath_Demux_filename};   guppy_barcoder --require_barcodes_both_ends --compress_fastq --disable_pings  \
-            -i "${path.dirname(stagepath_Demux_filename)}" \
-            -s "${individual_output_path}" \
-            --barcode_kits "${kits}"; \
-            for f in $(find ${individual_output_path} -type d -name "barcode*"); do \
-                echo $f ; \
-                for file in $(find $f -type f ); do \
-                    mkdir -p ${output_path}/$(basename $f);
-                    cp $file ${output_path}/$(basename $f)/${basename}${ext}; \
-                done; \
-            done\
-
-
-
-            `
-            var  ls = spawn('bash', ['-c', command ]);
-            // var  ls = spawn('bash', ['-c', ` ls -lht "${output_path}"  ` ]);
-            // logger.info(command)
-            ls.stdout.on('data', (data) => { 
-                logger.info(`stdout: ${data}`);
-            });
-        
-            ls.stderr.on('data', (data) => {
-                logger.error(`stderr: ${data}`); 
-            });
-            ls.on('error', function(error) {
-                logger.error(`Error happened ${error}`);
-                $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
-                resolve(error)
-            })  
-            ls.on('close', (code) => {
-                logger.info(`child process exited with code for demux ${code} ${sample.sample}`);
-                $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: false }))
-                $this.addSamples(output_path, sample.pattern, dirpath,sample)
-                resolve(code)
-            }); 
+            try{
+                // $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
+                let barcoder = new Barcoder(sample, filepath)
+                resolve(barcoder)
+            } catch (err){
+                logger.error(err)
+                reject()
+            }
         })
         
     }
@@ -409,63 +235,79 @@ export  class Orchestrator {
             logger.error(`${err} error in reading barcode outputs`)
         }
     }
-    async check_and_classify(path_1, path_2,  sample, overwrite){
-        try{
-            let outpath = path.join(path.dirname(path_1), sample)            
-            let sampleReport = this.getReportName(path_1, path_2, outpath)
-            let fullreport = (sample.directory ? path.join(outpath, sample, 'full.report') :  path.join(outpath, 'full.report'))
-            if (overwrite){
-                return sampleReport
-            } else {
-                let returned = null
-                let returnedFull = false
-                try{
-                    returnedFull = await fs.existsSync(fullreport)
-                } catch (err ){
-                    logger.error(`${err} error in getting full report name for sample: ${sample}`)
-                    return sampleReport
-                } 
-                if (!returnedFull){
-                    return sampleReport
-                }
-                try{
-                    returned = await fs.existsSync(sampleReport)
-                } catch (err){
-                    logger.error(`${err} error in getting full report name for sample: ${sample}`)
-                    return sampleReport
-                } finally {
-                    if (returned){ 
-                        try{
-                            this.sendFullReportSample(fullreport, sample)
-                        } catch (err){
-                            console.error(err)
-                            logger.error(`${err} error in getting full report name for sample: ${sample}`)
-                        }
-                    }
-                    return (!returned ? sampleReport : null )
-                }
-                
-            }
-        } catch (Err){
-            logger.error(Err)
-            return null
-        }
-    }
+    
     enableQueue(){
         const queue = new Queue({
-            concurrent: 1,
+            concurrency: 1,
+            autostart: true,
             interval: 2000
         });
-        queue.on("start", () => logger.info("started queue"));
+        queue.on("start", () => {
+            try{
+                this.ws.send(JSON.stringify({ type: "anyRunning",  status: true}))
+            } catch (err){
+                logger.error(`${err} error in sending status of running in queue`)
+            }
+        });
+        const $this = this
         queue.on("stop", () => logger.info("stopped queue"));
-        queue.on("end", () => logger.info("Ended queue"));
+        queue.on("end", () => {
+            logger.info("Ended queue")
+            try{
+                this.ws.send(JSON.stringify({ type: "anyRunning",  status: false}))
+            } catch (err){
+                logger.error(`${err} error in sending status of running in queue`)
+            }
+        });
 
-        queue.on("resolve", data => console.log(data));
-        queue.on("reject", error => console.error(error));
-        this.queue = queue 
+        // queue.on("resolve", data => console.log(data));
+        // queue.on("reject", error => console.error(error));
+        return queue 
 
+ 
 
-
+    }
+    resume(val){
+        try{
+            this.queue.start()
+            this.ws.send(JSON.stringify({ type: "message",  message: `Resumed`}))
+        } catch (err){
+            logger.error(`${err} error in resuming the job(s)`)
+            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+        }
+    }
+    async rerun(index, sample){
+        try{
+            if (this.samples[sample].demux){
+                this.samples[sample].overwrite = true
+            }
+            if (this.samples[sample] && this.samples[sample].queueList){
+                let job = this.samples[sample].queueList[index]
+                job.job.gpu = this.gpu
+                job.job.overwrite = true
+                job.job.recombine = true
+                
+                job.job.generateCommandString()
+                job.job.start()
+                this.ws.send(JSON.stringify({ type: "message",  message: `Rerunning... ${sample}`}))
+            } else {
+                this.ws.send(JSON.stringify({ type: "error",  message: `Rerunning ... failed`}))
+            }
+            
+        } catch (err){
+            logger.error(`${err} error in resuming the job(s)`)
+            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+            
+        }
+    }
+    pause(val){
+        try{
+            this.queue.stop()
+            this.ws.send(JSON.stringify({ type: "message",  message: `Paused`}))
+        } catch (err){
+            logger.error(`${err} error in pausing the job(s)`)
+            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+        }
     }
     async removeReport(){
         const $this = this
@@ -474,12 +316,12 @@ export  class Orchestrator {
                 // await 
                 let promises = []
                 const $this = this
-                promises.push(this.rmFile(this.seenfile))
-                promises.push(this.rmFile(this.reportfile))
-                promises.push(this.rmFile(`${this.watchdir}/classifications/classifications.last.report`))
+                promises.push(rmFile(this.seenfile))
+                promises.push(rmFile(this.reportfile))
+                promises.push(rmFile(`${this.watchdir}/classifications/classifications.last.report`))
                 Object.keys($this.seenfiles.fastqs).forEach((f)=>{
                     let filename = `${path.join(this.classificationsDir, 'reports', f)}.report`
-                    promises.push(this.rmFile(filename))
+                    promises.push(rmFile(filename))
                 })
                 this.resetSeenfiles()
                 Promise.allSettled(promises).then((f)=>{
@@ -542,28 +384,7 @@ export  class Orchestrator {
             logger.info(`child process exited with code ${code}`);
         }); 
     }
-    rmFile(filepath){
-        return new Promise((resolve, reject)=>{
-            fs.stat(filepath, (err)=>{
-                if (!err){
-                    fs.unlink(filepath, (err, data)=>{
-                        if (err){
-                            logger.error("error in removing file")
-                            logger.error(err)
-                            reject(err)
-                            
-                        } else {
-                            logger.info("Removed")
-                            resolve()
-                        }
-                    })  
-                } else {
-                    resolve()
-                }
-            })
-                   
-        })
-    }
+    
     copyFile(filepath, outputpath){
         fs.copyFile(filepath, outputpath, (err, data)=>{
             if (err){
@@ -795,35 +616,63 @@ export  class Orchestrator {
         returnable = returnable.replaceAll(re, "")
         return returnable
     }
-    getReportName(path_1, path_2, outpath){
-        if (path_1 && !path_2 ){ 
-            return path.join(outpath, `${path.parse(path_1).name}.report`)
-        } else {
-            return path.join(outpath, `${path.parse(path_1).name}.report`)
-        }
-    }
+    
     flush(){
         logger.info("flush queue, cancel job(s)")
         try{
-            this.queue.stop()
-            // this.queue.clear()
+            this.queue.end()
+            if (this.samples){
+                for (let [key, value] of Object.entries(this.samples)){
+                    if (value.queueList){
+                        value.queueList.forEach((job)=>{
+                            try{
+                                job.job.stop()
+                            } catch (Err){
+                                logger.error(`${Err} error in canceling running process`)
+                            }
+                            
+                        })
+                    }
+                }
+            }
+            this.ws.send(JSON.stringify({ type: "message", message: "flushed queue, canceled job(s)" }))
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)
         }
     }
     checkAndAddFileToQueue(sample, filepath, report, type){
         const $this = this;
+        let msg = {}
         if (type == 'barcode'){
-            $this.queue.enqueue(async () =>{ 
-                $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
-                await $this.barcode(filepath, sample) 
-            } );
+            let barcoder = new Barcoder(sample, filepath)
+            try{
+                barcoder.start().then((f)=>{
+                    console.log(`${f} code exited for run of barcoder`)
+                    $this.ws.send(JSON.stringify({ type: "recentQueue", data: barcoder }))
+                }).catch((err)=>{
+                    logger.error(err)
+                })
+            } catch (err){
+                logger.error(err)
+            }
+            msg = barcoder
         } else {
-            $this.queue.enqueue(async () =>{ 
-                $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
-                await $this.classify(sample.database, filepath, report, (sample.path_2 && sample.path_1 ? true : false), sample.compressed, sample.sample) 
-            } );
+            try{
+                let barcoder = new Classifier(sample, filepath)
+                classifier.start().then((f)=>{
+                    console.log(`${f} code exited for run of barcoder`)
+                    $this.ws.send(JSON.stringify({ type: "recentQueue", data: classifier }))
+                }).catch((err)=>{
+                    logger.error(err)
+                })
+                msg = classifier
+            } catch (err){
+                logger.error(err)
+            }
+            msg = barcoder
+            
         } 
+        
     } 
     defineSample(filepath){
         let re = new RegExp(this.match.replaceAll(".\*", ""), "gi")
@@ -831,7 +680,17 @@ export  class Orchestrator {
             let samplename = path.basename(filepath.replace(re, ""))
             return samplename
         } else {
-            return path.basename(filepath)
+            return path.basename(filepath) 
+        }
+    }
+    cancel(index, sample){
+        try{
+            let s = this.samples[sample]
+            console.log(sample, index)
+            s.cancel(index)
+        } catch (Err){
+            logger.error(`${Err} error in canceling job(s)`)
+            throw Err
         }
     }
     
@@ -906,10 +765,6 @@ export  class Orchestrator {
                 $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
                 $this.checkAndAddFileToQueue(filepath,sam)
             })
-
-            // .on('change', function(filepath) {
-            //     logger.info(`File ${filepath} has been changed`);
-            // }) 
             .on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);
             })
@@ -935,8 +790,7 @@ export  class Orchestrator {
             
     
             logger.info(`report for: ${filepath},  database: ${database}, output to: ${outputdir}` )
-            let command = `
-                bash ${__dirname}/src/bundle.sh  -i "${filepath}" -o "${outputdir}"  -d "${database}"  `
+            let command = `bash ${__dirname}/src/bundle.sh  -i "${filepath}" -o "${outputdir}"  -d "${database}"  `
             if (paired){ 
                 command=`${command} -t paired `
             }
@@ -999,19 +853,7 @@ export  class Orchestrator {
             });
         })
     } 
-    sendFullReportSample(reportpath, samplename){
-        const $this = this
-        // logger.info(`${reportpath}: file done, sending sample data for sample ${samplename}`)
-        fs.readFile(reportpath,(err,data)=>{
-            if (err){
-                logger.error(err)
-            } else {
-                
-                $this.ws.send(JSON.stringify({ type: "data", samplename: samplename, "data" : data.toString()})) 
-            }
-        
-        })
-    }
+    
     
     
     
