@@ -21,9 +21,9 @@
 
 
 <template>
-  <v-container  style="padding-top: 10px; max-height:1000px; ">
+  <v-container  style="padding-top: 10px;   " :ref="'boxContainer'">
     <v-row>
-      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px; ; max-height:1000px; ">
+      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px;   ">
         <div :id="`sunburstDiv-${samplename}`">
         </div>
       </v-col>
@@ -39,7 +39,7 @@
           </div>
         </div>
         <div :id="`legend_wrapper-${samplename}` "
-              style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; height: 200px; overflow-y:auto;overflow-x:auto">
+              style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; max-height: 200px; overflow-y:auto;overflow-x:auto">
         </div>  
       </v-col>
       
@@ -53,7 +53,7 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "namesData", "selectedNameAttr", "dimensions", 'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
+    props: ["inputdata", "namesData", "selectedNameAttr",  'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
       selectedNameAttr(val){
         this.updateText()
@@ -146,6 +146,12 @@
         maxAbu: 100000000,
         minAbu:10e-05,
         resetUpdateChecked: true,
+        dimensions: {
+          windowHeight:0,
+          windowWidth: 0,
+          height: 0,
+          width: 0,
+        },
         abuThresholdMin: 0,
         defaultAbuThresholdMin: 10e-5,
         // abuThresholdMin: 10e-5,
@@ -402,7 +408,6 @@
         const y = this.y
         svg
           .attr('viewBox', `${-maxRadius} ${-pieHeight / 2} ${maxRadius * 2} ${pieHeight}`)
-
         const radius = this.width / this.maxRanks
         this.radius = radius
         const middleArcLine = d => {
@@ -481,7 +486,7 @@
             alreadyseen[d.data.label].x1 = d.x1 
             alreadyseen[d.data.label].y1 = d.y1 
           }
-          return d.data.label
+          return `${d.data.label}-${d.data.data.num_fragments_clade}`
         }).join(
             function(enter){
               let returnable = enter.append('g').attr('class', 'slice')
@@ -491,7 +496,6 @@
               }).attr("id", (d) => {
                 return $this.fetchArc("slice", d.data.data.taxid)
               });
-
               returnable.append("title").text(function (d) {
                 return "Sample: " + $this.samplename + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
                   "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
@@ -810,6 +814,10 @@
       }
     },
     async mounted() {
+      this.dimensions.windowHeight = window.innerHeight
+      this.dimensions.windowWidth = window.innerWidth
+      this.dimensions.height = this.$refs.boxContainer.clientHeight*2
+      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
       if (this.inputdata)
       {
         this.makeSunburst(this.inputdata)

@@ -26,7 +26,7 @@
     
     <v-row>
       
-      <v-col sm="12" :ref="'boxContainer'" >
+      <v-col sm="12"  >
         <v-toolbar extended
           dark
         >
@@ -42,6 +42,7 @@
             width="5px"
             :key="'selectsearchcomplete'"
             item-text="full"
+            v-if="tab==1"
             return-object
             label="Search Name"
           >
@@ -249,7 +250,7 @@
               if (val[f]){
                 Object.values(val[f]).forEach((v)=>{
                   v.samplename = f
-                  $this.$set($this.selectedsamplesList, v.taxid, v.full )
+                  $this.$set($this.selectedsamplesList, v.taxid, {taxid: v.taxid, full: v.full } )
                   lis.push(v)
                 })
 
@@ -265,7 +266,6 @@
       selectedNameAttr: {
         deep:true,
         handler(newVal){
-          console.log(newVal,"<<<")
         }
       },
       selectedAttribute: {
@@ -344,6 +344,7 @@
       },
       jumpTo(event){
         this.selectedTaxid = event
+        
         // 
       },
       updateSelected(event){
@@ -358,10 +359,7 @@
       
     },
     async mounted() {
-      this.dimensions.windowHeight = window.innerHeight
-      this.dimensions.windowWidth = window.innerWidth
-      this.dimensions.height = this.$refs.boxContainer.clientHeight*2
-      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
+      
       
     },
   };

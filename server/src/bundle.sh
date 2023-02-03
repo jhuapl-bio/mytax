@@ -24,6 +24,7 @@ usage() {
 	echo -e "   -s      paired pattern for sample"
 	echo -e "   -d      database path"
 	echo -e "   -a      additional kraken2 specific commands"
+	echo -e "   -r      recombine all report files into the full report before merging EXCEPT the current report being made"
 	echo -e "   -y      appendable names.tsv designations file (must be in tsv format)"
 	echo -e "   -p      appendable names.tsv attributes from -y argument file"
 	echo -e "   -c      column in which the attribute is located in -y argument file"
@@ -41,6 +42,7 @@ awk_install() {
 awk_version=$(awk --version  | head -n1)
 column=7
 value=5
+recombine='false'
 type="single"
 additional=""
 
@@ -49,7 +51,7 @@ additional=""
 
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hi:o:d:t:s:a:p:y:c:v:" OPTION
+while getopts "hi:o:d:t:s:a:p:y:c:v:r" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
@@ -57,6 +59,7 @@ do
 		t) type=$OPTARG ;;
 		o) output=$OPTARG ;;
 		a) additional=$OPTARG ;;
+		r) recombine='true' ;;
 		s) samplename=$OPTARG ;;
 		p) namesAttrs=$OPTARG;;
 		y) names=$OPTARG;;
@@ -121,6 +124,14 @@ mkdir -p ${output}
 
 echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report ${outputReport} $paired ${filepath} "
 
+# alreadyseen=0
+# if [[ -f ${outputBase}.report ]]; then
+# 	alreadyseen="${outputBase}.report.bk"
+# 	cp ${outputBase}.report ${outputBase}.report.bk
+# fi
+
+
+
 kraken2 --db ${database} --output ${outputBase}.out $additional --report ${outputBase}.report $paired ${filepath} 
 
 
@@ -154,17 +165,37 @@ fi
 
 files=$( find ${output} -name "*report" -not -name "full.report" )
 fullReport="${output}/full.report"
+
+
+
 echo "Combining all reports into aggregated report file $outputCombinedReport"
 
-if [[ -s ${fullReport} ]]; then 
-	echo "found existing full report" ${fullReport} 
-	head $fullReport
-	bash ${__dirname}/combine.sh \
-		-i "${outputReport} $fullReport" \
-		-o $fullReport
-else 
-	cp ${outputReport} $fullReport
+echo "found existing full report" ${fullReport} 
+i=0
+# if [[ $recombine == 'true' ]]; then 
+files=""
+for file in $(ls $output/*.report); do 
+	basepath=$(basename $file)
+	if [[ $file !=  $output"/full.report" ]]; then 
+		files=$files" $file"
+		i=$(( $i + 1 ))
+	fi 
+done  
+if [[ $files != "" ]]; then 
+	combine_kreports.py --only-combined --no-headers  -o $fullReport -r  $files
 fi 
+
+# fi 
+# if [[ $i == 0 ]]; then
+# 	echo "Copying file, no other reports to combine"
+# 	cp ${outputReport} $fullReport
+# else 
+# 	echo "Combining existing report file"
+# 	bash ${__dirname}/combine.sh \
+# 	-i "${outputReport} $fullReport" \
+# 	-o $fullReport 
+# fi
+
 
 
 

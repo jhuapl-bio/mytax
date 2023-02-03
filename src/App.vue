@@ -12,42 +12,88 @@
         </v-spacer>
         <span style="margin-right: 10px" v-if="!samplesheetdata || samplesheetdata.length <= 0 ">No Data Loaded</span>
         <v-checkbox 
-            v-model="runBundle" style="text-align:center" @click="runBundleUpdate($event)" :label="`Enable Name Mapping`"
-        >
+          v-model="runBundle" style="text-align:center" @click="runBundleUpdate($event)"  
+        >   
+          <template v-slot:label>
+              <v-tooltip bottom>
+                <template v-slot:activator="{ on }">
+                  <div v-on="on">
+                    <v-icon>
+                      mdi-card-plus
+                    </v-icon>
+                    Enable Name Mapping
+                  </div>
+                </template>
+                If you have a names.dmp file (pre-loaded as well), map additional names to taxids such as common name
+              </v-tooltip>
+          </template>
         </v-checkbox>
         <v-spacer></v-spacer>
+        <v-checkbox 
+            v-model="gpu" style="text-align:center"   
+        >   
+          <template v-slot:label>
+              <v-tooltip bottom>
+                <template v-slot:activator="{ on }">
+                  <div v-on="on">
+                    <v-icon>
+                      mdi-expansion-card
+                    </v-icon>
+                    Enable GPU
+                  </div>
+                </template>
+                If you have a NVIDIA GPU Card with Cuda installed, enable GPU
+              </v-tooltip>
+          </template>
+        </v-checkbox>
         
-        <v-btn btn-and-icon color="blue"   @mouseover="drawer=true" @click="drawer = true" >
+        <v-spacer></v-spacer>
+        <v-btn btn-and-icon  color="blue "  @mouseover="drawer=true" @click="drawer = true" >
+          <v-progress-circular
+              v-if="anyRunning "
+              :indeterminate="true" top
+              stream   class="mr-2" size="14"
+              color="white"
+          ></v-progress-circular>
           Data Sheet
           <span  v-if="!samplesheetdata || samplesheetdata.length <= 0 " class="pulse"></span>
           <v-icon v-else class="ml-2">mdi-export</v-icon>
+          
         </v-btn>
+        
       </v-app-bar> 
       <v-main >
         <v-navigation-drawer
           v-model="drawer"
           absolute width="88%"
           temporary right
-        >
-            <Samplesheet
-              :samplesheet="samplesheetdata"
-              :bundleconfig="bundleconfig"
-              :seen="samplekeys"
-              :current="current"
-              @sendNewWatch="sendNewWatch"
-              @sendMessage="sendMessage"
-              @updateData="updateData"
-              @barcode="barcode"
-              @pausedChange="pausedChange"
-              :logs="logs"
-              @updateConfig="updateConfig"
-              :samplesheetName="samplesheet"
-            >
-            </Samplesheet>
+        >   
+        <div style="width: 100%; height:100%; overflow-y:auto">
+              <Samplesheet
+                :samplesheet="samplesheetdata"
+                :queueLength="queueLength"
+                :bundleconfig="bundleconfig"
+                :seen="samplekeys"
+                :current="current"
+                :queueList="status"
+                @sendNewWatch="sendNewWatch"
+                @sendMessage="sendMessage"
+                @cancel="cancel"
+                @updateData="updateData"
+                @barcode="barcode"
+                @rerun="rerun"
+                :anyRunning="anyRunning"
+                @pausedChange="pausedChange"
+                :logs="logs"
+                @updateConfig="updateConfig"
+                :samplesheetName="samplesheet"
+              >
+              </Samplesheet>
+            </div>
         </v-navigation-drawer>
         <v-row class="ml-4">
           <v-col   sm="2">
-            <v-sheet class="fill-width scroll " style="max-height:80vh; overflow: auto;">
+            <v-sheet class="fill-width scroll " style="max-height:92vh; overflow: auto;">
               <v-spacer class="py-4"></v-spacer>
               <v-autocomplete
                 v-model="selectedsamples"
@@ -59,6 +105,25 @@
                 label="Samples"
                 multiple
               >
+              <template v-slot:prepend-item>
+                <v-list-item
+                  ripple
+                  @mousedown.prevent
+                  @click="toggleSamples"
+                >
+                  <v-list-item-action>
+                    <v-icon :color="selectedsamples.length > 0 ? 'indigo darken-4' : ''">
+                       {{ icon  }}
+                    </v-icon>
+                  </v-list-item-action>
+                  <v-list-item-content>
+                    <v-list-item-title>
+                      Select All
+                    </v-list-item-title>
+                  </v-list-item-content>
+                </v-list-item>
+                <v-divider class="mt-2"></v-divider>
+              </template>
               <template v-slot:selection="{ attr, on, item, selected }">
                 <v-chip
                   v-bind="attr" small
@@ -68,14 +133,14 @@
                   v-on="on"
                 >
                   <v-progress-circular
-                      indeterminate v-if="( current && typeof current == 'object' && current[item])"
+                      indeterminate v-if="( current && current[item])"
                       color="white" small size="15"
                   ></v-progress-circular>
                   <v-icon
                       small v-else 
                       :color="samplekeys && samplekeys.indexOf(item) > -1 ? 'white': 'white'"
                   >
-                    {{ samplekeys && samplekeys.indexOf(item) > -1 ? 'mdi-check-circle' : 'mdi-exclamation'}}
+                    {{ !status[item] || status[item] && status[item].success != -1  ? 'mdi-check-circle' : 'mdi-exclamation'}}
                   </v-icon>
                   <span class="ml-2" v-text="item"></span>
                 </v-chip>
@@ -108,6 +173,13 @@
                 single-line
                 type="number"
               ></v-text-field>
+        
+              <v-slider
+                v-model="minPercent"
+                :min="0" 
+                :step="0.005"
+                :max="1"
+              ></v-slider>
               <v-spacer class="py-4"></v-spacer>
               <v-select
                 label="Tax Rank Codes"
@@ -207,10 +279,20 @@ export default {
       Samplesheet,
       RunStats,
     },
+    beforeDestroy(){
+      if (this.interval){
+        try{
+          clearInterval(this.interval)
+        } catch (err){
+          console.error(err)
+        }
+      }
+    },
     computed: {
+      
       icon () {
-        if (this.selectedAllRanks) return 'mdi-close-box'
-        if (this.selectedSomeRanks) return 'mdi-minus-box'
+        if (this.selectedAllSamples) return 'mdi-checkbox-marked'
+        if (this.selectedSomeSamples) return 'mdi-minus-box'
         return 'mdi-checkbox-blank-outline'
       },
       selectedAllRanks () {
@@ -219,14 +301,24 @@ export default {
       selectedSomeRanks () {
         return this.defaults.length > 0 && !this.selectedAllRanks
       },
+      selectedAllSamples () {
+        return this.samplekeys.length === this.selectedsamples.length
+      },
+      selectedSomeSamples () {
+        return this.selectedsamples.length > 0 && !this.selectedAllSamples
+      },
       
     },
     
     data() {
         return {
+          search: '',
+            queueLength: 0,
             socket: {},
             drawer: false,
+            anyRunning: false,
             selectedsamples: [],
+            status: {},
             uniquenametypes: {
               'default (scientific name)': 1
             },
@@ -263,6 +355,7 @@ export default {
             playbackdata: null,
             bundleconfig: null,
             runBundle: true,
+            interval: null,
             nodeCountMax: 0,
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
             defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S1','S2','S3', 'S4'],
@@ -270,7 +363,7 @@ export default {
             samplesheetdata: [],
             samplesheet: null,
             minDepth: 0,
-            minPercent: 0.08, 
+            minPercent: 0.005, 
             jsondata: null, 
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
@@ -279,32 +372,29 @@ export default {
             compressed: false,
             filepath: "sample_metagenome.second.report",
             tab: 0, 
+            gpu: false,
             tabs: [
                 {
                   name: 'Run Stats',
                   icon: "square",
                   component: "RunStats"
                 },
-                {
-                name: 'History Mode',
-                icon: "dna",
-                component: "SampleStats"
-                },
-                {
-                name: 'Barcoding/Demultiplexing',
-                icon: "pencil",
-                component: "Barcoding"
-                },
                 
-                {
-                name: 'Map',
-                icon: "map",
-                component: "Map"
-                },
             ]
         }
     },
     watch: {
+      gpu(val){
+        try{
+          this.sendMessage(JSON.stringify({
+                type: "gpu", 
+                gpu:  val
+            }
+          ));
+        } catch (err){
+          console.error(err)
+        }
+      },
       selectedsamples(val){
         let data = {}
         let unique_names = []
@@ -336,17 +426,7 @@ export default {
       },
       
       paused(newValue){
-        if (!newValue){
-          let keys = Object.keys(this.stagedData)
-          if (this.selectedsamples.length == 0 && keys.length > 0){
-            this.selectedsamples = keys[0]
-          }
-          let data = {}
-          this.selectedsamples.map((sample)=>{
-            data[sample] = this.stagedData[sample]
-          })
-          this.selectedData=data
-        }
+        this.sendMessage(JSON.stringify({type: "pause", pause: newValue }));
       },
       minDepth(){
         this.filter()
@@ -365,18 +445,16 @@ export default {
     async mounted() {
         // Calculate the URL for the websocket. If you have a fixed URL, then you can remove all this and simply put in
         // ws://your-url-here.com or wss:// for secure websockets.
-        const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
-        const port = ':3000';
+        
         this.importNames(this.names_file)
         try{
           let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
           let data = await d3.csv(`${samplesheet}`)
           data = data.filter((f)=>{
-            f.run = !f.run ?  "standalone" : f.run
             f.demux = (f.demux == "true" || f.demux == "TRUE" || f.demux == "True" ? true : false )
             f.compressed = (f.compressed == "true" || f.compressed == "TRUE" || f.compressed == "True" ? true : false )
             return f.sample && f.sample != ''
-          })
+          }) 
           this.samplesheet = samplesheet
           this.samplesheetdata = data
           if (this.samplesheetdata.length == 0){
@@ -392,23 +470,37 @@ export default {
         // this.matchPaired = process.env.VUE_APP_paired_string
         // this.matchSingle = process.env.VUE_APP_single_string
         
-        // this.ext = process.env.VUE_APP_ext
-        // this.compressed = process.env.VUE_APP_compressed
-        const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port + '/ws'
-        // this.defaults = this.defaultsList
-        // Define socket and attach it to our data object
-        this.socket = await new WebSocket(echoSocketUrl); 
-        // When it opens, console log that it has opened. and send a message to the server to let it know we exist
-        this.socket.onopen = (basepath) => {
-            console.log('Websocket connected.');
-            this.connectedStatus = 'Connected';
-            
+        
+        this.connect()
+      
 
-            this.sendMessage(JSON.stringify({type: "message", "message" : "Hello, server."}));
-            this.sendMessage(JSON.stringify({type: "start", samplesheet: this.samplesheetdata, overwrite: false }));
-        }
-        // When we receive a message from the server, we can capture it here in the onmessage event.
-        this.socket.onmessage = (event) => {
+    },
+    methods: {
+        pausedChange(val){
+          this.paused = val
+        },
+        async connect(){
+          const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
+          const port = ':3000';
+          // this.ext = process.env.VUE_APP_ext
+          // this.compressed = process.env.VUE_APP_compressed
+          const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port + '/ws'
+          // this.defaults = this.defaultsList
+          // Define socket and attach it to our data object
+          
+          const $this  = this
+          $this.socket = await new WebSocket(echoSocketUrl);
+          $this.socket.onopen = (basepath) => {
+              console.log('Websocket connected.');
+              $this.connectedStatus = 'Connected';
+              
+
+              $this.sendMessage(JSON.stringify({type: "message", "message" : "Hello, server."}));
+              $this.sendMessage(JSON.stringify({type: "gpu", gpu: $this.gpu }));
+              $this.sendMessage(JSON.stringify({type: "start", samplesheet: $this.samplesheetdata, overwrite: false }));
+          }
+
+          this.socket.onmessage = (event) => {
             // We can parse the data we know to be JSON, and then check it for data attributes
             let parsedMessage = JSON.parse(event.data);
             // If those data attributes exist, we can then console log or show data to the user on their web page.
@@ -432,7 +524,6 @@ export default {
                   }
               
                 } 
-                  
                 this.samplekeys = Object.keys(this.selectedData)
                 
                 
@@ -448,6 +539,8 @@ export default {
               this.basepathserver = parsedMessage.data;
             } else if (parsedMessage.type == 'getbundleconfig'){
               this.bundleconfig = parsedMessage.data;
+            } else if (parsedMessage.type == 'queueLength'){
+              this.queueLength = parsedMessage.data
             } else if (parsedMessage.type == 'logs'){
               this.logs.push(parsedMessage.data)
               const lasts = this.logs.slice(-100);
@@ -457,23 +550,51 @@ export default {
               this.config = parsedMessage.message
             } else if (parsedMessage.type == 'flushed'){
               for(let key of Object.keys(this.current)){
-                this.current[key]= false
+                this.current[key]= null
               }
-            }else if (parsedMessage.type == 'reads'){
+            } else if (parsedMessage.type == 'reads'){
               this.reads = parsedMessage.message
-            } else if (parsedMessage.type == 'current'){
-              this.$set(this.current, parsedMessage.current, parsedMessage.running)
+            } else if (parsedMessage.type == 'error'){
+              console.error(parsedMessage.message)
+            } else if (parsedMessage.type == 'message'){
+              console.log(parsedMessage.message)
+            } else if (parsedMessage.type == 'anyRunning'){
+              this.anyRunning = parsedMessage.status
+            } else if (parsedMessage.type == 'recentQueue'){
+              if (!this.status[parsedMessage.data.name]){
+                this.status[parsedMessage.data.name] = []
+              } 
+              
+              if (parsedMessage.data.index >=0){
+                this.$set(this.status[parsedMessage.data.name], parsedMessage.data.index, parsedMessage.data)
+              } else {
+                this.$set(this.status[parsedMessage.data.name], this.status[parsedMessage.data.name].length > 0 ? this.status[parsedMessage.data.name].length-1:0, parsedMessage.data)
+              }
+              
+            } else if (parsedMessage.type == 'status'){
+              if (!this.status[parsedMessage.samplename]){
+                this.status[parsedMessage.samplename] = []
+              } 
+              this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
+              this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
+              this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)              
             }
             else{
               this.message = parsedMessage.message;
             }
-           
-        }
+          }
 
-    },
-    methods: {
-        pausedChange(val){
-          this.paused = val
+          $this.socket.onclose = function(e) {
+            console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+            setTimeout(function() {
+              $this.connect();
+            }, 2000);
+          };
+
+          $this.socket.onerror = function(err) {
+            console.error('Socket encountered error: ', err.message, 'Closing socket');
+            $this.socket.close();
+          };
         },
         extractValue(value){
           let mappings = {}
@@ -512,19 +633,11 @@ export default {
           }
         return mappings
       },
-      async getbasepath(){
-            try{
-                let data = await $this.ws.send(JSON.stringify({ type: "basepathserver" }))
-                console.log(data)
-            } catch {
-                console.error(err)
-            }
-        },
+      
         addDropFile(e) { 
             this.names_file_input = e.dataTransfer.files[0]; 
         },
         runBundleUpdate(){
-          console.log(this.runBundle)
           this.sendMessage(JSON.stringify({
                 type: "runbundle", 
                 config: this.runBundle,
@@ -541,7 +654,6 @@ export default {
                 }
             ));
           } else if (val =='bundle'){
-            console.log(val, data)
             this.sendMessage(JSON.stringify({
                   type: "updateBundleconfig", 
                   config: data,
@@ -571,6 +683,16 @@ export default {
             }
           ));
         },
+        async rerun(index, sample){
+          this.sendMessage(JSON.stringify({
+                type: "rerun", 
+                overwrite: true,
+                sample: sample,
+                index: index,
+                "message" : `Begin rerun of ${sample}, job # ${index}`
+            }
+          ));
+        },
         async sendNewWatch(params){
           let restart = params.overwrite
           let sample = params.sample
@@ -587,7 +709,6 @@ export default {
           } else {
             this.samplekeys = []
             this.sendMessage(JSON.stringify({
-              
                   type: "start", 
                     samplesheet: this.samplesheetdata,
                     overwrite: restart,
@@ -596,6 +717,15 @@ export default {
             ));
           }
           
+        },
+        cancel(data){
+          this.sendMessage(JSON.stringify({
+                  type: "cancel", 
+                  index: data.index,
+                  sample: data.sample,
+                  "message" : `Cancel Index Job: ${data.index} for sample: ${data.sample}`
+              }
+          ));
         },
         updateData(data){
           this.samplesheetdata = data
@@ -611,7 +741,15 @@ export default {
           this.value = Array.from(e.dataTransfer.files);
           this.database_file = this.value[0].path
         },
-        
+        toggleSamples () {
+          this.$nextTick(() => {
+            if (this.selectedAllSamples) {
+              this.$set(this, 'selectedsamples', [])
+            } else {
+              this.selectedsamples = this.samplekeys.slice()
+            }
+          })
+        },
         toggle () {
           this.$nextTick(() => {
             if (this.selectedAllRanks) {
@@ -697,7 +835,8 @@ export default {
         filterData(d){
           let data = _.cloneDeep(d)
           data = data.filter((f)=>{
-            let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.maxDepth && f.depth >= this.minDepth && this.minPercent <= f.value )
+            
+            let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.maxDepth && f.depth >= this.minDepth && this.minPercent <= f.value/100 )
             
             
             return  v
@@ -740,6 +879,7 @@ export default {
           }
           let data = d3.tsvParseRows(text, (d)=>{
             d[0] = d[0].trim()
+            d[5]  = d[5] ? d[5] : "Unknown"
             d[5] = d[5].replace(/\t/, '')
             let found = d[5].search(/\S/);
             
@@ -798,6 +938,12 @@ export default {
 </script>
 
 <style>
+th, td {
+  white-space: normal
+}
+.class-on-data-table table {
+    table-layout: fixed;
+  }
 #app {
     font-family: Avenir, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;

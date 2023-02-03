@@ -40,11 +40,12 @@ awk_version=$(awk --version  | head -n1)
 
 #---------------------------------------------------------------------------------------------------
 # parse input arguments
-while getopts "hi:o:" OPTION
+while getopts "hi:o:s:" OPTION
 do
 	case $OPTION in
 		h) usage; exit 1 ;;
 		i) input=$OPTARG ;;
+		s) subtract=$OPTARG ;;
 		o) output=$OPTARG ;;
 		?) usage; exit ;;
 	esac
@@ -70,6 +71,30 @@ if [[ -z "$input" ]]; then
 	usage
 	exit 2
 fi
+
+if [[ -s $subtract ]]; then
+	awk -F '\t' '{
+		if ( NR==FNR){
+			old[$5]["all"] = $2
+			old[$5]["clade"] = $3
+		} else {
+			if ($5 in old){
+				newclade = $3- old[$5]["clade"] 
+				newAll = $2 - old[$5]["all"]
+				# s = ""; 
+				# for (i = 6; i <= NF; i++){
+				# 	s = s $i " ";
+				# }
+				printf("%s\t%s\t%s\t%s\t%s\t%s\n", $1, newAll, newclade, $4, $5, $6  )
+			} else {
+				print $0
+			}
+		}
+	
+	}' $subtract $output > ${output}.subtracted
+	output=${output}.subtracted
+fi 
+
 combine_kreports.py --only-combined --no-headers  -o $output -r  $input
 
 # awk -F $'\t' 'BEGIN {
