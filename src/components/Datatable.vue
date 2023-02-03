@@ -21,7 +21,7 @@
 
 
 <template>
-    <v-row>
+    <v-row  :ref="'boxContainer'">
       <v-subheader>{{samplename}}
       </v-subheader>
       <v-data-table
@@ -78,14 +78,19 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions","socket", "samplename"],
+    props: ["inputdata", "socket", "samplename"],
     watch: {
     },  
     data(){
       return {
         nodeCountMax: 0,
         edgeColor: "default",
-        
+        dimensions: {
+          windowHeight:0,
+          windowWidth: 0,
+          height: 0,
+          width: 0,
+        },
         options: [
           "path",
           "input",
@@ -163,6 +168,10 @@
       }
     },
     async mounted() {
+      this.dimensions.windowHeight = window.innerHeight
+      this.dimensions.windowWidth = window.innerWidth
+      this.dimensions.height = this.$refs.boxContainer.clientHeight*2
+      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
     },
  
     methods: {

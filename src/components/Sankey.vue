@@ -21,7 +21,7 @@
 
 
 <template>
-  <v-container  ref="sankeyBox" style="padding-top: 10px;  width: 97%">
+  <v-container   :ref="'boxContainer'" style="padding-top: 10px;  width: 97%">
     <v-row>
       <v-col sm="2">
         <v-subheader v-if="samplename">{{samplename}}
@@ -56,40 +56,9 @@
           single-line
           type="number"
         ></v-text-field>
-        <v-range-slider
-          hint="Label Hide Depth"
-          v-model="rangeLabelDepth"
-          :min="maxRange[0]-1" vertical
-          :max="maxRange[1]"
-          @change="hideLabels()"
-        >
-          <template v-slot:prepend>
-              <v-text-field
-                :value="rangeLabelDepth[0]"
-                class="mt-0 pt-0"
-                hide-details
-                single-line label="Node Label Shown"
-                type="number"
-                style="width: 60px"
-                @change="$set(rangeLabelDepth, 0, $event)"
-              ></v-text-field>
-              
-            </template>
-            <template v-slot:append>
-              <v-text-field
-                :value="rangeLabelDepth[1]"
-                class="mt-0 pt-0"
-                hide-details
-                single-line
-                type="number"
-                style="width: 60px"
-                @change="$set(rangeLabelDepth, 1, $event)"
-              ></v-text-field>
-            </template>
         
-        </v-range-slider>
         <v-spacer class="mt-4"></v-spacer>
-        <v-subheader>Node Depth Labels to Show</v-subheader>
+        <!-- <v-subheader>Node Depth Labels to Show</v-subheader> -->
         <v-btn class="info" @click="reset()">Reset
         </v-btn>
         <!-- <v-btn icon>
@@ -105,7 +74,39 @@
       <v-col  sm="10">
           <div style="overflow-x:auto " :id="`sankeyBox-${samplename}`">
           </div>
-         
+          <v-range-slider
+            hint="Range of Ranks to Show"
+            v-model="rangeLabelDepth"
+            :min="maxRange[0]-1" 
+            :max="maxRange[1]"
+            persistent-hint
+            @change="hideLabels()"
+          >
+            <template v-slot:prepend>
+                <v-text-field
+                  :value="rangeLabelDepth[0]"
+                  class="mt-0 pt-0"
+                  hide-details
+                  single-line label="Node Label Shown"
+                  type="number"
+                  style="width: 60px"
+                  @change="$set(rangeLabelDepth, 0, $event)"
+                ></v-text-field>
+                
+              </template>
+              <template v-slot:append>
+                <v-text-field
+                  :value="rangeLabelDepth[1]"
+                  class="mt-0 pt-0"
+                  hide-details
+                  single-line
+                  type="number"
+                  style="width: 60px"
+                  @change="$set(rangeLabelDepth, 1, $event)"
+                ></v-text-field>
+              </template>
+          
+          </v-range-slider>
       </v-col>
     </v-row>
       
@@ -121,7 +122,7 @@
 
   export default {
     name: 'RunStats',
-    props: ["inputdata", "dimensions", "socket", "samplename"],
+    props: ["inputdata",  "socket", "samplename"],
     watch: {
       inputdata: {
         deep:true,
@@ -133,13 +134,13 @@
           }
         }
       },
-      dimensions: {
-        deep:true,
-        handler(data){
-          // let data = await d3.csv(this.csv)
-          this.width = data.width
-        }
-      },
+      // dimensions: {
+      //   deep:true,
+      //   handler(data){
+      //     // let data = await d3.csv(this.csv)
+      //     this.width = data.width
+      //   }
+      // },
       edgeColor() {
         this.colorLinks()
       },
@@ -151,12 +152,20 @@
     data(){
       return {
         xAxis: null,
+        dimensions: {
+          windowHeight:0,
+          windowWidth: 0,
+          height: 0,
+          width: 0,
+        },
         yAxis: null,
         yAxisScale: null,
         color: d3.scaleOrdinal(d3.schemeCategory10),
         edgeColor: "default",
         graph:null,
         sankey: null,
+        depths: {},
+        filteredData: [],
         rangeLabelDepth: [0,10],
         maxRange: [0,10],
         align_options: [
@@ -187,7 +196,7 @@
           target: sankeyLeft,
           value: "left",
         },
-        width: 1500,
+        width: 1000,
         options: [
           "path",
           "input",
@@ -207,11 +216,15 @@
         if (this.dimensions.height){
           return this.dimensions.height
         } else {
-          return 500
+          return 300
         }
       }
     },
     async mounted() {
+      this.dimensions.windowHeight = window.innerHeight
+      this.dimensions.windowWidth = window.innerWidth
+      this.dimensions.height = this.$refs.boxContainer.clientHeight*0.75
+      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
       this.Sankeychart(this.inputdata)
     }, 
   
@@ -222,7 +235,9 @@
       },
       hideLabels(){
         let div = d3.select(`#sankeyBox-${this.samplename}`)
-        div.selectAll(".nodeText").style("opacity", d => (this.rangeLabelDepth[0] <= d.depth && this.rangeLabelDepth[1] >= d.depth ? 1 : 0))
+        this.updateSankey()
+        // div.selectAll(".link").style("stroke-opacity", d => (this.rangeLabelDepth[0] <= d.target.depth && this.rangeLabelDepth[1] >= d.target.depth ? 0.7 : 0))
+        // div.selectAll(".nodeText").style("opacity", d => (this.rangeLabelDepth[0] <= d.depth && this.rangeLabelDepth[1] >= d.depth ? 1 : 0))
       },
       colorLinks(){
         let div = d3.select(`#sankeyBox-${this.samplename}`)
@@ -260,63 +275,33 @@
       removeSankeychart(){
         d3.select("#sankeyBox-"+this.samplename).selectAll("*").remove()
       },
-      async Sankeychart(data){ //https://observablehq.com/d/62d604dff1093411
-        // const $this = this
-        // let data = await d3.csv(filepath)
-        // set the dimensions and margins of the graph
-        //set up graph in same style as original example but empty
-        // set the dimensions and margins of the graph
-        var margin = {top: 50, right: 20, bottom: 30, left: 10},
-            width = this.width - margin.left - margin.right,
-            height = this.height - margin.top - margin.bottom;  
-        // format variables
-        var formatNumber = d3.format(",.0f"), // zero decimal places
-            format = function(d) { return formatNumber(d); }
-        let sankeyBox = d3.select("#sankeyBox-"+this.samplename)
-        // append the svg object to the body of the page
-
-        let zoom = d3.zoom()
-				.scaleExtent([0, 5])
-				// .center([width / 2, height / 2])
-				.on("zoom", zoomed);
-
-
-        var svg = sankeyBox.append('svg')
-            .attr("width", width + margin.left + margin.right)
-            .attr("height", height + margin.top + margin.bottom)
-            .call(zoom)
-          .append("g")
-            .attr("transform", 
-                  "translate(" + margin.left + "," + margin.top + ")");
-
-        // Set the sankey diagram properties
-        var sankey = d3Sankey()
-            .nodeWidth(10)
-            .nodePadding(40)
-            .size([width, height])
-            .nodeAlign(this.aligned.target)
-            ;
-        this.sankey = sankey
-        let sankeydata = {"nodes" : [], "links" : []};
-        data = data.filter((f)=>{
-          return f.parenttaxid >=0 && f.parenttaxid
+      updateSankey(){
+        const $this = this
+        let format = function(d) { return formatNumber(d); }
+        let sankey = this.sankey
+        
+        let data = this.inputdata.filter((f)=>{
+          
+          return f.parenttaxid >=0 && f.parenttaxid && 1+f.depth /2 >= $this.rangeLabelDepth[0] && 1+f.depth /2 <= $this.rangeLabelDepth[1]
         })
+        var margin = {top: 50, right: 20, bottom: 30, left: 10},
+            height = this.height - margin.top - margin.bottom;  
+        let width = (this.width / (1/($this.rangeLabelDepth[1] - $this.rangeLabelDepth[0]))) - margin.left - margin.right
+        var formatNumber = d3.format(",.0f") // zero decimal places
+        let sankeydata = _.cloneDeep($this.sankeydata)
         data.forEach(function (d) {
-          sankeydata.nodes.push({ "name": `${d.source}-${d.parenttaxid}` });
-          sankeydata.nodes.push({ "name": `${d.target}-${d.taxid}`});
+          sankeydata.nodes.push({ "name": `${d.source}-${d.parenttaxid}`  });
+          sankeydata.nodes.push({ "name": `${d.target}-${d.taxid}` });
           sankeydata.links.push({ "source": `${d.source}-${d.parenttaxid}`,
-                            "target": `${d.target}-${d.taxid}`,
+                            "target": `${d.target}-${d.taxid}`, 
                             "value": +d.value });
         });
-        this.maxRange = d3.extent(data, (d)=>{
-          return 1 + d.depth / 2
-        })
-      // return only the distinct / unique nodes
-      sankeydata.nodes = Array.from(
-          d3.group(sankeydata.nodes, d => d.name),
-        ([value]) => (value)
-        );
-
+        
+        // return only the distinct / unique nodes
+        sankeydata.nodes = Array.from(
+            d3.group(sankeydata.nodes, (d) => { $this.depths[d.name] = d.depth; return d.name}),
+          ([value]) => (value)
+          );
         // loop through each link replacing the text with its index from node
         sankeydata.links.forEach(function (d, i) {
           sankeydata.links[i].source = sankeydata.nodes
@@ -329,94 +314,13 @@
         sankeydata.nodes.forEach(function (d, i) {
           sankeydata.nodes[i] = { "name": d };
         });
-
+        
         let graph = sankey(sankeydata);
-
-      
-      const nodes = graph.nodes;
-      const links = graph.links;
-
-      this.graph = {
-        nodes: nodes,
-        links: links
-      }
-      const node = svg.selectAll("g")
-                    .data(nodes)
-                      .join("g")
-                      .attr('transform', d => `translate(${d.x0}, ${d.y0})`);  
-  
-        // Relative to container
-        node.append("rect")
-            .attr("height", d => d.y1 - d.y0)
-            .attr("width", d => d.x1 - d.x0)
-            .attr("fill", this.color)
-            .attr("id", (d,i) => {
-              return `${d.name}.${i}-rect`
-            })
-            .attr("stroke", "#000")
-            .append("title")
-              .text(d => `${d.name}\n${format(d.value)}`)
-  
-        // Relative to container/ node rect
-        node.append("text").classed("nodeText", true)
-                .attr("font-family", "sans-serif")
-                .attr("font-size",9)
-                .attr("x", d => d.x0 < width / 2 ? 6 + (d.x1 - d.x0) : - 6) // +/- 6 pixels relative to container
-                .attr("y", (d,i) => {
-                  if (i %3 == 1){
-                    return (d.y1 - d.y0) / 1.5
-                  } else if (i %3 == 2){ 
-                     return (d.y1 - d.y0 ) / 3 
-                  } else {
-                    return (d.y1 - d.y0) / 2
-                  }
-                  
-                }) // middle of node
-                .attr("dy", "0.35em")
-                .attr("text-anchor", d => d.x0 < width / 2 ? "start" : "end")
-                .text(d => d.name.split("-")[0]); 
-        node.append("text").classed("nodeText", true)
-                .attr("font-family", "sans-serif")
-                .attr("font-size",9)
-                .attr("dy", "-0.2em")
-                .attr("text-anchor", "start")
-                .text(d => Math.round((d.value + Number.EPSILON) * 100) / 100); 
-        this.hideLabels()
-      const link = svg.append("g")
-                .attr("fill", "none")
-                .attr("stroke-opacity", 0.5)
-                .selectAll("g")
-                .data(links)
-                .join("g")
-                .style("mix-blend-mode", "multiply");
-      
-      link.append("path")
-      .attr("class", "link")
-      .attr("d", sankeyLinkHorizontal())
-      .attr("stroke-width", d => Math.max(1, d.width));
-      this.colorLinks()
-
-
-      // add the link titles
-      link.append("title")
-            .text(function(d) {
-                return d.source.name + " → " + 
-                    d.target.name + "\n" + format(d.value); });
-      node.attr('cursor', 'move')
-          .call(d3.drag()
-            .on('start', dragStart)
-            .on('drag', dragMove)
-            ); 
-      
-    
-    function zoomed(e){
-      console.log(e)
-      return svg.attr('transform', e.transform);
-    }
-
-
-
-      function dragStart (event, d) {
+        let nodes = graph.nodes
+        let links = graph.links
+        
+        
+        function dragStart (event, d) {
         
         d.__x = event.x;
         d.__y = event.y;
@@ -460,15 +364,166 @@
                 d.y1 = height;
                 
             } // if
-            // console.log(d.x0, d.y0, height, width)
             return `translate(${d.x0}, ${d.y0})`;
         
         }); //.attr('transform', function (d) {
         
-        // https://github.com/d3/d3-sankey#sankey_update
-        sankey.update({nodes, links});
-        link.selectAll(".link").attr('d', sankeyLinkHorizontal());
-      }
+          // https://github.com/d3/d3-sankey#sankey_update
+          $this.sankey.update({nodes, links});
+          link.selectAll(".link").attr('d', sankeyLinkHorizontal());
+        }
+        this.svg.selectAll(".nodeSankey").remove()
+        this.svg.selectAll(".link").remove()
+
+        const node = this.svg.selectAll("g.nodeSankey")
+                    .data(nodes, (d)=>{
+                      return d
+                    })
+                    .join(
+                      function(enter){
+                        let returnable = enter.append('g').attr('class', 'nodeSankey').attr('transform', d => `translate(${d.x0}, ${d.y0})`)       
+                        returnable.append("rect")
+                            .attr("height", d => d.y1 - d.y0)
+                            .attr("width", d => d.x1 - d.x0)
+                            .attr("fill", $this.color)
+                            .attr("id", (d,i) => {
+                              return `${d.name}.${i}-rect`
+                            })
+                            .attr("stroke", "#000")
+                            .append("title")
+                              .text(d => `${d.name}\n${format(d.value)}`)
+
+                        // Relative to container/ node rect
+                        returnable.append("text").classed("nodeText", true)
+                                .attr("font-family", "sans-serif")
+                                .attr("font-size",15)
+                                .attr("x", d => d.x0 < width / 2 ? 6 + (d.x1 - d.x0) : - 6) // +/- 6 pixels relative to container
+                                .attr("y", (d,i) => {
+                                  if (i %3 == 1){
+                                    return (d.y1 - d.y0) / 1.5
+                                  } else if (i %3 == 2){ 
+                                      return (d.y1 - d.y0 ) / 3 
+                                  } else {
+                                    return (d.y1 - d.y0) / 2
+                                  }
+                                  
+                                }) // middle of node
+                                .attr("dy", "0.35em")
+                                .attr("text-anchor", d => d.x0 < width / 2 ? "start" : "end")
+                                .text(d => d.name.split("-")[0]); 
+                                returnable.append("text").classed("nodeText", true)
+                                .attr("font-family", "sans-serif")
+                                .attr("font-size",15)
+                                .attr("dy", "-0.2em")
+                                .attr("text-anchor", "start")
+                                .text(d => Math.round((d.value + Number.EPSILON) * 100) / 100); 
+                        returnable.attr('cursor', 'move')
+                          .call(d3.drag()
+                            .on('start', dragStart)
+                            .on('drag', dragMove)
+                            );                  
+                        return returnable
+                      },
+                      function(update){
+                        update.selectAll(".nodeSankey").attr('transform', d => `translate(${d.x0}, ${d.y0})`)                
+                        return update
+                      },
+                      function(exit){
+                        return exit.remove()
+                      }
+
+
+                      )
+        
+        const link = this.svg.selectAll('.link').data(links, (d)=>{
+                      return d
+                    })
+                    .join(
+                      function(enter){
+                        let returnable = enter.append('g')
+                          .attr("fill", "none")
+                          .attr("stroke-opacity", 0.7).style("mix-blend-mode", "multiply");
+                        returnable.append("path")
+                          .attr("class", "link")
+                          .attr("d", sankeyLinkHorizontal())
+                          .attr("stroke-width", d => Math.max(1, d.width));
+                         
+                        returnable.append("title")
+                          .text(function(d) {
+                              
+                              return d.source.name + " → " + 
+                                  d.target.name + "\n" + format(d.value); });
+                        $this.colorLinks()
+                        return returnable
+                      },
+                      function(update){
+                        update.selectAll(".link").attr("d", sankeyLinkHorizontal())              
+                        return update
+                      },
+                      function(exit){
+                        return exit.remove()
+                      }
+
+
+                      )
+
+    
+      },
+      async Sankeychart(data){ //https://observablehq.com/d/62d604dff1093411
+        // const $this = this
+        // let data = await d3.csv(filepath)
+        // set the dimensions and margins of the graph
+        //set up graph in same style as original example but empty
+        // set the dimensions and margins of the graph
+        var margin = {top: 50, right: 20, bottom: 30, left: 10},
+            width = this.width - margin.left - margin.right,
+            height = this.height - margin.top - margin.bottom;  
+        // format variables
+        
+        let sankeyBox = d3.select("#sankeyBox-"+this.samplename)
+        // append the svg object to the body of the page
+
+        let zoom = d3.zoom()
+				.scaleExtent([0, 5])
+				// .center([width / 2, height / 2])
+				.on("zoom", zoomed);
+
+        var svg = sankeyBox.append('svg')
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .call(zoom)
+          .append("g")
+            .attr("transform", 
+                  "translate(" + margin.left + "," + margin.top + ")");
+
+        // Set the sankey diagram properties
+        var sankey = d3Sankey()
+            .nodeWidth(10)
+            .nodePadding(40)
+            .size([width, height])
+            .nodeAlign(this.aligned.target)
+            ;
+        this.svg = svg
+        this.sankey = sankey
+        let sankeydata = {"nodes" : [], "links" : []};
+        this.sankeydata = sankeydata
+        
+        this.maxRange = d3.extent(this.inputdata, (d)=>{
+          return 1 + d.depth / 2
+        })
+        this.updateSankey()
+  
+      //   // Relative to container
+      
+      
+    
+    function zoomed(e){
+      return svg.attr('transform', e.transform);
+    }
+
+
+
+      
     }
       
         

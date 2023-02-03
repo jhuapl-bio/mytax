@@ -1,5 +1,5 @@
 <template>
-  <v-container>
+  <v-container :ref="'boxContainer'">
     <v-toolbar-title>
         Top Hits Per Sample
     </v-toolbar-title>
@@ -27,7 +27,7 @@
 // 
   export default {
     name: 'Plates',
-    props: ["inputdata", "dimensions", "socket", 'samplenames', 'selectedTaxid', 'selectedAttribute',  'legendPlacement', 'selectedNameAttr'],
+    props: ["inputdata",  "socket", 'samplenames', 'selectedTaxid', 'selectedAttribute',  'legendPlacement', 'selectedNameAttr'],
     watch: {
       selectedAttribute(val){
         if (val){
@@ -58,6 +58,12 @@
       width: 500,
       height: 500,
       top_n: 3,
+      dimensions: {
+        windowHeight:0,
+        windowWidth: 0,
+        height: 0,
+        width: 0,
+      },
 
     }),
     methods: {
@@ -90,7 +96,7 @@
                   tops.push({
                     name: samplename, 
                     top: sorted[i],
-                    abu: sorted[i].value
+                    abu: `${sorted[i].value.toFixed(2)}`
                   })
                 } 
               }
@@ -112,8 +118,12 @@
         }
         let seentaxids = {}
         let unique_taxids = [ ... new Set(tops.map((f)=>{
-          seentaxids[f.top.taxid] = `${this.getText(f.top)}`
-          return f.top.taxid
+          if (f.top.taxid && f.top.taxid !== -1){
+            
+            seentaxids[f.top.taxid] = `${this.getText(f.top)}`
+            
+            return f.top.taxid
+          }
           // return 
         }))]
         tops = []
@@ -127,7 +137,7 @@
               tops.push({
                 name: samplename, 
                 top: entry,
-                abu: entry.value
+                abu: `${entry.value.toFixed(2)}`
               })
             })
             var colorScaleHeatmap = d3.scaleLinear().range(["#5ff4ff", "#c42bd4"])
@@ -162,16 +172,15 @@
               .attr("transform", 
                     "translate(" + margin.left + "," + margin.top + ")");
         
-        console.log(unique_taxids)
         var taxidScale = d3.scaleOrdinal().domain([]).range(unique_taxids.map((_,i)=>{
           return ((i) * this.boxWidth ) + this.margin.left - this.margin.right
         }))
         var sampleScale = d3.scaleOrdinal().domain(samplenames).range(samplenames.map((_,i)=>{
           return ((i) * this.boxHeight ) + this.margin.top - this.margin.bottom
         }))
-        const node = svg.selectAll("g.nodes")
+        const node = svg.selectAll("g.nodestop")
                         .data(tops)
-                        .join("g").attr("class", "nodes")
+                        .join("g").attr("class", "nodestop")
                         .attr('transform', (d) => {
                           return `translate(${taxidScale(d.top.taxid)}, ${sampleScale(d.name)})`
                         });  
@@ -199,7 +208,7 @@
                   return this.boxHeight/2
                 }) // middle of node
                 .attr("text-anchor", "middle")
-                .text(d => `${d.abu}%`); 
+                .text(d => `${d.abu}%`).attr("dominant-baseline", "middle"); 
         // Add scales to axis
         var x_axis = d3.axisTop()
                       .scale(taxidScale)
@@ -241,6 +250,11 @@
     },
     mounted(){
       console.log("mountd plates")
+      this.dimensions.windowHeight = window.innerHeight
+      this.dimensions.windowWidth = window.innerWidth
+      this.dimensions.height = this.$refs.boxContainer.clientHeight*2
+      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
+      console.log("mounted")
       if (this.inputdata){
         this.makePlot()
       }
