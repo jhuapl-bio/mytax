@@ -7,14 +7,15 @@ import fs from "file-system"
 import chokidar from 'chokidar'
 import {Barcoder} from "./barcoder.mjs"
 import _ from 'lodash';
+import { mkdirp } from 'mkdirp'
 
 export  class Sample { 
-    constructor(sample, queue){         
+    constructor(sample, queue, queueRecords){         
         for (let key of Object.keys(sample)){
             this[key] = sample[key]
         }
-        
-
+        this.fullstop = false
+        this.queueRecords = queueRecords
         this.watcher = null
         this.config = {}
         this.barcode = null
@@ -39,20 +40,29 @@ export  class Sample {
             `${path_1}/*fq.gz`, 
             `${path_1}/*fq`], {ignored: /^\./, persistent: true});
 
-        
-
+         
 
         let msg;
+        let code 
         logger.info(`Starting barcoder run for job: ${this.sample}, ${barcoder.filepath}`)
-        this.queue.push(async () =>{ 
+        this.queue.push(async (f) =>{ 
             try{
-                await barcoder.start()
+            
+                this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
+                $this.queueRecords[$this.sample][$this.queue.length -1] = "job"
+                code = await barcoder.start()
             } catch(err){ 
                 logger.error(`${err} error in barcoding demux`)                
             } finally{
-                $this.updateStatusQueueList(barcoder)
-                logger.info(`Completed barcoder run for job: ${this.sample}, ${barcoder.filepath}`)
-                this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length - 1 }))
+                $this.updateStatusQueueList(barcoder) 
+                logger.info(`Completed barcoder run for job: ${this.sample}, ${barcoder.filepath} - ${code}`)
+                if (code >= 0){
+                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
+                }
+                console.log($this.queueRecords[$this.sample],"..............")
+                console.log(f)
+                $this.queueRecords[$this.sample].shift()
+                console.log($this.queueRecords[$this.sample],"..............")
             }
         } )
         msg = this.defineQueueMessage(barcoder)
@@ -71,27 +81,33 @@ export  class Sample {
         classifier.bundleconfig = this.bundleconfig
         classifier.overwrite = this.overwrite
         classifier.initialize()
-        let msg;
+        let msg; let code; 
         if (!push){
             this.queue.push(async () =>{  
                 try{
-                    await classifier.start()
+                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
+                    code = await classifier.start()
                 } catch(err){
                     logger.error(`${err} error in starting the classifier job`)                
                 } finally{
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length - 1 }))
                     $this.updateStatusQueueList(classifier)
+                    logger.info(`${code}----`)
+                    if (code >= 0){
+                        this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
+                    }
+                    
                 }
             } ) 
         } else {
             this.queue.unshift(async () =>{  
                 try{
+                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
                     await classifier.start()
                 } catch(err){
                     logger.error(`${err} error in starting the prioritized classifier job`)                
                 } finally{
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length - 1 }))
                     $this.updateStatusQueueList(classifier)
+                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
                 }
             } ) 
         }
@@ -115,8 +131,9 @@ export  class Sample {
         }
         if (this.path_1 && this.format == 'file'){
             this.defineClassifier(this.sampleObj, this.path_1)
-        } else if (this.path_1 && this.format == 'directory'){
+        } else if (this.path_1 ){
             this.files = []
+            
             this.watchDirectory()
         }  
         return 
@@ -160,6 +177,7 @@ export  class Sample {
         const $this = this
         if (index >=0 && index){
             try{
+                logger.info(`${job.name} stopping job `)
                 let job = this.queueList[index].job
                 job.stop()
             } catch (err){
@@ -168,10 +186,12 @@ export  class Sample {
             }
         } else {
             if (this.queueList.length > 0){
+                this.fullstop = true
                 this.queueList.forEach((f, i)=>{
                     try{
                         let job = $this.queueList[i].job
                         job.stop()
+                        logger.info(`${job.name} stopping job `)
                     } catch (err){
                         logger.error(`${err}, error in stopping job`)
                     }
@@ -195,48 +215,47 @@ export  class Sample {
         try{
             let dirpath = this.path_1 ? this.path_1 : this.path_2
             let demuxoutpath = path.join(dirpath, 'demultiplexed') 
-            
-            
+            await mkdirp.sync(demuxoutpath)
             this.watcherDemux = chokidar.watch([
                 `${demuxoutpath}/**/*fastq.gz`,
-                `${demuxoutpath}/**/*fastq`,
+                `${demuxoutpath}/**/*fastq`, 
                 `${demuxoutpath}/**/*fq.gz`,
                 `${demuxoutpath}/**/*fq`], {ignored: /^\./, persistent: true});
-            let files = await globFiles([
-                `${demuxoutpath}/**/*fastq.gz`,
-                `${demuxoutpath}/**/*fastq`,
-                `${demuxoutpath}/**/*fq.gz`,
-                `${demuxoutpath}/**/*fq`], {})     
-            if (files){ 
-                files.forEach((file)=>{
-                    let basefile = removeExtension(file)
-                    $this.seenfiles[basefile] = 1
-                    let sampleo = $this.defineBarcoderOutputfile(file)
-                    $this.defineClassifier(sampleo, file, true)
-                })
-            }
-        } catch (Err){
+            // let files = await globFiles([
+            //     `${demuxoutpath}/**/*fastq.gz`,
+            //     `${demuxoutpath}/**/*fastq`, 
+            //     `${demuxoutpath}/**/*fq.gz`,
+            //     `${demuxoutpath}/**/*fq`], {})     
+            // if (files){ 
+            //     files.forEach((file)=>{
+            //         let basefile = removeExtension(file)
+            //         $this.seenfiles[basefile] = 1
+            //         let sampleo = $this.defineBarcoderOutputfile(file)
+            //         $this.defineClassifier(sampleo, file, true)
+            //     })
+            // }
+        } catch (Err){ 
             logger.error(`${Err} Error in finding the dmux outpath`)
             throw Err
-        } finally {
+        } finally { 
             this.watcherDemux
             .on('add', function(filepath) {
-                logger.info(`File ${filepath} has been added for barcoding demux`);
+                logger.info(`Post DEMUX: File ${filepath} has been ADDED for barcoding demux`);
                 $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                let basefile = removeExtension(filepath)
+                let basefile = removeExtension(filepath) 
                 $this.seenfiles[basefile] = 1 
                 let sampleo = $this.defineBarcoderOutputfile(filepath)
                 $this.defineClassifier(sampleo, filepath, true) 
             })
             .on('change', function(filepath) {
-                logger.info(`File ${filepath} has been changed follow demux ${$this.overwrite}`);
+                logger.info(`POST DEMUX: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
                 $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
                 let basefile = removeExtension(filepath)
                 $this.seenfiles[basefile] = 1 
                 let sampleo = $this.defineBarcoderOutputfile(filepath)
                 $this.defineClassifier(sampleo, filepath, true) 
             })
-
+ 
             .on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);
             })
@@ -273,7 +292,7 @@ export  class Sample {
                 logger.error(err)
             }
         }
-        let files = await globFiles([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], { nodir: true })
+        
         watcher  
             .on('add', function(filepath) {
                 logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
@@ -293,20 +312,21 @@ export  class Sample {
             .on('error', function(error) {
                 logger.error(`Error happened ${error}`); 
             })  
-        
-        if (files){
-            if (sample.demux){ 
-                $this.barcodeWatch()
-            }
-            files.forEach((filepath)=>{
-                if (!sample.demux){
-                    $this.defineClassifier(sample, filepath)
-                } else {
-                    $this.defineBarcoder(sample, filepath)
-                }
-    
-            })
+        if (sample.demux){  
+            $this.barcodeWatch()
         }
+        // let files = await globFiles([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], { nodir: true })
+        // if (files){
+            
+        //     files.forEach((filepath)=>{
+        //         if (!sample.demux){
+        //             $this.defineClassifier(sample, filepath)
+        //         } else {
+        //             $this.defineBarcoder(sample, filepath)
+        //         }
+    
+        //     }) 
+        // }
 
     
         
