@@ -53,7 +53,6 @@ app.ws('/ws', async function(ws, req) {
     orchestrator.ws.on('message', async function(command) {
         // Let's put our message in JSON.stringify, and send it to the user who just sent the message
         // logger.info(`${command}`)
-        
         command=JSON.parse(command) 
         if (command['type'] == 'message'){
             ws.send(JSON.stringify({ "message" : "hello" }));
@@ -95,6 +94,7 @@ app.ws('/ws', async function(ws, req) {
             } 
         } else if (command.type == 'flush'){
             try{
+                logger.info(`Flushing queue`)
                 orchestrator.flush()
                 ws.send(JSON.stringify({ type: "flushed" }));
             } catch(err){
