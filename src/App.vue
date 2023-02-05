@@ -63,6 +63,9 @@
         
       </v-app-bar> 
       <v-main >
+        <v-alert
+          type="error" v-if="connectedStatus != 'Connected'"
+        >{{  connectedStatus }}</v-alert>
         <v-navigation-drawer
           v-model="drawer"
           absolute width="88%"
@@ -279,7 +282,7 @@ export default {
       Samplesheet,
       RunStats,
     },
-    beforeDestroy(){
+    beforeDestroy(){ 
       if (this.interval){
         try{
           clearInterval(this.interval)
@@ -544,7 +547,7 @@ export default {
             } else if (parsedMessage.type == 'logs'){
               this.logs.push(parsedMessage.data)
               const lasts = this.logs.slice(-100);
-              this.logs = lasts
+              this.logs = lasts 
 
             } else if (parsedMessage.type == 'config'){
               this.config = parsedMessage.message
@@ -577,7 +580,8 @@ export default {
               } 
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
-              this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)              
+              this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
+              console.log(this.status[parsedMessage.samplename])           
             }
             else{
               this.message = parsedMessage.message;
@@ -586,6 +590,7 @@ export default {
 
           $this.socket.onclose = function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+            
             setTimeout(function() {
               $this.connect();
             }, 2000);
@@ -593,6 +598,7 @@ export default {
 
           $this.socket.onerror = function(err) {
             console.error('Socket encountered error: ', err.message, 'Closing socket');
+            $this.connectedStatus = 'Disconnected Server, reattempting every 1 second. Check Logs and Network Settings'
             $this.socket.close();
           };
         },
@@ -678,7 +684,6 @@ export default {
                 type: "barcode", 
                 sample: sample.sample,
                 kits: sample.kits,
-                run: sample.sample,
                 dirpath: sample.path_1
             }
           ));

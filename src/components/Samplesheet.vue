@@ -521,12 +521,12 @@
                 <template v-slot:[`item.jobs`]="{ item }">
                     <v-dialog v-model="dialogJobs" >
                         <template v-slot:activator="{ on, attrs }">
-                            <v-btn fab x-small @click="selectedSample = item;" v-bind="attrs"
+                            <v-btn fab x-small @click="selectedSample = item.sample;" v-bind="attrs"
                                 v-on="on">
                                 <v-icon>mdi-comment</v-icon>
                             </v-btn>
                         </template>
-                        <v-data-iterator  class="grey lighten-3"
+                        <v-data-iterator v-if="item.sample == selectedSample" class="grey lighten-3"
                             :items="queueList[item.sample]"
                             :items-per-page.sync="itemsPerPage"
                             :key="`${queueList[item.sample]}`"
@@ -605,8 +605,9 @@
                             >
                                 <v-card    style="overflow-x:auto; width:100% " max-height="200px">
                                     <v-card-title class="text-header-2">
+                                        {{ que.status.running }}
                                         <v-progress-circular
-                                            indeterminate v-if="que.status.running "
+                                            indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
                                             color="primary"  size="15"
                                         ></v-progress-circular>
                                         <v-tooltip  :key="`queueinfo-${que.status.historical}-${que.index}`" v-else-if=" que.status.success ==0 && que.status.historical "
@@ -1247,7 +1248,7 @@
         },
         flush(){
             this.$emit("sendMessage", JSON.stringify({type: "flush" }));
-            
+             
         },
         cancelJob(index, sample){
             this.$emit("cancel",  {type: "cancelJob", index:index, sample: sample } );

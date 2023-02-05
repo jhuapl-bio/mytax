@@ -22,7 +22,7 @@ export  class Orchestrator {
         this.watcher = {}
         this.watcherBC = {} 
 
-        
+        this.queueRecords = {}
 
 
         this.bundleconfigDefaults= [
@@ -104,7 +104,10 @@ export  class Orchestrator {
             logger.error(err)
         }
         try{
-            let sample = new Sample(s, this.queue)
+            if (!this.queueRecords[s.sample]){
+                this.queueRecords[s.sample] = []
+            }
+            let sample = new Sample(s, this.queue, this.queueRecords)
             sample.gpu = this.gpu
             sample.ws = this.ws 
             sample.overwrite = overwrite
@@ -260,7 +263,10 @@ export  class Orchestrator {
             }
         });
 
-        // queue.on("resolve", data => console.log(data));
+        queue.on("resolve", ()=>{
+            console.log("RESOLVE!")
+
+        });
         // queue.on("reject", error => console.error(error));
         return queue 
 
@@ -618,8 +624,9 @@ export  class Orchestrator {
     }
     
     flush(){
-        logger.info("flush queue, cancel job(s)")
+        logger.info("flushing queue, canceling job(s)")
         try{
+            this.queue.stop()
             this.queue.end()
             if (this.samples){
                 for (let [key, value] of Object.entries(this.samples)){
@@ -686,7 +693,7 @@ export  class Orchestrator {
     cancel(index, sample){
         try{
             let s = this.samples[sample]
-            console.log(sample, index)
+            console.log(sample, index,">>>>>>")
             s.cancel(index)
         } catch (Err){
             logger.error(`${Err} error in canceling job(s)`)

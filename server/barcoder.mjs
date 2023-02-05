@@ -86,10 +86,9 @@ export  class Barcoder {
         return new Promise((resolve, reject)=>{
             const sample = $this.sample
             this.generateCommandString()
-            const command = $this.command
-            $this.check_barcode().then((rundemux)=>{
-                if (rundemux){
-                    console.log(command,"<<<<<<<", $this.gpu)
+            const command = $this.command  
+            $this.check_barcode().then((rundemux)=>{ 
+                if (rundemux){ 
                     var  ls = spawn('bash', ['-c', command ]);
                     $this.status.running = true
                     ls.stdout.on('data', (data) => { 
@@ -119,7 +118,7 @@ export  class Barcoder {
                         $this.status.running = false
                         $this.status.error  = code !== 0 ? 'Error in job' : null
                         $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
-                        resolve( `${code}`)
+                        resolve( code )
                     }); 
                     $this.process = ls
                     
@@ -147,12 +146,12 @@ export  class Barcoder {
         this.demux_outpath = output_path
         let ext = ".fastq.gz"
         let individual_output_path = path.join(stagepath_demux, 'demultiplexed')
-        let kits = this.sample.kits ? this.sample.kits : ''
+        let kits = this.sample.kits ? `--barcode_kits ${this.sample.kits}` : ''
         let command = `rm -r ${stagepath_demux}; mkdir -p ${stagepath_demux};  \\
         ln -s ${filepath} ${stagepath_Demux_filename};   guppy_barcoder --require_barcodes_both_ends --compress_fastq --disable_pings  \\
         -i "${path.dirname(stagepath_Demux_filename)}" \\
         -s "${individual_output_path}" \\
-        --barcode_kits "${kits}" ${this.gpu ? this.gpu : ''} &&  \\
+        ${kits} ${this.gpu ? this.gpu : ''};  \\
         for f in $(find ${individual_output_path} -type d -name "barcode*"); do \\
             for file in $(find $f -type f ); do \\
                 mkdir -p ${output_path}/$(basename $f);\\
