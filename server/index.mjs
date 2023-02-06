@@ -47,7 +47,6 @@ app.ws('/ws', async function(ws, req) {
     logger.info("App Initiated") 
     let orchestrator = new Orchestrator(ws);
     ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
-    orchestrator.enableQueue()
     orchestrator.ws = ws  
     ws.send(JSON.stringify({ type: "getbundleconfig", data: orchestrator.bundleconfig }));
     orchestrator.ws.on('message', async function(command) {
@@ -87,7 +86,6 @@ app.ws('/ws', async function(ws, req) {
             try{
                 let i=0
                 logger.info(`Starting run from samplesheet `) 
-                orchestrator.flush()
                 orchestrator.setSamples(command)
             } catch(err){
                 logger.error(err)

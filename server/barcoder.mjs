@@ -56,7 +56,7 @@ export  class Barcoder {
                 logger.info(`output from ${$this.filepath} doesn't exist, demuxing now`)
                 $this.seenfiles.push(filepath)
             } else {
-                logger.info(`skipping demux for ${filepath}`)
+                logger.info(`skipping demux for ${$this.filepath}`)
             } 
         } catch (err){
             logger.error(`${err} error in checking barcode status`)
@@ -85,31 +85,32 @@ export  class Barcoder {
         const $this = this
         return new Promise((resolve, reject)=>{
             const sample = $this.sample
-            this.generateCommandString()
+            this.generateCommandString() 
             const command = $this.command  
-            $this.check_barcode().then((rundemux)=>{ 
-                if (rundemux){ 
+            $this.check_barcode().then((rundemux)=>{   
+                if (rundemux){  
                     var  ls = spawn('bash', ['-c', command ]);
                     $this.status.running = true
+                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                     ls.stdout.on('data', (data) => { 
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,4)
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         logger.info(`stdout: ${data}`);
                     });
  
                     ls.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,4)
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: this.sample, index: $this.index, 'status' :  $this.status })) 
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: this.sample, index: $this.index, 'status' :  $this.status })) 
                         logger.error(`stderr: ${data}`); 
                     });
                     ls.on('error', function(error) {
                         logger.error(`Error happened ${error}`);
                         $this.status.error = err
                         $this.status.running = false
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
-                        resolve(error)
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        resolve(error) 
                     })  
                     ls.on('exit', (code) => {
                         logger.info(`child process exited with code for demux ${code} : ${sample.sample}`);
