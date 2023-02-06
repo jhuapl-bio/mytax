@@ -597,7 +597,7 @@
                             <v-row>
                             <v-col
                                 v-for="que in props.items"
-                                :key="`${que.index}-sampleIndex`"
+                                :key="`${que.index}-sampleIndex-${que.status.running}`"
                                 cols="12"  
                                 sm="6"
                                 md="4"
@@ -605,7 +605,7 @@
                             >
                                 <v-card    style="overflow-x:auto; width:100% " max-height="200px">
                                     <v-card-title class="text-header-2">
-                                        {{ que.status.running }}
+                                        {{ que.status.running }}_____
                                         <v-progress-circular
                                             indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
                                             color="primary"  size="15"
@@ -911,7 +911,7 @@
                     >
                         {{ anyCompleted(item) ? 'mdi-check-circle' : 'mdi-exclamation' }}
                     </v-icon>
-                    <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample]" left>
+                    <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample] || 1==1" left>
                         <template v-slot:activator="{ on, attrs }">
                             <v-icon
                                 small color="indigo"

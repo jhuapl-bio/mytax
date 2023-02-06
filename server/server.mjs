@@ -1,7 +1,7 @@
 import chokidar from 'chokidar'
 import glob from "glob-all"
 import {logger} from './logger.js'
-import Queue from "queue";
+import Queue from 'better-queue' 
 import path, { resolve } from 'path'
 import { fileURLToPath } from 'url'
 import {Barcoder} from "./barcoder.mjs"
@@ -79,7 +79,7 @@ export  class Orchestrator {
         this.compressed = false
         this.ext = ".fastq"
         this.seenfile = null
-        this.queue = this.enableQueue()
+        this.enableQueue()
         this.streamoutseen = null
         logger.on("data", (stream)=>{
             let output = stream
@@ -97,7 +97,7 @@ export  class Orchestrator {
     async setSampleSingle(s, overwrite){
         try{
             if (this.samples[s.sample]){
-                this.samples[s.sample].cancel()
+                // this.samples[s.sample].cancel()
                 delete this.samples[s.sample]
             }
         } catch (err){
@@ -114,6 +114,7 @@ export  class Orchestrator {
             sample.config = this.config
             sample.bundleconfig = this.bundleconfig
             this.samples[sample.sample] = sample
+            logger.info(`Setup sample ${sample.sample}`)
             sample.setupSample()
         } catch (err){
             logger.error(`${err}`)
@@ -238,13 +239,48 @@ export  class Orchestrator {
             logger.error(`${err} error in reading barcode outputs`)
         }
     }
-    
+    cancel(index, sample){
+        const $this = this
+        try{            
+            if (index && index >= 0){
+                
+                $this.queue.cancel(`${sample}-${index}`)
+            } else {
+                let s = this.samples[sample]
+                $this.samples[sample].watcherDemux.close()
+                $this.samples[sample].pause = true
+                Object.keys(s.queueRecords).map((f)=>{
+                    console.log(f,"<<<<<")
+                    $this.queue.cancel(f)
+                })
+            }
+        } catch (Err){
+            logger.error(`${Err} error in canceling job(s)`)
+            throw Err
+        }
+    }
     enableQueue(){
-        const queue = new Queue({
-            concurrency: 1,
-            autostart: true,
-            interval: 2000
-        });
+        const $this = this
+        const queue = new Queue(async function (name, cb) {
+            try{
+                logger.info(`Priority (lower is more priority): ${name.priority}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
+                await name.bind.start() 
+                
+                cb()                
+            } catch (err){
+                logger.error(`${err} error in running of the job in queue ${name.id}, ${name.sample}`)
+                cb(err)
+            }
+            
+          }, {
+            concurrent: 1,
+            autoResume: true,
+            cancelIfRunning: true,
+            priority: function (name, cb) { cb(null, name && name.priority ? name.priority : 1 ); },
+
+        }); 
+        
+
         queue.on("start", () => {
             try{
                 this.ws.send(JSON.stringify({ type: "anyRunning",  status: true}))
@@ -252,9 +288,9 @@ export  class Orchestrator {
                 logger.error(`${err} error in sending status of running in queue`)
             }
         });
-        const $this = this
-        queue.on("stop", () => logger.info("stopped queue"));
-        queue.on("end", () => {
+        
+        queue.on("cancel", () => logger.info("canceled queue"));
+        queue.on("drain", () => {
             logger.info("Ended queue")
             try{
                 this.ws.send(JSON.stringify({ type: "anyRunning",  status: false}))
@@ -267,15 +303,15 @@ export  class Orchestrator {
             console.log("RESOLVE!")
 
         });
-        // queue.on("reject", error => console.error(error));
-        return queue 
+        this.queue = queue
+        // return queue 
 
  
 
     }
     resume(val){
         try{
-            this.queue.start()
+            this.queue.resume()
             this.ws.send(JSON.stringify({ type: "message",  message: `Resumed`}))
         } catch (err){
             logger.error(`${err} error in resuming the job(s)`)
@@ -287,14 +323,13 @@ export  class Orchestrator {
             if (this.samples[sample].demux){
                 this.samples[sample].overwrite = true
             }
-            if (this.samples[sample] && this.samples[sample].queueList){
-                let job = this.samples[sample].queueList[index]
-                job.job.gpu = this.gpu
-                job.job.overwrite = true
-                job.job.recombine = true
-                
-                job.job.generateCommandString()
-                job.job.start()
+            if (this.samples[sample] && this.samples[sample].queueRecords){
+                let job = this.samples[sample].queueRecords[`${sample}-${index}`]
+               
+                job.gpu = this.gpu
+                job.overwrite = true
+                job.recombine = true
+                this.samples[sample].defineQueueJob(job)                
                 this.ws.send(JSON.stringify({ type: "message",  message: `Rerunning... ${sample}`}))
             } else {
                 this.ws.send(JSON.stringify({ type: "error",  message: `Rerunning ... failed`}))
@@ -626,13 +661,14 @@ export  class Orchestrator {
     flush(){
         logger.info("flushing queue, canceling job(s)")
         try{
-            this.queue.stop()
-            this.queue.end()
+            this.queue.cancel()
+            this.queue.pause()
             if (this.samples){
                 for (let [key, value] of Object.entries(this.samples)){
+                    value.paused = true
                     if (value.queueList){
                         value.queueList.forEach((job)=>{
-                            try{
+                            try{  
                                 job.job.stop()
                             } catch (Err){
                                 logger.error(`${Err} error in canceling running process`)
@@ -690,16 +726,7 @@ export  class Orchestrator {
             return path.basename(filepath) 
         }
     }
-    cancel(index, sample){
-        try{
-            let s = this.samples[sample]
-            console.log(sample, index,">>>>>>")
-            s.cancel(index)
-        } catch (Err){
-            logger.error(`${Err} error in canceling job(s)`)
-            throw Err
-        }
-    }
+    
     
     mergeSamples(files){
         const $this=this
