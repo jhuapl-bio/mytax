@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@vue/cli": "^5.0.8",
+    "better-queue": "^3.8.12",
     "core-js": "^3.8.3",
     "csv": "^6.1.0",
     "csv-parse": "^5.2.1",
@@ -27,8 +28,8 @@
     "node-polyfill-webpack-plugin": "^2.0.1",
     "nodemon": "^2.0.15",
     "npm": "^8.5.4",
+    "p-queue": "^7.3.3",
     "papaparse": "^5.3.2",
-    "queue": "^6.0.2",
     "sass": "~1.32.0",
     "sass-loader": "^10.0.0",
     "vue": "^2.6.14",

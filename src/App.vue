@@ -579,9 +579,10 @@ export default {
                 this.status[parsedMessage.samplename] = []
               } 
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
+              this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
               this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
-              console.log(this.status[parsedMessage.samplename])           
+              console.log(parsedMessage.status, parsedMessage.sample)           
             }
             else{
               this.message = parsedMessage.message;

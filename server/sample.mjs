@@ -15,9 +15,10 @@ export  class Sample {
             this[key] = sample[key]
         }
         this.fullstop = false
-        this.queueRecords = queueRecords
+        this.queueRecords = {}
         this.watcher = null
         this.config = {}
+        this.pause = false
         this.barcode = null
         this.queueList = []
         this.queue = queue 
@@ -26,49 +27,32 @@ export  class Sample {
         this.ws = null
         this.overwrite = false
     }
-    defineBarcoder(sampleObj, path_1){
+    async defineBarcoder(sampleObj, path_1){
         let barcoder = new Barcoder(sampleObj, path_1)        
         barcoder.ws = this.ws
         const $this = this
-        barcoder.gpu = this.gpu
+        barcoder.gpu = this.gpu 
         barcoder.config = this.config
         barcoder.bundleconfig = this.bundleconfig
         barcoder.overwrite = this.overwrite
-        this.watcherSequencing = chokidar.watch([
-            `${path_1}/*fastq.gz`,
-            `${path_1}/*fastq`,
-            `${path_1}/*fq.gz`, 
-            `${path_1}/*fq`], {ignored: /^\./, persistent: true});
-
+        // this.watcherSequencing = chokidar.watch([
+        //     `${path_1}/*fastq.gz`, 
+        //     `${path_1}/*fastq`,
+        //     `${path_1}/*fq.gz`,  
+        //     `${path_1}/*fq`], {ignored: /^\./, persistent: true});
+ 
          
 
         let msg;
         let code 
-        logger.info(`Starting barcoder run for job: ${this.sample}, ${barcoder.filepath}`)
-        this.queue.push(async (f) =>{ 
-            try{
-            
-                this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
-                $this.queueRecords[$this.sample][$this.queue.length -1] = "job"
-                code = await barcoder.start()
-            } catch(err){ 
-                logger.error(`${err} error in barcoding demux`)                
-            } finally{
-                $this.updateStatusQueueList(barcoder) 
-                logger.info(`Completed barcoder run for job: ${this.sample}, ${barcoder.filepath} - ${code}`)
-                if (code >= 0){
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
-                }
-                console.log($this.queueRecords[$this.sample],"..............")
-                console.log(f)
-                $this.queueRecords[$this.sample].shift()
-                console.log($this.queueRecords[$this.sample],"..............")
-            }
-        } )
+        // logger.info(`Starting barcoder run for job: ${this.sample}, ${barcoder.filepath}`)
+        
         msg = this.defineQueueMessage(barcoder)
         barcoder.index = msg.index
+        barcoder.type = 'barcoder'
         this.updateStatusQueueList(barcoder, msg.index)
         this.ws.send(JSON.stringify({ type: "recentQueue", data: msg }))
+        this.defineQueueJob(barcoder)
         
         return barcoder
     }
@@ -82,40 +66,25 @@ export  class Sample {
         classifier.overwrite = this.overwrite
         classifier.initialize()
         let msg; let code; 
-        if (!push){
-            this.queue.push(async () =>{  
-                try{
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
-                    code = await classifier.start()
-                } catch(err){
-                    logger.error(`${err} error in starting the classifier job`)                
-                } finally{
-                    $this.updateStatusQueueList(classifier)
-                    logger.info(`${code}----`)
-                    if (code >= 0){
-                        this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
-                    }
-                    
-                }
-            } ) 
-        } else {
-            this.queue.unshift(async () =>{  
-                try{
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length   }))
-                    await classifier.start()
-                } catch(err){
-                    logger.error(`${err} error in starting the prioritized classifier job`)                
-                } finally{
-                    $this.updateStatusQueueList(classifier)
-                    this.ws.send(JSON.stringify({ type: "queueLength", data: $this.queue.length -1  }))
-                }
-            } ) 
-        }
-            
+
         msg = this.defineQueueMessage(classifier)
+        classifier.type = 'classifier'
         classifier.index = msg.index
         this.updateStatusQueueList(classifier, msg.index)
+        $this.defineQueueJob(classifier )
         return classifier
+    }
+    async defineQueueJob(obj){
+        let id = `${this.sample}-${obj.index}`
+        this.queue.push({
+            jobnumber: obj.index,
+            id: id,
+            type: obj.type,
+            sample: this.sample,
+            priority: 0,
+            bind: obj
+        })
+        this.queueRecords[id] = obj
     }
     async setupSample(){
         const $this = this
@@ -159,7 +128,7 @@ export  class Sample {
         msg.status = obj.status
         msg.name = this.sample && this.barcode ? `${this.sample}-${this.barcode}` : this.sample
         
-        msg.indexQueue = this.queue.length  ? this.queue.length -1 : 0
+        msg.indexQueue = this.queue.size  ? this.queue.size -1 : 0
         
         msg.command = obj.command
         msg.config = obj.config
@@ -221,47 +190,39 @@ export  class Sample {
                 `${demuxoutpath}/**/*fastq`, 
                 `${demuxoutpath}/**/*fq.gz`,
                 `${demuxoutpath}/**/*fq`], {ignored: /^\./, persistent: true});
-            // let files = await globFiles([
-            //     `${demuxoutpath}/**/*fastq.gz`,
-            //     `${demuxoutpath}/**/*fastq`, 
-            //     `${demuxoutpath}/**/*fq.gz`,
-            //     `${demuxoutpath}/**/*fq`], {})     
-            // if (files){ 
-            //     files.forEach((file)=>{
-            //         let basefile = removeExtension(file)
-            //         $this.seenfiles[basefile] = 1
-            //         let sampleo = $this.defineBarcoderOutputfile(file)
-            //         $this.defineClassifier(sampleo, file, true)
-            //     })
-            // }
+            
         } catch (Err){ 
             logger.error(`${Err} Error in finding the dmux outpath`)
             throw Err
         } finally { 
-            this.watcherDemux
-            .on('add', function(filepath) {
-                logger.info(`Post DEMUX: File ${filepath} has been ADDED for barcoding demux`);
-                $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                let basefile = removeExtension(filepath) 
-                $this.seenfiles[basefile] = 1 
-                let sampleo = $this.defineBarcoderOutputfile(filepath)
-                $this.defineClassifier(sampleo, filepath, true) 
-            })
-            .on('change', function(filepath) {
-                logger.info(`POST DEMUX: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
-                $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                let basefile = removeExtension(filepath)
-                $this.seenfiles[basefile] = 1 
-                let sampleo = $this.defineBarcoderOutputfile(filepath)
-                $this.defineClassifier(sampleo, filepath, true) 
-            })
- 
-            .on('unlink', function(filepath) {
-                logger.info(`File ${filepath} has been removed`);
-            })
-            .on('error', function(error) { 
-                logger.error(`Error happened ${error}`);
-            }) 
+            if (!$this.pause){
+                
+                this.watcherDemux
+                    .on('add', function(filepath) {
+                        logger.info(`Post DEMUX: File ${filepath} has been ADDED for barcoding demux`);
+                        $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                        let basefile = removeExtension(filepath) 
+                        $this.seenfiles[basefile] = 1 
+                        let sampleo = $this.defineBarcoderOutputfile(filepath)
+                        $this.defineClassifier(sampleo, filepath, true) 
+                    })
+                    .on('change', function(filepath) {
+                        logger.info(`POST DEMUX: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
+                        $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                        // let basefile = removeExtension(filepath)
+                        // $this.seenfiles[basefile] = 1 
+                        // let sampleo = $this.defineBarcoderOutputfile(filepath)
+                        // $this.defineClassifier(sampleo, filepath, true) 
+                    })
+        
+                    .on('unlink', function(filepath) {
+                        logger.info(`File ${filepath} has been removed`);
+                    })
+                    .on('error', function(error) { 
+                        logger.error(`Error happened ${error}`);
+                    }) 
+            
+            }
             
             
         }
