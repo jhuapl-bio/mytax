@@ -78,14 +78,14 @@ export  class Orchestrator {
         this.seenstream = null
         this.compressed = false
         this.ext = ".fastq"
-        this.seenfile = null
+        this.seenfile = null 
         this.enableQueue()
-        this.streamoutseen = null
-        logger.on("data", (stream)=>{
-            let output = stream
-            try{
+        this.streamoutseen = null 
+        logger.on("data", (stream)=>{ 
+            let output = stream   
+            try{   
                 this.ws.send(JSON.stringify({ type: "logs", "data" : output }))
-            } catch (err){
+            } catch (err){ 
                 console.error("no websocket connection %o", err)
             }
         })
@@ -97,7 +97,7 @@ export  class Orchestrator {
     async setSampleSingle(s, overwrite){
         try{
             if (this.samples[s.sample]){
-                // this.samples[s.sample].cancel()
+                this.samples[s.sample].cancel()
                 delete this.samples[s.sample]
             }
         } catch (err){
@@ -260,27 +260,30 @@ export  class Orchestrator {
     }
     enableQueue(){
         const $this = this
-        const queue = new Queue(async function (name, cb) {
+        delete this.queue
+        const queue = new Queue(async function (name, cb) { 
             try{
                 logger.info(`Priority (lower is more priority): ${name.priority}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
-                await name.bind.start() 
-                
-                cb()                
+                await name.bind.start()    
+                   
+                cb()                    
             } catch (err){
                 logger.error(`${err} error in running of the job in queue ${name.id}, ${name.sample}`)
                 cb(err)
             }
             
-          }, {
-            concurrent: 1,
+          }, { 
+            concurrent: 1, 
             autoResume: true,
             cancelIfRunning: true,
-            priority: function (name, cb) { cb(null, name && name.priority ? name.priority : 1 ); },
+            priority: function (name, cb) { 
+                cb(null, name.priority)
+            },
 
-        }); 
-        
+        });  
+        this.queue = queue
 
-        queue.on("start", () => {
+        $this.queue.on("start", () => {
             try{
                 this.ws.send(JSON.stringify({ type: "anyRunning",  status: true}))
             } catch (err){
@@ -288,28 +291,40 @@ export  class Orchestrator {
             }
         });
         
-        queue.on("cancel", () => logger.info("canceled queue"));
-        queue.on("drain", () => {
+        $this.queue.on("cancel", () => logger.info("canceled queue"));
+        $this.queue.on("drain", () => {
             logger.info("Ended queue")
             try{
                 this.ws.send(JSON.stringify({ type: "anyRunning",  status: false}))
+                this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
             } catch (err){
                 logger.error(`${err} error in sending status of running in queue`)
             }
         });
-
-        queue.on("resolve", ()=>{
-            console.log("RESOLVE!")
-
-        });
-        this.queue = queue
-        // return queue 
-
- 
+        $this.queue.on('task_failed', function (taskId, result, stats) {
+            
+            $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
+        })
+        $this.queue.on('task_queued', function (taskId, result, stats) {
+            
+            $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
+        })
+        $this.queue.on('task_finish', function (taskId, result, stats) {
+            
+            $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
+        })   
+        $this.queue.on('paused', function (taskId, result, stats) {
+            
+            logger.info(`Paused ${$this.queue.getStats()}`)
+        })        
+     
 
     }
     resume(val){
         try{
+            for (let[key, sample] of Object.entries(this.samples)){
+                sample.paused = false
+            }
             this.queue.resume()
             this.ws.send(JSON.stringify({ type: "message",  message: `Resumed`}))
         } catch (err){
@@ -322,14 +337,14 @@ export  class Orchestrator {
             if (this.samples[sample].demux){
                 this.samples[sample].overwrite = true
             }
+            this.samples[sample].paused=false
             if (this.samples[sample] && this.samples[sample].queueRecords){
-                let job = this.samples[sample].queueRecords[`${sample}-${index}`]
-               
+                let job = this.samples[sample].queueRecords[index]
                 job.gpu = this.gpu
                 job.overwrite = true
                 job.recombine = true
-                job.pause = false 
-                this.samples[sample].defineQueueJob(job)                
+                job.paused = false 
+                this.samples[sample].setJob(job.filepath, job.format, true)                
                 this.ws.send(JSON.stringify({ type: "message",  message: `Rerunning... ${sample}`}))
             } else {
                 this.ws.send(JSON.stringify({ type: "error",  message: `Rerunning ... failed`}))
@@ -343,7 +358,8 @@ export  class Orchestrator {
     }
     pause(val){
         try{
-            this.queue.stop()
+            this.logger.info(`Pausing the queue for all running samples`)
+            this.queue.pause()
             this.ws.send(JSON.stringify({ type: "message",  message: `Paused`}))
         } catch (err){
             logger.error(`${err} error in pausing the job(s)`)
@@ -363,9 +379,9 @@ export  class Orchestrator {
                 Object.keys($this.seenfiles.fastqs).forEach((f)=>{
                     let filename = `${path.join(this.classificationsDir, 'reports', f)}.report`
                     promises.push(rmFile(filename))
-                })
-                this.resetSeenfiles()
-                Promise.allSettled(promises).then((f)=>{
+                }) 
+                this.resetSeenfiles() 
+                Promise.allSettled(promises).then((f)=>{ 
                     $this.watchFastqs(true)
                     $this.watcher.close().then((f)=>{
                         $this.watchFastqs(true)
@@ -661,23 +677,20 @@ export  class Orchestrator {
     flush(){
         logger.info("flushing queue, canceling job(s)")
         try{
-            this.queue.cancel()
-            this.queue.pause()
+            // this.queue.destroy()
+            
             if (this.samples){
                 for (let [key, value] of Object.entries(this.samples)){
-                    value.paused = true
-                    if (value.queueList){
-                        value.queueList.forEach((job)=>{
-                            try{  
-                                job.job.stop()
-                            } catch (Err){
-                                logger.error(`${Err} error in canceling running process`)
-                            }
-                            
-                        })
-                    }
+                    try{
+                        value.paused = true
+                        value.cancel() 
+                    } catch (err){
+                        logger.error(`${err}, error in canceling sample ${key}`)
+                    }                       
                 }
             }
+            // this.enableQueue()
+            this.ws.send(JSON.stringify({ type: "queueLength", data: 0 }))
             this.ws.send(JSON.stringify({ type: "message", message: "flushed queue, canceled job(s)" }))
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)

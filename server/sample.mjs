@@ -15,7 +15,7 @@ export  class Sample {
             this[key] = sample[key]
         }
         this.fullstop = false
-        this.queueRecords = {}
+        this.queueRecords = []
         this.watcher = null
         this.config = {}
         this.pause = false
@@ -27,10 +27,12 @@ export  class Sample {
         this.ws = null
         this.overwrite = false
     }
-    async defineBarcoder(sampleObj, path_1){
+    async defineBarcoder(sampleObj, path_1, priority ){
         let barcoder = new Barcoder(sampleObj, path_1)        
         barcoder.ws = this.ws
         const $this = this
+        barcoder.priority = ( priority ? priority : 0)
+
         barcoder.gpu = this.gpu 
         barcoder.config = this.config
         barcoder.bundleconfig = this.bundleconfig
@@ -56,11 +58,12 @@ export  class Sample {
         
         return barcoder
     }
-    defineClassifier(sampleObj, path_1, push){
+    defineClassifier(sampleObj, path_1, priority ){
         let classifier = new Classifier(sampleObj, path_1)
         classifier.ws = this.ws
         const $this = this
         classifier.config = this.config
+        classifier.priority = ( priority ? priority : 0)
         classifier.gpu = this.gpu
         classifier.bundleconfig = this.bundleconfig
         classifier.overwrite = this.overwrite
@@ -74,23 +77,40 @@ export  class Sample {
         $this.defineQueueJob(classifier )
         return classifier
     }
+    getIndexJob(filepath){
+        try{
+            // console.log(this.queueRecords.map((f)=>{return f.filepath}), filepath, this.queueRecords.findIndex((f)=>{return f.filepath == filepath}))
+            return this.queueRecords.findIndex((f)=>{return f.filepath == filepath})
+        } catch(err){
+            logger.error(`${err}, couldn't get the index of the job in question`)
+            return -1 
+        }
+    }
     async defineQueueJob(obj){
-        let id = `${this.sample}-${obj.index}`
+        let id =  this.getId(obj.index)
+        let index = this.getIndexJob(obj.filepath)
         this.queue.push({
             jobnumber: obj.index,
             id: id,
             type: obj.type,
             sample: this.sample,
-            priority: 0,
+            priority: obj.priority ? obj.priority : 0,
             bind: obj
         })
-        this.queueRecords[id] = obj
+        obj.jobnumber = id
+        if (index && index > -1){ 
+            this.queueRecords[index] = obj
+        } else {
+            this.queueRecords.push(obj)
+        }
+        return 
     }
     async setupSample(){
         const $this = this
         let outpath = this.sampleObj.format == 'directory'  ? path.join($this.path_1,  $this.sample ) :  path.join(path.dirname($this.path_1), $this.sample)  
         let fullreport = path.join(outpath, 'full.report')
         let exists_returned = await fs.existsSync(fullreport)
+        // this.overwrite = true
         if (exists_returned && $this.overwrite){
             try{
                 await rmFile(fullreport)
@@ -99,10 +119,9 @@ export  class Sample {
             }
         }
         if (this.path_1 && this.format == 'file'){
-            this.defineClassifier(this.sampleObj, this.path_1)
+            this.setJob(this.path_1, 'classifier')
         } else if (this.path_1 ){
-            this.files = []
-            
+            this.files = []            
             this.watchDirectory()
         }  
         return 
@@ -144,9 +163,20 @@ export  class Sample {
     }
     cancel(index){
         const $this = this
+        try{
+            // if (this.watcherDemux){
+            //     this.watcherDemux.close()
+            // }
+            // if (this.watcher){
+            //     this.watcher.close()
+            // }
+        } catch (err){
+            logger.error(`${err} couldnt close waters`)
+        }
         if (index >=0 && index){
-            try{
-                logger.info(`${job.name} stopping job `)
+            try{ 
+                logger.info(`${job.name} stopping job at index ${index} `)
+                this.queueList[index].cancel()
                 let job = this.queueList[index].job
                 job.stop()
             } catch (err){
@@ -154,13 +184,14 @@ export  class Sample {
                 throw err
             }
         } else {
-            if (this.queueList.length > 0){
+            if (this.queueList.length > 0){ 
                 this.fullstop = true
                 this.queueList.forEach((f, i)=>{
                     try{
                         let job = $this.queueList[i].job
                         job.stop()
-                        logger.info(`${job.name} stopping job `)
+                        logger.info(`${job.name} stopping job for full sample #: ${job.jobnumber}`)
+                        $this.queue.cancel(job.jobnumber)
                     } catch (err){
                         logger.error(`${err}, error in stopping job`)
                     }
@@ -178,16 +209,51 @@ export  class Sample {
         sample.overwrite = this.overwrite
         return sample
     }
+    getId(idx){
+        return `${this.sample}-${idx}`
+    }
+    setJob(filepath, type, overwrite){
+        const $this = this
+        let sampleObj = this.sampleObj
+        let sampleo = null
+        let indexFilepath  = this.getIndexJob(filepath)
+        if (!this.paused){
+            if (indexFilepath != -1){ 
+                logger.info(`Seen the filepath: ${filepath}, ${indexFilepath}`)
+                sampleo = this.queueRecords[indexFilepath]
+                sampleo.overwrite = overwrite
+                this.defineQueueJob(sampleo)
+                return 
+            } else {
+                logger.info(`Never seen this file process before ${filepath}, creating a new job`)
+                if (sampleObj.demux && type == 'classifier'){
+                    sampleo = $this.defineBarcoderOutputfile(filepath) 
+                    $this.defineClassifier(sampleo, filepath, 1)
+                } else {
+                    if (type == 'barcoder'){
+                        $this.defineBarcoder(sampleObj, filepath)
+                    } 
+                    else { 
+                        $this.defineClassifier(sampleObj, filepath,1)
+                    }
+                }
+                    
+                
+                return  
+            }
+        } else {
+            logger.info(`Paused: ${this.paused}, skipping ${filepath}. Please rerun if you want to get info again from this.`)
+        }
+    }
     async barcodeWatch(){
         const $this = this;
         let dirpath = ""
-        try{
-            this.watcherDemux ? this.watcherDemux.close() : ''  
-            console.log("watcherdemux closed")
-            delete this.watcherDemux
-        } catch (err){
-            logger.error(`${err} error in deleting demux watcher`)
-        }
+        // try{
+        //     this.watcherDemux ? this.watcherDemux.close() : ''  
+        //     delete this.watcherDemux
+        // } catch (err){
+        //     logger.error(`${err} error in deleting demux watcher`)
+        // }
         try{
             let dirpath = this.path_1 ? this.path_1 : this.path_2
             let demuxoutpath = path.join(dirpath, 'demultiplexed') 
@@ -202,34 +268,24 @@ export  class Sample {
             logger.error(`${Err} Error in finding the dmux outpath`)
             throw Err
         } finally { 
-            if (!$this.pause){
-                
-                this.watcherDemux
-                    .on('add', function(filepath) {
-                        logger.info(`Post DEMUX: File ${filepath} has been ADDED for barcoding demux`);
-                        $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                        let basefile = removeExtension(filepath) 
-                        $this.seenfiles[basefile] = 1 
-                        let sampleo = $this.defineBarcoderOutputfile(filepath)
-                        $this.defineClassifier(sampleo, filepath, true) 
-                    })
-                    .on('change', function(filepath) {
-                        logger.info(`POST DEMUX: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
-                        // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                        // let basefile = removeExtension(filepath)
-                        // $this.seenfiles[basefile] = 1 
-                        // let sampleo = $this.defineBarcoderOutputfile(filepath)
-                        // $this.defineClassifier(sampleo, filepath, true) 
-                    })
-        
-                    .on('unlink', function(filepath) {
-                        logger.info(`File ${filepath} has been removed`);
-                    })
-                    .on('error', function(error) { 
-                        logger.error(`Error happened ${error}`);
-                    }) 
-            
-            }
+            this.watcherDemux
+                .on('add', function(filepath) {
+                    logger.info(`Post DEMUX NEWLY CREATED: File ${filepath} has been ADDED for barcoding demux`);
+                    $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                    $this.setJob(filepath, "classifier", false)
+                })
+                .on('change', function(filepath) {
+                    logger.info(`POST DEMUX ALTERED: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
+                    // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                    $this.setJob(filepath, "classifier", true)
+                })
+    
+                .on('unlink', function(filepath) {
+                    logger.info(`File ${filepath} has been removed`);
+                })
+                .on('error', function(error) { 
+                    logger.error(`Error happened ${error}`);
+                }) 
             
             
         }
@@ -242,12 +298,12 @@ export  class Sample {
         let sample = this.sampleObj
         const $this = this;
         let overwrite = false
-        if (this.watcher ){
-            this.watcher.close().then(() => console.log('closed')).catch((err)=>{
-                logger.error("no watcher available to cancel properly")
-                delete $this.watcher
-            });
-        } 
+        // if (this.watcher ){
+        //     this.watcher.close().then(() => console.log('closed')).catch((err)=>{
+        //         logger.error("no watcher available to cancel properly")
+        //         delete $this.watcher
+        //     });
+        // } 
         var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true});
         this.watcher  = watcher
         
@@ -265,14 +321,11 @@ export  class Sample {
             .on('add', function(filepath) {
                 logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
                 $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                if (!sample.demux){
-                    $this.defineClassifier(sample, filepath)
-                } else {
-                    $this.defineBarcoder(sample, filepath)
-                }
+                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), false)
             }) 
             .on('change', function(filepath) {
                 logger.info(`File ${filepath} has been changed`);
+                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), true)
             })
             .on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);

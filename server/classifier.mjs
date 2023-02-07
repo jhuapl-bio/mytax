@@ -153,7 +153,7 @@ export  class Classifier {
         const $this = this
         let report = this.fullreport
         let outputdir = path.dirname(report)
-        let command = `bash ${__dirname}/src/bundle.sh \\
+        let command = ` bash ${__dirname}/src/bundle.sh \\
             -i "${$this.filepath}" \\
             -o "${outputdir}"  \\
             -d "${$this.sample.database}" ${(this.recombine ? '-r' : '')} `

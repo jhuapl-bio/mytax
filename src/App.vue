@@ -560,7 +560,6 @@ export default {
             } else if (parsedMessage.type == 'error'){
               console.error(parsedMessage.message)
             } else if (parsedMessage.type == 'message'){
-              console.log(parsedMessage.message)
             } else if (parsedMessage.type == 'anyRunning'){
               this.anyRunning = parsedMessage.status
             } else if (parsedMessage.type == 'recentQueue'){
@@ -579,8 +578,9 @@ export default {
                 this.status[parsedMessage.samplename] = []
               } 
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
-              this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)
+              // this.status[parsedMessage.samplename][parsedMessage.index] = Object.assign({}, this.status[parsedMessage.samplename][parsedMessage.index], parsedMessage.status, )
               this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
+              // this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)              
               this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
             }
             else{
@@ -590,7 +590,6 @@ export default {
 
           $this.socket.onclose = function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
-            
             setTimeout(function() {
               $this.connect();
             }, 2000);
