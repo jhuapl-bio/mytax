@@ -112,6 +112,7 @@ export  class Orchestrator {
             sample.ws = this.ws 
             sample.overwrite = overwrite
             sample.config = this.config
+            sample.pause = false
             sample.bundleconfig = this.bundleconfig
             this.samples[sample.sample] = sample
             logger.info(`Setup sample ${sample.sample}`)
@@ -247,10 +248,8 @@ export  class Orchestrator {
                 $this.queue.cancel(`${sample}-${index}`)
             } else {
                 let s = this.samples[sample]
-                $this.samples[sample].watcherDemux.close()
                 $this.samples[sample].pause = true
                 Object.keys(s.queueRecords).map((f)=>{
-                    console.log(f,"<<<<<")
                     $this.queue.cancel(f)
                 })
             }
@@ -329,6 +328,7 @@ export  class Orchestrator {
                 job.gpu = this.gpu
                 job.overwrite = true
                 job.recombine = true
+                job.pause = false 
                 this.samples[sample].defineQueueJob(job)                
                 this.ws.send(JSON.stringify({ type: "message",  message: `Rerunning... ${sample}`}))
             } else {

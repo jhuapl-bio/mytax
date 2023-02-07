@@ -605,7 +605,6 @@
                             >
                                 <v-card    style="overflow-x:auto; width:100% " max-height="200px">
                                     <v-card-title class="text-header-2">
-                                        {{ que.status.running }}_____
                                         <v-progress-circular
                                             indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
                                             color="primary"  size="15"
