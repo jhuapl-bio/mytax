@@ -99,22 +99,20 @@
                             </template>
                             Stop All Jobs
                         </v-tooltip>
-                        <v-tooltip   >
+                        <v-tooltip   v-if="!paused" :key="`${paused}-pausedbutton`">
                             <template v-slot:activator="{ on }">
-                                
                                 <v-badge 
                                     color="green lighten-2"  overlap 
                                     :content="`${queueLength > 0 ? queueLength : ''}`" 
                                 >
                                     <v-btn color="orange "
                                             dark  fab x-small
-                                            v-on="on"
+                                            v-on="on"  
                                             class="mx-2 "
                                             @click="paused = true">
                                         <v-icon>mdi-pause-circle</v-icon>
                                     </v-btn>
                                 </v-badge>
-                                
                             </template>
                             Pause Queued Jobs
                         </v-tooltip>
@@ -391,48 +389,41 @@
                     v-model="sheet"
                     inset
                 >
-                    <v-sheet
-                    class="text-left logDiv mx-0"
-                    style="overflow:auto"
-                    >
-                    <div class="py-10 pl-4 mx-0">
-                        <span v-for="(row,index) in logs" :key="'sheet'+index">
-                        <v-icon
-                            dark v-if="row.level == 'error'"
-                            left color="red"
-                        >
-                            mdi-alert-circle-outline
-                        </v-icon>
-                        <v-icon
-                            dark v-else
-                            left color="blue"
-                        >
-                            mdi-information
-                        </v-icon>
-                        <code>{{row.message}}</code>
-                        <br>
-                        </span>
-                    </div>
                     
-                    </v-sheet>
-                    <v-btn
-                        color="red" dark v-if="scroll"
-                        icon-and-text @click="scroll = false"
+                    <v-card
+                        class="text-left logDiv mx-0"
+                        style="overflow:auto"
                     >
-                        Pause Autoscroll
-                        <v-icon>
-                        mid-cancel
-                        </v-icon>
-                    </v-btn>
-                    <v-btn v-else
-                        color="blue" dark
-                        icon-and-text @click="scroll = true"
-                    >
-                        Autoscroll
-                        <v-icon>
-                        mid-play
-                        </v-icon>
-                    </v-btn>
+                        <v-toolbar  dark>
+                            <v-toolbar-title>Server Logs</v-toolbar-title>
+
+                            <v-spacer></v-spacer>
+
+                            <v-btn icon @click="sheet = false" x-large fab>
+                                <v-icon large >mdi-close-circle</v-icon>
+                            </v-btn>
+                        </v-toolbar>
+                        <v-card-text class="my-3 mb-2" style="max-height: 80vh; overflow-y:auto">
+                            
+                            <span v-for="(row,index) in logs.slice().reverse()" :key="'sheet'+index">
+                            <v-icon
+                                dark v-if="row.level == 'error'"
+                                left color="red"
+                            >
+                                mdi-alert-circle-outline
+                            </v-icon>
+                            <v-icon
+                                dark v-else
+                                left color="blue"
+                            >
+                                mdi-information
+                            </v-icon>
+                            <code>{{row.message}}</code>
+                            <br>
+                            </span>
+                        </v-card-text>
+                    
+                    </v-card>
                 </v-dialog>
 
                 </template>
@@ -519,304 +510,10 @@
                     <code class="overflow-x-auto " style="">{{ item.database }}</code>
                 </template>
                 <template v-slot:[`item.jobs`]="{ item }">
-                    <v-dialog v-model="dialogJobs" >
-                        <template v-slot:activator="{ on, attrs }">
-                            <v-btn fab x-small @click="selectedSample = item.sample;" v-bind="attrs"
-                                v-on="on">
-                                <v-icon>mdi-comment</v-icon>
-                            </v-btn>
-                        </template>
-                        <v-data-iterator v-if="item.sample == selectedSample" class="grey lighten-3"
-                            :items="queueList[item.sample]"
-                            :items-per-page.sync="itemsPerPage"
-                            :key="`${queueList[item.sample]}`"
-                            :page.sync="page"
-                            :search="search"
-                            :sort-by="sortBy.toLowerCase()"
-                            :sort-desc="sortDesc"
+                    <v-btn fab x-small @click="selectedSample = queueList[item.sample]; dialogJobs = true"  
                         >
-                        
-                        <template v-slot:header>
-                            <v-toolbar
-                            dark
-                            color="blue darken-3"
-                            class="mb-1"
-                            >
-                            <v-btn
-                                small fab
-                                color="grey" @click="dialogJobs=false"
-                                
-                            >
-                                <v-icon>mdi-close</v-icon>
-                            </v-btn>
-                            <v-spacer></v-spacer>
-                            <v-btn
-                                large
-                                depressed v-if="queueList[item.sample]"
-                                color="blue" @click="(page = page+1)"
-                                :value="false" :disabled="page * itemsPerPage >= queueList[item.sample].length"
-                            >
-                                <v-icon>mdi-arrow-down</v-icon>
-                            </v-btn>
-                            <v-btn
-                                large @click="(page > 1 ? page = page -1 : '')"
-                                depressed :disabled="page <= 1"
-                                color="blue"
-                                :value="true"
-                            >
-                                <v-icon>mdi-arrow-up</v-icon>
-                            </v-btn>
-                            <v-spacer></v-spacer>
-                            <v-text-field
-                                v-model="search"
-                                clearable
-                                flat
-                                solo-inverted
-                                hide-details
-                                prepend-inner-icon="mdi-magnify"
-                                label="Search"
-                            ></v-text-field>
-                            <template v-if="$vuetify.breakpoint.mdAndUp">
-                                <v-spacer></v-spacer>
-                                <v-select
-                                v-model="sortBy"
-                                flat
-                                solo-inverted
-                                hide-details
-                                :items="keys"
-                                prepend-inner-icon="mdi-magnify"
-                                label="Sort by"
-                                ></v-select>
-                                <v-spacer></v-spacer>
-                                
-                            </template>
-                            </v-toolbar>
-                        </template>
-
-                        <template v-slot:default="props">
-                            <v-row>
-                            <v-col
-                                v-for="que in props.items"
-                                :key="`${que.index}-sampleIndex-${que.status.running}`"
-                                cols="12"  
-                                sm="6"
-                                md="4"
-                                lg="4"
-                            >
-                                <v-card    style="overflow-x:auto; width:100% " max-height="200px">
-                                    <v-card-title class="text-header-2">
-                                        <v-progress-circular
-                                            indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
-                                            color="primary"  size="15"
-                                        ></v-progress-circular>
-                                        <v-tooltip  :key="`queueinfo-${que.status.historical}-${que.index}`" v-else-if=" que.status.success ==0 && que.status.historical "
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on }">
-                                                <v-icon
-                                                    class="" small
-                                                    :color="'green'"
-                                                    dark v-on="on"
-                                                >
-                                                    mdi-history
-                                                </v-icon>
-                                            </template>
-                                            Already run
-                                        </v-tooltip>
-                                        <v-tooltip :key="`queuerror-${que.status.error}-${que.index}`" v-else-if="que.status.error"
-                                            :color="'orange lighten-1'"
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on, attrs }">
-                                                    <v-icon
-                                                        large color="orange lighten-1"
-                                                        v-bind="attrs"
-                                                        v-on="on" @click="sheet = true"
-                                                    >
-                                                        mdi-exclamation
-                                                    </v-icon>
-                                            </template>
-                                            <span>{{ que.status.error }}</span>
-                                        </v-tooltip>
-                                        <v-tooltip  v-else-if=" que.status.success ==0 "
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on, attrs }">
-                                                <v-icon 
-                                                    class="" small
-                                                    :color="'green'"
-                                                    dark v-on="on" :bind="attrs"
-                                                >
-                                                    mdi-check-circle
-                                                </v-icon>
-                                            </template>
-                                            Completed Successfully 
-                                        </v-tooltip>
-                                        {{ `${que.sample && que.sample.sample ? que.sample.sample : ''} ` }}
-                                        <v-spacer></v-spacer>
-                                        <v-dialog
-                                            style="overflow-x:auto; width:100%" absolute v-model="dialogQueue"
-                                            >
-                                            <template v-slot:activator="{ on, attrs }">
-                                                <v-btn
-                                                    color="secondary" class="px-0 mx-0"
-                                                    fab v-on="on" v-bind="attrs"
-                                                    dark x-small
-                                                >
-                                                <v-tooltip  
-                                                    dark left
-                                                >
-                                                    <template v-slot:activator="{ on }">
-                                                        <v-icon
-                                                            dark  v-on="on"
-                                                        >
-                                                        mdi-tray-full
-                                                        </v-icon>
-                                                    </template>
-                                                    Information
-                                                </v-tooltip>
-                                                </v-btn>
-                                            </template>
-                                            
-                                            <v-card class="mx-auto"
-                                                outlined style="overflow-y:auto; width: 100%"
-                                            >
-                                                <v-list-item dense three-line>
-                                                    <v-list-item-content dense>
-                                                        <div class="">
-                                                            <v-progress-circular
-                                                                indeterminate v-if="que.status.running "
-                                                                color="primary"  size="15"
-                                                            ></v-progress-circular>
-                                                            <v-tooltip  v-else-if=" que.status.success ==0 && que.status.historical "
-                                                                dark left
-                                                            >
-                                                                <template v-slot:activator="{ on }">
-                                                                    <v-icon
-                                                                        class="" small
-                                                                        :color="'green'"
-                                                                        dark v-on="on"
-                                                                    >
-                                                                        mdi-history
-                                                                    </v-icon>
-                                                                </template>
-                                                                Already run
-                                                            </v-tooltip>
-                                                            <v-tooltip  v-else-if=" que.status.success ==0 "
-                                                                dark left
-                                                            >
-                                                                <template v-slot:activator="{ on }">
-                                                                    <v-icon 
-                                                                        class="" small
-                                                                        :color="'green'"
-                                                                        dark v-on="on"
-                                                                    >
-                                                                        mdi-check-circle
-                                                                    </v-icon>
-                                                                </template>
-                                                                Completed Successfully 
-                                                            </v-tooltip>
-                                                            
-                                                        </div>
-                                                        <v-list-item-title class="text-h5 mb-1">
-                                                            {{ que.name }} 
-                                                        </v-list-item-title>
-                                                        <v-list-item-subtitle>
-                                                            {{ que.filepath  }}
-                                                        </v-list-item-subtitle>
-                                                    </v-list-item-content>
-
-                                                </v-list-item>
-                                                <v-card-actions>
-                                                    <v-spacer></v-spacer>
-                                                    <v-btn
-                                                        color="primary"
-                                                        text
-                                                        @click="dialogQueue = false"
-                                                    >
-                                                        Close
-                                                    </v-btn> 
-                                                </v-card-actions>
-                                                <v-card-text class="text-sm-left" style="white-space: pre-wrap;" >
-                                                    <code class="text-sm-left " style="white-space: pre-wrap;">{{ que.command }}</code>
-                                                    
-                                                    <code v-for="(log, index) in que.status.logs"
-                                                        :key="`${index}-logQueue`" style="white-space: pre-wrap;">
-                                                        {{ log }}
-                                                        <v-divider></v-divider>
-                                                    </code>
-                                                </v-card-text>
-                                                <v-divider></v-divider>
-                                            </v-card>
-                                        </v-dialog>
-                                        <v-tooltip  
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on }">
-                                                    <v-btn  :disabled="!que.status.running  " v-on="on" @click="cancelJob(que.index, item.sample)"  fab x-small  color="orange lighten-1">
-                                                        <v-icon >mdi-cancel</v-icon>
-                                                    </v-btn>
-                                            </template>
-                                            Cancel
-                                        </v-tooltip>
-                                        <v-tooltip 
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on, attrs }">
-                                                <v-btn :disabled="que.status.running" @click="start(que.index, item.sample)"
-                                                    color="blue lighten-1" class="px-0 mx-0"
-                                                    fab v-on="on" v-bind="attrs"
-                                                    dark x-small
-                                                >
-                                                    <v-icon >mdi-play</v-icon>
-                                                </v-btn>
-                                            </template>
-                                            Rerun 
-                                        </v-tooltip> 
-                                    </v-card-title>
-                                    
-                                    <v-card-subtitle class="subheading">
-                                        <v-tooltip  v-if="!que.status.running && que.status.success == 0  "
-                                            dark left
-                                        >
-                                            <template v-slot:activator="{ on  }">
-                                                <v-icon v-on="on" small color="secondary lighten-1">
-                                                    mdi-archive
-                                                </v-icon>
-                                            </template>
-                                            {{  que.filepath }} 
-                                        </v-tooltip>
-                                        {{ `${que.sample ? que.sample.format : ''} - ${que.sample && que.sample.demux ? 'Demux' : 'Classify'} ` }} . {{ que.index }}
-                                        {{  que.sample ? que.sample.filepath : '' }}
-                                    </v-card-subtitle>
-                                    <v-divider></v-divider>
-                                    
-                                        <v-list  dense>
-                                            <v-list-item v-for="k in attributes" :key="`${k}-formatkey`"  two-line>
-                                                
-                                                
-                                                <v-list-item-content   >
-                                                    <v-list-item-title    style="white-space: normal;" >{{ k }}</v-list-item-title>
-                                                    
-                                                </v-list-item-content>
-                                                <v-divider vertical></v-divider>
-                                                <v-list-item-content   class="align-end">
-                                                    <v-list-item-subtitle class="mx-3" style="white-space: normal;"  >{{ que.sample[k] }}</v-list-item-subtitle>
-                                                    <v-divider ></v-divider>
-                                                </v-list-item-content>
-                                                
-                                            </v-list-item>
-                                            
-                                            
-                                        </v-list>
-                                   
-                                </v-card>
-
-                            </v-col>
-                            </v-row>
-                        </template>
-                        </v-data-iterator> 
-                    </v-dialog>
+                        <v-icon>mdi-comment</v-icon>
+                    </v-btn>
                     
                 </template>
                 <template v-slot:[`item.pattern`]="{ item }">
@@ -894,7 +591,7 @@
                 </template>
                 <template v-slot:[`item.actions`]="{ item }">
                     <v-icon
-                        small
+                        medium
                         class="mr-2" color=""
                         @click="editItem(item)" 
                     >
@@ -902,18 +599,17 @@
                     </v-icon>
                     <v-progress-circular
                         indeterminate v-if="current && typeof current == 'object' && current[item.sample]"
-                        color="primary" small size="15"
+                        color="primary" medium size="15"
                     ></v-progress-circular>
                     <v-icon
-                        small  v-else-if="item.format !=='run'"
-                        :color="anyCompleted(item) ? 'green': 'orange'"
+                        medium  v-else-if="item.format !=='run'" 
                     >
                         {{ anyCompleted(item) ? 'mdi-check-circle' : 'mdi-exclamation' }}
                     </v-icon>
                     <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample] || 1==1" left>
                         <template v-slot:activator="{ on, attrs }">
                             <v-icon
-                                small color="indigo"
+                                medium color="indigo"
                                 v-bind="attrs"
                                 v-on="on"
                                 @click="cancelJob(null, item.sample)"
@@ -924,7 +620,7 @@
                         <span>Cancel Sample Job(s)</span>
                     </v-tooltip>
                     <v-icon
-                        small class="mr-2" color="orange"
+                        medium class="mr-2" color="orange"
                         @click="deleteItem(item)"
                     >
                         mdi-delete
@@ -933,7 +629,7 @@
                     <v-tooltip   left>
                         <template v-slot:activator="{ on, attrs }">
                             <v-icon
-                                small color="indigo"
+                                medium color="indigo"
                                 v-bind="attrs"
                                 v-on="on"
                                 @click="forceRestart(item)"
@@ -948,23 +644,311 @@
                 <template v-slot:[`item.report`]="{ item }">
                     <v-progress-circular
                         indeterminate v-if="current && typeof current == 'object' && current[item.sample]"
-                        color="primary" small size="10"
+                        color="primary" medium size="10"
                     ></v-progress-circular>
                     <v-icon
-                        small  v-else-if="item.format !=='run'"
+                        medium  v-else-if="item.format !=='run'"
                         :color="seen && seen.indexOf(item.sample) > -1 ? 'green': 'orange'"
                     >
                         {{seen && seen.indexOf(item.sample) > -1 ? 'mdi-check-circle' : 'mdi-exclamation' }}
                     </v-icon>
-                    <v-subheader v-else>
-                        Barcodes
-                    </v-subheader>
-                    
                         
                 </template>
                 
             </v-data-table>
         </v-col>
+        <v-dialog
+            style="overflow-x:auto; width:100%" absolute v-model="dialogQueue" v-if="dialogQueue"
+        >
+       
+        <v-card class="mx-auto"
+            outlined style="overflow-y:auto; width: 100%"
+        >
+            <v-list-item dense three-line>
+                <v-list-item-content dense>
+                    <div class="">
+                        <v-progress-circular
+                            indeterminate v-if="selectedSampleIndex.status.running "
+                            color="primary"  size="15"
+                        ></v-progress-circular>
+                        <v-tooltip  v-else-if=" selectedSampleIndex.status.success ==0 && selectedSampleIndex.status.historical "
+                            dark left
+                        >
+                            <template v-slot:activator="{ on }">
+                                <v-icon
+                                    class="" small
+                                    :color="'green'"
+                                    dark v-on="on"
+                                >
+                                    mdi-history
+                                </v-icon>
+                            </template>
+                            Already run
+                        </v-tooltip>
+                        <v-tooltip  v-else-if=" selectedSampleIndex.status.success ==0 "
+                            dark left
+                        >
+                            <template v-slot:activator="{ on }">
+                                <v-icon 
+                                    class="" small
+                                    :color="'green'"
+                                    dark v-on="on"
+                                >
+                                    mdi-check-circle
+                                </v-icon>
+                            </template>
+                            Completed Successfully 
+                        </v-tooltip>
+                        
+                    </div>
+                    <v-list-item-title class="text-h5 mb-1">
+                        {{ selectedSampleIndex.name }} 
+                    </v-list-item-title>
+                    <v-list-item-subtitle>
+                        {{ selectedSampleIndex.filepath  }}
+                    </v-list-item-subtitle>
+                </v-list-item-content>
+
+            </v-list-item>
+            <v-card-actions>
+                <v-spacer></v-spacer>
+                <v-btn
+                    color="primary"
+                    text
+                    @click="dialogQueue = false"
+                >
+                    Close
+                </v-btn> 
+            </v-card-actions>
+            <v-card-text class="text-sm-left" style="white-space: pre-wrap;" >
+                <code class="text-sm-left " style="white-space: pre-wrap;">{{ selectedSampleIndex.command }}</code>
+                
+                <code v-for="(log, index) in selectedSampleIndex.status.logs"
+                    :key="`${index}-logQueue`" style="white-space: pre-wrap;">
+                    {{ log }}
+                    <v-divider></v-divider>
+                </code>
+            </v-card-text>
+            <v-divider></v-divider>
+        </v-card>
+        </v-dialog>
+        <v-dialog v-model="dialogJobs" v-if="dialogJobs">
+            <v-data-iterator  class="grey lighten-3"
+                :items="selectedSample"
+                :items-per-page.sync="itemsPerPage"
+                :page.sync="page"
+                :search="search"
+                :sort-by="sortBy.toLowerCase()"
+                :sort-desc="sortDesc"
+            >
+            
+            <template v-slot:header>
+                
+                <v-toolbar
+                dark
+                color="blue darken-3"
+                class="mb-1"
+                >
+                <v-btn
+                    small fab
+                    color="grey" 
+                    
+                >
+                    <v-icon>mdi-close</v-icon>
+                </v-btn>
+                <v-spacer></v-spacer>
+                <v-btn
+                    large
+                    depressed v-if="selectedSample"
+                    color="blue" @click="(page = page+1)"
+                    :value="false" :disabled="page * itemsPerPage >= selectedSample.length"
+                >
+                    <v-icon>mdi-arrow-down</v-icon>
+                </v-btn>
+                <v-btn
+                    large @click="(page > 1 ? page = page -1 : '')"
+                    depressed :disabled="page <= 1"
+                    color="blue"
+                    :value="true"
+                >
+                    <v-icon>mdi-arrow-up</v-icon>
+                </v-btn>
+                <v-spacer></v-spacer>
+                <v-text-field
+                    v-model="search"
+                    clearable
+                    flat
+                    solo-inverted
+                    hide-details
+                    prepend-inner-icon="mdi-magnify"
+                    label="Search"
+                ></v-text-field>
+                <template v-if="$vuetify.breakpoint.mdAndUp">
+                    <v-spacer></v-spacer>
+                    <v-select
+                    v-model="sortBy"
+                    flat
+                    solo-inverted
+                    hide-details
+                    :items="keys"
+                    prepend-inner-icon="mdi-magnify"
+                    label="Sort by"
+                    ></v-select>
+                    <v-spacer></v-spacer>
+                    
+                </template>
+                </v-toolbar>
+            </template>
+
+            <template v-slot:default="props">
+                
+                    <v-row> 
+                    <v-col
+                    v-for="que in props.items"
+                    :key="`${que.index}-sampleIndex-${que.status.running}`"
+                    cols="12"  
+                    sm="6"
+                    md="4"
+                    lg="4"
+                >
+                    <v-card    style="overflow-x:auto; width:100% " max-height="200px">
+                        
+                        <v-card-title class="text-header-2">
+                            <v-progress-circular
+                                indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
+                                color="primary"  size="15"
+                            ></v-progress-circular>
+                            <v-tooltip  :key="`queueinfo-${que.status.historical}-${que.index}`" v-else-if=" que.status.success ==0 && que.status.historical "
+                                dark left
+                            >
+                                <template v-slot:activator="{ on }">
+                                    <v-icon
+                                        class="" small
+                                        :color="'green'"
+                                        dark v-on="on"
+                                    >
+                                        mdi-history
+                                    </v-icon>
+                                </template>
+                                Already run
+                            </v-tooltip>
+                            <v-tooltip :key="`queuerror-${que.status.error}-${que.index}`" v-else-if="que.status.error"
+                                :color="'orange lighten-1'"
+                                dark left
+                            >
+                                <template v-slot:activator="{ on, attrs }">
+                                        <v-icon
+                                            large color="orange lighten-1"
+                                            v-bind="attrs"
+                                            v-on="on" @click="sheet = true"
+                                        >
+                                            mdi-exclamation
+                                        </v-icon>
+                                </template>
+                                <span>{{ que.status.error }}</span>
+                            </v-tooltip>
+                            <v-tooltip  v-else-if=" que.status.success ==0 "
+                                dark left
+                            >
+                                <template v-slot:activator="{ on, attrs }">
+                                    <v-icon 
+                                        class="" small
+                                        :color="'green'"
+                                        dark v-on="on" :bind="attrs"
+                                    >
+                                        mdi-check-circle
+                                    </v-icon>
+                                </template>
+                                Completed Successfully 
+                            </v-tooltip>
+                            {{ `${que.sample && que.sample.sample ? que.sample.sample : ''} ` }}
+                            <v-spacer></v-spacer>
+                            <v-tooltip  
+                                dark left
+                            >
+                                    <template v-slot:activator="{ on }">
+                                        <v-btn
+                                            color="secondary" class="px-0 mx-0"
+                                            fab v-on="on" @click="selectedSampleIndex = que; dialogQueue = true"
+                                            dark x-small
+                                        >
+                                            <v-icon
+                                                dark  
+                                            >
+                                            mdi-tray-full
+                                            </v-icon>
+                                        </v-btn>
+                                    </template>
+                                    Information
+                            </v-tooltip>
+                            <v-tooltip  
+                                dark left :key="`${que.index}-${que.name}-Archivecancel`"
+                            >
+                                <template v-slot:activator="{ on }">
+                                        <v-btn  :disabled="!que.status.running  " v-on="on" @click="cancelJob(que.index, que.name)"  fab x-small  color="orange lighten-1">
+                                            <v-icon >mdi-cancel</v-icon>
+                                        </v-btn>
+                                </template>
+                                Cancel
+                            </v-tooltip>
+                            <v-tooltip 
+                                dark left  :key="`${que.index}-${que.name}-rerunbutton`"
+                            >
+                                <template v-slot:activator="{ on, attrs }">
+                                    <v-btn :disabled="que.status.running" @click="start(que.index, que.name)"
+                                        color="blue lighten-1" class="px-0 mx-0"
+                                        fab v-on="on" v-bind="attrs"
+                                        dark x-small
+                                    >
+                                        <v-icon >mdi-play</v-icon>
+                                    </v-btn>
+                                </template>
+                                Rerun 
+                            </v-tooltip> 
+                        </v-card-title>
+                        
+                        <v-card-subtitle class="subheading">
+                            <v-tooltip  :key="`${que.index}-${que.name}-arhice`" v-if="!que.status.running && que.status.success == 0  "
+                                dark left
+                            >
+                                <template v-slot:activator="{ on  }">
+                                    <v-icon v-on="on" small color="secondary lighten-1">
+                                        mdi-archive
+                                    </v-icon>
+                                </template>
+                                {{  que.filepath }} 
+                            </v-tooltip>
+                            {{ `${que.sample ? que.sample.format : ''} - ${que.sample && que.sample.demux ? 'Demux' : 'Classify'} ` }} . {{ que.index }}
+                            {{  que.sample ? que.sample.filepath : '' }}
+                        </v-card-subtitle>
+                        <v-divider></v-divider>
+                        
+                            <v-list  dense>
+                                <v-list-item v-for="k in attributes" :key="`${k}-formatkey`"  two-line>
+                                    
+                                    
+                                    <v-list-item-content   >
+                                        <v-list-item-title    style="white-space: normal;" >{{ k }}</v-list-item-title>
+                                        
+                                    </v-list-item-content>
+                                    <v-divider vertical></v-divider>
+                                    <v-list-item-content   class="align-end">
+                                        <v-list-item-subtitle class="mx-3" style="white-space: normal;"  >{{ que.sample[k] }}</v-list-item-subtitle>
+                                        <v-divider ></v-divider>
+                                    </v-list-item-content>
+                                    
+                                </v-list-item>
+                                
+                                
+                            </v-list>
+                        
+                    </v-card>
+
+                </v-col>
+                </v-row>
+            </template>
+            </v-data-iterator> 
+        </v-dialog>
         <v-snackbar
             v-model="snack"
             :timeout="3000"
@@ -992,6 +976,8 @@
   import VueJsonToCsv from 'vue-json-to-csv'
   import * as d3 from 'd3'
   require("path")
+  import _ from 'lodash';
+
   export default { 
     name: 'Samplesheet',
     props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs', 'bundleconfig', 'queueList', 'anyRunning', 'queueLength'],
@@ -1017,7 +1003,12 @@
       paused(val){
           this.$emit("pausedChange", val)
       },
-      
+      queueList: {
+          deep:true,
+          handler(val){
+                console.log("val", val)
+        }
+      },
       current: {
           deep:true,
           handler(val){
@@ -1063,7 +1054,7 @@
     }, 
     computed: {
       numberOfPages () {
-            return Math.ceil(this.queueList[this.selectedSample].length / this.itemsPerPage)
+            return Math.ceil(this.selectedSample.length / this.itemsPerPage)
       },
       filteredKeys () {
         return this.keys.filter(key => key !== 'Name')
@@ -1124,6 +1115,7 @@
             pattern: ""
           },
           selectedSample: null,
+          selectedSampleIndex: null,
           dataSamples: [],
           editedIndex: -1,
           dialog: false,
@@ -1227,10 +1219,12 @@
         },
         anyCompleted(item){
             try{
+                
                 if (this.queueList[item.sample]){
                     let any = this.queueList[item.sample].some((f)=>{
                     return f.status.success == 0
                 })
+                    console.log(item.sample,any,"<<<<")
                     return any
                 } else {
                     return -1
@@ -1290,7 +1284,7 @@
             this.closeDelete()
         },
         editItem (item) {
-            this.editedIndex = this.dataSamples.indexOf(item)
+            this.editedIndex = _.cloneDeep(this.dataSamples.indexOf(item))
             this.editedItem = Object.assign({}, item)
             this.dialog = true
         },

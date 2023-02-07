@@ -76,7 +76,7 @@ app.ws('/ws', async function(ws, req) {
             logger.info(`${command.index}: ${command.sample}, canceling....`)
             orchestrator.cancel(command.index, command.sample)
         } else if (command.type == 'rerun'){
-            logger.info(`${command.index}: ${command.sample}, canceling....`)
+            logger.info(`${command.index}: ${command.sample}, rerunning....`)
             orchestrator.rerun(command.index, command.sample)
         } else if (command.type == 'extractTaxid'){ 
             orchestrator.extractTaxid(command.taxid).then((f)=>{
