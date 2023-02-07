@@ -182,6 +182,13 @@ export  class Sample {
         const $this = this;
         let dirpath = ""
         try{
+            this.watcherDemux ? this.watcherDemux.close() : ''  
+            console.log("watcherdemux closed")
+            delete this.watcherDemux
+        } catch (err){
+            logger.error(`${err} error in deleting demux watcher`)
+        }
+        try{
             let dirpath = this.path_1 ? this.path_1 : this.path_2
             let demuxoutpath = path.join(dirpath, 'demultiplexed') 
             await mkdirp.sync(demuxoutpath)
@@ -208,7 +215,7 @@ export  class Sample {
                     })
                     .on('change', function(filepath) {
                         logger.info(`POST DEMUX: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
-                        $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                        // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
                         // let basefile = removeExtension(filepath)
                         // $this.seenfiles[basefile] = 1 
                         // let sampleo = $this.defineBarcoderOutputfile(filepath)
@@ -238,6 +245,7 @@ export  class Sample {
         if (this.watcher ){
             this.watcher.close().then(() => console.log('closed')).catch((err)=>{
                 logger.error("no watcher available to cancel properly")
+                delete $this.watcher
             });
         } 
         var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true});
@@ -253,7 +261,6 @@ export  class Sample {
                 logger.error(err)
             }
         }
-        
         watcher  
             .on('add', function(filepath) {
                 logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
@@ -276,18 +283,7 @@ export  class Sample {
         if (sample.demux){  
             $this.barcodeWatch()
         }
-        // let files = await globFiles([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], { nodir: true })
-        // if (files){
-            
-        //     files.forEach((filepath)=>{
-        //         if (!sample.demux){
-        //             $this.defineClassifier(sample, filepath)
-        //         } else {
-        //             $this.defineBarcoder(sample, filepath)
-        //         }
     
-        //     }) 
-        // }
 
     
         
