@@ -217,17 +217,7 @@
               </v-select>
             </v-sheet>
           </v-col>
-          <!-- <v-select
-            v-model="selectedNameAttr"
-            :items="Object.keys(uniquenametypes)"    
-            color="white" style="padding-top: 50px"
-            width="5px"
-            :key="'selectednameattr'"
-            persistent-hint
-            hint="Change Name Display Type"
-            label="Name Type"
-          >
-          </v-select> -->
+        
           <v-col
               sm="10"
               id=""
