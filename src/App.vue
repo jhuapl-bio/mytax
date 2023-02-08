@@ -503,6 +503,7 @@ export default {
                 if(indexSamples == -1){
                   this.selectedsamples.push(parsedMessage.samplename)
                 }
+                console.log(parsedMessage)
                 let data  = await this.importData(parsedMessage.data, null, parsedMessage.samplename)
                 this.stagedData[parsedMessage.samplename] = data
                 if (!this.paused){

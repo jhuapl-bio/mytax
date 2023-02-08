@@ -65,22 +65,7 @@ export  class Classifier {
         const $this=this
         return new Promise((resolve, reject)=>{
             $this.check_and_classify().then((exists)=>{
-                if (!$this.overwrite && exists.full && exists.sample){
-                    try{
-                        this.getFullReportSample().then((f)=>{
-                            $this.status.success = 0
-                            $this.status.historical = true 
-                            resolve(0)
-                        }).catch((err)=>{
-                            logger.error(err) 
-                        }).finally(()=>{
-                            $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample, index: $this.index, 'status' :  $this.status })) 
-                        })
-                    } catch (err){
-                        console.error(err)
-                        logger.error(`${err} error in getting full report name for sample: ${ sample.sample}`)
-                    } 
-                }  else if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
+                if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
                     $this.generateCommandString()
                     logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
                     $this.status.running = true 
@@ -110,13 +95,6 @@ export  class Classifier {
                     })  
                     classify.on('exit', (code) => {
                         logger.info(`finished classification for: ${$this.filepath}, generated: ${this.fullreport} with code ${code}`);
-                        this.getFullReportSample().then((f)=>{
-                            $this.status.success = 0
-                        }).catch((err)=>{
-                            logger.error(err) 
-                        }).finally(()=>{
-                            $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample, index: $this.index, 'status' :  $this.status })) 
-                        })
                         $this.status.success = code
                         $this.status.running = false
                         $this.status.historical = false
@@ -138,7 +116,7 @@ export  class Classifier {
     }   
     sendFullReportSample(){
         const $this = this
-        logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
+        // logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
         fs.readFile($this.fullreport,(err,data)=>{
             if (err){
                 logger.error(err)
@@ -241,22 +219,5 @@ export  class Classifier {
             return exists
         }
     }
-    getFullReportSample(){
-        const $this = this
-        return new Promise((resolve, reject)=>{
-            logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
-            fs.readFile($this.fullreport,(err,data)=>{
-                if (err){
-                    logger.error(err)
-                    reject(err)
-                } else {
-                   
-                    $this.ws.send(JSON.stringify({ type: "data", samplename: $this.sample.sample, "data" : data.toString()})) 
-                    resolve(0)
-                }
-            
-            })
-        })
-        
-    }
+    
 }
