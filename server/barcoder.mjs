@@ -56,7 +56,7 @@ export  class Barcoder {
                 logger.info(`output from ${$this.filepath} doesn't exist, demuxing now`)
                 $this.seenfiles.push(filepath)
             } else {
-                logger.info(`skipping demux for ${$this.filepath}`)
+                // logger.info(`skipping demux for ${$this.filepath}`)
             } 
         } catch (err){
             logger.error(`${err} error in checking barcode status`)

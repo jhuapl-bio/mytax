@@ -1,4 +1,3 @@
-import chokidar from 'chokidar'
 import glob from "glob-all"
 import {logger} from './logger.js'
 import Queue from 'better-queue' 
@@ -21,9 +20,8 @@ export  class Orchestrator {
         this.ws = socket
         this.watcher = {}
         this.watcherBC = {} 
-
         this.queueRecords = {}
-
+       
 
         this.bundleconfigDefaults= [
             {
@@ -107,16 +105,28 @@ export  class Orchestrator {
             if (!this.queueRecords[s.sample]){
                 this.queueRecords[s.sample] = []
             }
-            let sample = new Sample(s, this.queue, this.queueRecords)
-            sample.gpu = this.gpu
-            sample.ws = this.ws 
-            sample.overwrite = overwrite
-            sample.config = this.config
-            sample.pause = false
-            sample.bundleconfig = this.bundleconfig
-            this.samples[sample.sample] = sample
-            logger.info(`Setup sample ${sample.sample}`)
-            sample.setupSample()
+            // logger.info(`Setup sample ${s.sample}`)
+            // if (!this.samples[s.sample]){
+                let sample = new Sample(s, this.queue, this.ws)
+                sample.gpu = this.gpu
+                sample.overwrite = overwrite
+                sample.config = this.config
+                sample.pause = false
+                sample.bundleconfig = this.bundleconfig
+                this.samples[sample.sample] = sample
+                sample.setupSample()
+            // } 
+            // else {
+            //     let sample = this.samples[s.sample]
+            //     sample.gpu = this.gpu
+            //     sample.overwrite = overwrite
+            //     sample.config = this.config
+            //     sample.pause = false
+            //     sample.bundleconfig = this.bundleconfig
+            //     sample.setupSample()
+            // }
+            
+            
         } catch (err){
             logger.error(`${err}`)
         }
@@ -124,11 +134,58 @@ export  class Orchestrator {
     async setSamples(samples, overwrite){
         logger.info(`${process.env} ${path.cwd}-----${samples}`)
         const $this = this
+        delete this.samples
         this.samples = {}
         if (samples.samplesheet){
             samples.samplesheet.forEach((s)=>{
                 $this.setSampleSingle(s, samples.overwrite)
             })
+        }
+    }
+    setConfig(config, type){
+        
+        
+        const $this = this
+        try{  
+            logger.info(`${type}, setting the config`)
+            if (type == 'bundle' && typeof config == 'object'){
+                for (let[ key, value] of Object.entries(config)){
+                    if ($this.bundleconfig.hasOwnProperty(key)){
+                        $this.bundleconfig[key] = value
+                    }
+                }
+                
+            } else if (type == 'config' && typeof config == 'object'){
+                for (let[ key, value] of Object.entries(config)){
+                    if ($this.config.hasOwnProperty(key)){
+                        $this.config[key] = value
+                    }
+                }
+            }
+        } catch (err){
+            logger.error(`${err}, error in setting gpu for commands`)
+        }
+        if ($this.samples){
+            try{
+                for (let[key, sample] of Object.entries(this.samples)){
+                    if (type == 'config'){
+                        sample.config = config
+                    } else if (type == 'bundleconfig'){
+                        sample.bundleconfig = config
+                    }
+                    sample.queueList.forEach((job)=>{
+                        if (job.job){
+                            if (type == 'config'){
+                                job.job.config = config
+                            } else if (type == 'bundleconfig'){
+                                job.job.bundleconfig = config
+                            }
+                        }
+                    })
+                }
+            } catch (err){
+                logger.error(`${err} error in config set ${type}`)
+            }
         }
     }
     setGpu(gpu){
@@ -264,7 +321,11 @@ export  class Orchestrator {
         const queue = new Queue(async function (name, cb) { 
             try{
                 logger.info(`Priority (lower is more priority): ${name.priority}, id: ${name.id}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
-                await name.bind.start()    
+                if (name.type != 'report'){
+                    await name.bind.start()    
+                } else { 
+                    await name.bind.getFullReportSample(name.filepath, name.name)
+                }
                    
                 cb()                    
             } catch (err){
@@ -276,7 +337,7 @@ export  class Orchestrator {
             concurrent: 1, 
             id: 'id',
             autoResume: true,
-            cancelIfRunning: false,
+            cancelIfRunning: true,
             priority: function (name, cb) { 
                 cb(null, name.priority)
             },
@@ -310,8 +371,6 @@ export  class Orchestrator {
             $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
         })
         $this.queue.on('task_queued', function (taskId, result, stats) {
-            console.log("task queued")
-            
             $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
         }) 
        
@@ -526,81 +585,7 @@ export  class Orchestrator {
         })
         return basefiles
     }
-    async watchReport(ignoreSeen){
-        var watcherOutput = chokidar.watch(`${this.watchdir}/classifications/classifications.full.report`, {ignored: /^\./, persistent: true});
-        let newfiles  = []
-        let index = 0
-        this.samples = {}
-        const $this = this;
-        let outfile = `${this.watchdir}/classifications/classifications.full.report`
-        try{
-            let files = await this.globFiles(`${this.watchdir}/classifications/reports/*.report`, { nodir: true })
-            files = this.parseNames(files, 
-                {
-                    remove: [ '.report' ],
-                    filter: [ '.report' ],
-                    sampleparse : /^(.*)?\./
-                }   
-            )  
-            let reports = []
-            let promises = []
-            files.forEach((report)=>{
-                promises.push($this.globFiles(`${this.watchdir}/classifications/reports/${report.sample}/*.report`, { nodir: true }))
-                
-            })
-            Promise.allSettled(promises).then((results)=>{
-                results.forEach((result,i)=>{
-                    
-                    if (result.status == 'fulfilled'){
-                        let report = files[i]
-                        let fffs = result.value
-                        fffs = this.parseNames(fffs, 
-                            {
-                                remove: [ '.report', '.fastq', '.fq', '.gzip', '.gz' ],
-                                removematch: true,
-                                sampleparse : /^(.*)?\./
-                            }   
-                        )  
-                        
-                        
-                        fffs.forEach((f)=>{
-                            if (!$this.seenfiles.fastqs[f.sample]){ 
-                                $this.seenfiles.fastqs[f.sample] = []
-                            }
-                            let recorded_file  = path.basename(f.path).replaceAll(".report", "")
-                            $this.seenfiles.fastqs[f.sample].push(recorded_file)
-                        })
-                        fs.readFile(report.path,(err,data)=>{
-                            if (err){
-                                logger.error(err)
-                            } else {
-                                
-                                $this.ws.send(JSON.stringify({ type: "data", samplename: report.sample, "data" : data.toString()})) 
-                            }
-                        })
-                    }
-                })
-                $this.watchFastqs(ignoreSeen)
-            })
-                        
-        } catch(err){
-            logger.error(err) 
-        }
-        watcherOutput  
-        .on('add', function(filepath) {
-            logger.info(`File output JSON ${filepath} output has been added________`);
-            fs.readFile((filepath), (err,data)=>{
-                $this.ws.send(JSON.stringify({ type: "data", "data" : data.toString()}))
-            }) 
-        
-        }) 
-        .on('change', function(filepath) {
-            // logger.info(`File output JSON ${filepath} output has been changed`); 
-            fs.readFile(filepath, (err,data)=>{
-                $this.ws.send(JSON.stringify({ type: "data", "data" : data.toString()}))
-            })
-        })
-    }
+    
     extractTaxid(taxid){
         const $this = this
         return new Promise((resolve,reject)=>{
@@ -768,59 +753,7 @@ export  class Orchestrator {
             let samplename = path.basename(filepath.replace(re, ""))
         })
     }
-    async watchFastqs(ignoreSeen){
-        const $this = this;
-        var watcher = chokidar.watch([`${this.watchdir}/*fastq.gz`,`${this.watchdir}/*fastq`,`${this.watchdir}/*fq.gz`, `${this.watchdir}/*fq`], {ignored: /^\./, persistent: true});
-        this.watcher = watcher
-        let pattern = `${this.watchdir}/**/*`
-        let files = await this.globFiles(pattern, {
-            ignore: [`${this.watchdir}/classifications/**/*`],
-            furtherfilter: $this.match,
-            nodir: true 
-        })
-        
-        files = this.parseNames(files, 
-            {
-                remove: [ '.fastq', '.fq', '.gz', '.gzip' ],
-                removematch: true,
-                sampleparse : /^(.*)?\./
-            }   
-        ) 
-        for (let [sample, files] of Object.entries($this.seenfiles.fastqs)){
-            if (!this.samples[sample]){
-                $this.samples[sample] = []
-            }
-            if ($this.type == 'paired'){
-                $this.samples[sample] = files
-            } else {
-                $this.samples[sample] = files
-            }
-        }
-        
-        let mergedSamples = {}
-        if ($this.type == 'paired'){
-            mergedSamples = this.mergeSamples(files)
-        } else {
-            mergedSamples = this.mergeSamples(files)
-        }
-        for (let [key, filepath] of Object.entries(mergedSamples)){
-            this.checkAndAddFileToQueue(filepath,key)
-        }
-        
-        watcher  
-            .on('add', function(filepath) {
-                let sam = $this.defineSample(filepath)
-                logger.info(`File ${filepath} has been added`);
-                $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                $this.checkAndAddFileToQueue(filepath,sam)
-            })
-            .on('unlink', function(filepath) {
-                logger.info(`File ${filepath} has been removed`);
-            })
-            .on('error', function(error) {
-                logger.error(`Error happened ${error}`);
-            })  
-    }
+    
     writeSeen(filepath, samplename){
         let seenfile = path.join(this.watchdir, "classifications", "files_seen.tsv")
         if (this.type == 'paired'){
@@ -830,7 +763,6 @@ export  class Orchestrator {
             this.streamoutseen.write(`${samplename}\t${filepath}\n`)
         } 
         
-        // this.streamoutseen.end()
     }
     async classify(database, filepath, report, paired, compressed, samplename){
         const $this=this
