@@ -89,13 +89,14 @@ export  class Sample {
     async defineQueueJob(obj){
         let id =  this.getId(obj.index)
         let index = this.getIndexJob(obj.filepath)
+        const $this = this;
         this.queue.push({
             jobnumber: obj.index,
             id: id,
             type: obj.type,
-            sample: this.sample,
+            sample: this.sample, 
             priority: obj.priority ? obj.priority : 0,
-            bind: obj
+            bind: obj 
         })
         obj.jobnumber = id
         if (index && index > -1){ 
@@ -189,9 +190,9 @@ export  class Sample {
                 this.queueList.forEach((f, i)=>{
                     try{
                         let job = $this.queueList[i].job
-                        job.stop()
                         logger.info(`${job.name} stopping job for full sample #: ${job.jobnumber}`)
                         $this.queue.cancel(job.jobnumber)
+                        job.stop()
                     } catch (err){
                         logger.error(`${err}, error in stopping job`)
                     }
@@ -213,9 +214,10 @@ export  class Sample {
         return `${this.sample}-${idx}`
     }
     setJob(filepath, type, overwrite){
-        const $this = this
+        const $this = this 
         let sampleObj = this.sampleObj
         let sampleo = null
+        console.log("setjob", this.paused)
         let indexFilepath  = this.getIndexJob(filepath)
         if (!this.paused){
             if (indexFilepath != -1){ 
@@ -298,12 +300,12 @@ export  class Sample {
         let sample = this.sampleObj
         const $this = this;
         let overwrite = false
-        // if (this.watcher ){
-        //     this.watcher.close().then(() => console.log('closed')).catch((err)=>{
-        //         logger.error("no watcher available to cancel properly")
-        //         delete $this.watcher
-        //     });
-        // } 
+        if (this.watcher ){
+            this.watcher.close().then(() => console.log('closed')).catch((err)=>{
+                logger.error("no watcher available to cancel properly")
+                delete $this.watcher
+            });
+        } 
         var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true});
         this.watcher  = watcher
         
@@ -317,6 +319,7 @@ export  class Sample {
                 logger.error(err)
             }
         }
+        console.log(sample)
         watcher  
             .on('add', function(filepath) {
                 logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
