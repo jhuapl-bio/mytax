@@ -41,13 +41,24 @@ let output = "/Users/merribb1/Documents/Projects/real-time-reporting/data/classi
 let websocket;
 
 let max = 0
- 
+let orchestrator = null
 // Get the /ws websocket route
 app.ws('/ws', async function(ws, req) {
-    logger.info("App Initiated") 
-    let orchestrator = new Orchestrator(ws);
+
+    if (orchestrator){
+        orchestrator.ws = ws  
+        try{
+            logger.info(`Orchestrator exists already, skipping creation`)
+        } catch(err){
+            logger.error(`${err} error in closing existing websocket`)
+        }
+    } else {
+        logger.info(`Orchestrator doesnt exist already, creating....`)
+        orchestrator = new Orchestrator(ws);
+        orchestrator.ws = ws  
+    }
+     
     ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
-    orchestrator.ws = ws  
     ws.send(JSON.stringify({ type: "getbundleconfig", data: orchestrator.bundleconfig }));
     orchestrator.ws.on('message', async function(command) {
         // Let's put our message in JSON.stringify, and send it to the user who just sent the message
@@ -62,16 +73,9 @@ app.ws('/ws', async function(ws, req) {
         } else if (command.type == 'runbundle'){
             orchestrator.runBundle = command.config
         } else if (command.type == 'updateBundleconfig'){
-            if (typeof command.config == 'object'){
-                for (let[ key, value] of Object.entries(command.config)){
-                    if (orchestrator.bundleconfig.hasOwnProperty(key)){
-                        orchestrator.bundleconfig[key] = value
-                    }
-                }
-            }
-            orchestrator.bundleconfig = command.config
+            orchestrator.setConfig(command.config, 'bundle')
         } else if (command.type == 'updateConfig'){
-            orchestrator.config = command.config
+            orchestrator.setConfig(command.config, 'config')
         } else if (command.type == 'cancel'){
             logger.info(`${command.index}: ${command.sample}, canceling....`)
             orchestrator.cancel(command.index, command.sample)
