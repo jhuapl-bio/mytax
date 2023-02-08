@@ -263,7 +263,7 @@ export  class Orchestrator {
         delete this.queue
         const queue = new Queue(async function (name, cb) { 
             try{
-                logger.info(`Priority (lower is more priority): ${name.priority}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
+                logger.info(`Priority (lower is more priority): ${name.priority}, id: ${name.id}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
                 await name.bind.start()    
                    
                 cb()                    
@@ -274,8 +274,9 @@ export  class Orchestrator {
             
           }, { 
             concurrent: 1, 
+            id: 'id',
             autoResume: true,
-            cancelIfRunning: true,
+            cancelIfRunning: false,
             priority: function (name, cb) { 
                 cb(null, name.priority)
             },
@@ -302,17 +303,18 @@ export  class Orchestrator {
             }
         });
         $this.queue.on('task_failed', function (taskId, result, stats) {
-            
+            console.log("task failed")
+            $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
+        })
+        $this.queue.on('task_completed', function (taskId, result, stats) {
             $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
         })
         $this.queue.on('task_queued', function (taskId, result, stats) {
+            console.log("task queued")
             
             $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
-        })
-        $this.queue.on('task_finish', function (taskId, result, stats) {
-            
-            $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.length })) 
-        })   
+        }) 
+       
         $this.queue.on('paused', function (taskId, result, stats) {
             
             logger.info(`Paused ${$this.queue.getStats()}`)
@@ -674,11 +676,10 @@ export  class Orchestrator {
         return returnable
     }
     
-    flush(){
+    async flush(){
         logger.info("flushing queue, canceling job(s)")
         try{
-            // this.queue.destroy()
-            
+            // 
             if (this.samples){
                 for (let [key, value] of Object.entries(this.samples)){
                     try{
@@ -689,7 +690,8 @@ export  class Orchestrator {
                     }                       
                 }
             }
-            // this.enableQueue()
+            await this.queue.destroy()
+            this.enableQueue()
             this.ws.send(JSON.stringify({ type: "queueLength", data: 0 }))
             this.ws.send(JSON.stringify({ type: "message", message: "flushed queue, canceled job(s)" }))
         } catch (err){

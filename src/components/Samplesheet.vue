@@ -25,13 +25,11 @@
         <v-col sm="12" >
             
             <v-data-table
-                v-if="dataSamples"
-                :items="dataSamples"
+                :items="samples"
                 :headers="headers"
                 :calculate-widths=true
                 max-height="500" 
                 fixed-header
-                :single-expand="singleExpand"
                 item-key="sample"
                 class="elevation-1 mx-5 px-6 "					        
             >	                
@@ -254,17 +252,18 @@
                                 </v-btn>
                                 </v-card-actions>
                             </v-card>
-                            <v-dialog v-model="dialogDelete" max-width="500px">
-                                <v-card>
-                                    <v-card-title class="text-h5">Are you sure you want to delete this item?</v-card-title>
-                                    <v-card-actions>
-                                    <v-spacer></v-spacer>
-                                    <v-btn  x-small color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
-                                    <v-btn  x-small color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
-                                    <v-spacer></v-spacer>
-                                    </v-card-actions>
-                                </v-card>
-                            </v-dialog>
+                            
+                        </v-dialog>
+                        <v-dialog v-model="dialogDelete" max-width="500px">
+                            <v-card>
+                                <v-card-title class="text-h5">Are you sure you want to delete this item?</v-card-title>
+                                <v-card-actions>
+                                <v-spacer></v-spacer>
+                                <v-btn  x-small color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
+                                <v-btn  x-small color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
+                                <v-spacer></v-spacer>
+                                </v-card-actions>
+                            </v-card>
                         </v-dialog>
                         <v-dialog
                             v-model="dialogAdvanced"
@@ -450,13 +449,13 @@
                 </template>
                 <template v-slot:[`item.path_2`]="{ item }">
                     <v-edit-dialog
-                    :return-value.sync="item.path_2"
-                    large
-                    persistent
-                    @save="save"
-                    @cancel="cancel"
-                    @open="open"
-                    @close="close"
+                        :return-value.sync="item.path_2"
+                        large
+                        persistent
+                        @save="save"
+                        @cancel="cancel"
+                        @open="open"
+                        @close="close"
                     >
                     <div>{{ item.path_2 }}</div>
                     <template v-slot:input>
@@ -581,7 +580,7 @@
                 <template v-slot:[`item.compressed`]="{ item }">
                     <v-switch v-model="item.compressed"> </v-switch>
                 </template>
-                <template v-slot:[`item.platform`]="{ item }">
+                <template v-slot:[`item.platform`]="{ item }" >
                     <v-select
                         v-model="item.platform"
                         :items="['oxford', 'illumina']"
@@ -599,14 +598,14 @@
                     </v-icon>
                     <v-progress-circular
                         indeterminate v-if="current && typeof current == 'object' && current[item.sample]"
-                        color="primary" medium size="15"
+                        color="primary" medium size="22"
                     ></v-progress-circular>
                     <v-icon
-                        medium  v-else-if="item.format !=='run'" 
+                        medium  v-else-if="item.format !=='run'"  :key="`${item.sample}-runsamplemajorbutton`" :color="anyCompleted(item.sample) ? 'green' : 'orange'"
                     >
-                        {{ anyCompleted(item) ? 'mdi-check-circle' : 'mdi-exclamation' }}
+                        {{ anyCompleted(item.sample) ? 'mdi-check-circle' : 'mdi-exclamation' }}
                     </v-icon>
-                    <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample] || 1==1" left>
+                    <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample] " left>
                         <template v-slot:activator="{ on, attrs }">
                             <v-icon
                                 medium color="indigo"
@@ -751,7 +750,7 @@
                 >
                 <v-btn
                     small fab
-                    color="grey" 
+                    color="grey" @click="dialogJobs = false"
                     
                 >
                     <v-icon>mdi-close</v-icon>
@@ -997,22 +996,31 @@
       dialog (val) {
         val || this.closeItem()
       },
+    //   samples(val){
+    //     const $this = this
+    //     val.forEach((sample)=>{
+    //         try{ 
+    //             if ($this.queueList[sample.sample]){
+    //                 let any = $this.queueList[sample.sample].some((f)=>{
+    //                     return f.status.success == 0
+    //                 })
+    //                 $this.anyCompleted[sample.sample] = any
+                
+    //             }
+    //         } catch (err){
+    //             console.error(err)
+    //         }
+    //     })
+            
+    //   },
       bundleconfig (val){
         this.stagedBundleConfig = val
       },
       paused(val){
           this.$emit("pausedChange", val)
       },
-      queueList: {
-          deep:true,
-          handler(val){
-                console.log("val", val)
-        }
-      },
-      current: {
-          deep:true,
-          handler(val){
-          }
+      queueList(val){
+        console.log(val,"queuelist changed")
       },
       stagedData (val){
           let filtered = []
@@ -1055,6 +1063,9 @@
     computed: {
       numberOfPages () {
             return Math.ceil(this.selectedSample.length / this.itemsPerPage)
+      },
+      samples() {
+        return this.dataSamples
       },
       filteredKeys () {
         return this.keys.filter(key => key !== 'Name')
@@ -1217,22 +1228,23 @@
         updateConfig(type){
             this.$emit("updateConfig", (type == 'bundle' ? this.stagedBundleConfig : this.config ), type)
         },
-        anyCompleted(item){
-            try{
+        anyCompleted(sample){
+            try{ 
+                if (this.queueList[sample]){
+                    let any = this.queueList[sample].some((f)=>{
+                        return f.status.success == 0
+                    })
+                    return  any
                 
-                if (this.queueList[item.sample]){
-                    let any = this.queueList[item.sample].some((f)=>{
-                    return f.status.success == 0
-                })
-                    console.log(item.sample,any,"<<<<")
-                    return any
                 } else {
-                    return -1
+                    return null
                 }
             } catch (err){
                 console.error(err)
+                return null
             }
         },
+        
         start(index, sample ){
             this.$emit("rerun", index, sample)
         },
@@ -1276,11 +1288,13 @@
         },
         deleteItem (item) {
             this.editedIndex = this.dataSamples.indexOf(item)
+            console.log(this.editedIndex,"<<<<<<")
             this.editedItem = Object.assign({}, item)
-            this.dialogDelete = true
+            this.dialogDelete = true 
         },
         deleteItemConfirm () {
-            this.dataSamples.splice(this.editedIndex, 1)
+            // this.dataSamples.splice(this.editedIndex, 1)
+            this.dataSamples.splice(this.editedIndex,1)
             this.closeDelete()
         },
         editItem (item) {
@@ -1305,6 +1319,7 @@
         saveItem () {
             if (this.editedIndex > -1) {
                 Object.assign(this.dataSamples[this.editedIndex], this.editedItem)
+                this.$set(this.dataSamples, this.editedIndex, this.editedItem)
             } else {
                 this.dataSamples.push(this.editedItem)
             }
