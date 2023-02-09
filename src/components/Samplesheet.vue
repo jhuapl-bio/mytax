@@ -675,7 +675,7 @@
                         >
                             <template v-slot:activator="{ on }">
                                 <v-icon
-                                    class="" small
+                                    class="" large
                                     :color="'green'"
                                     dark v-on="on"
                                 >
@@ -689,7 +689,7 @@
                         >
                             <template v-slot:activator="{ on }">
                                 <v-icon 
-                                    class="" small
+                                    class="" large
                                     :color="'green'"
                                     dark v-on="on"
                                 >
@@ -698,7 +698,20 @@
                             </template>
                             Completed Successfully 
                         </v-tooltip>
-                        
+                        <v-tooltip  v-else-if=" selectedSampleIndex.status.success != 0 "
+                            dark left
+                        >
+                            <template v-slot:activator="{ on }">
+                                <v-icon 
+                                    class="" large
+                                    :color="'orange'"
+                                    dark v-on="on"
+                                >
+                                    mdi-exclamation
+                                </v-icon>
+                            </template>
+                            Error in Completing Job, Check Logs
+                        </v-tooltip>                        
                     </div>
                     <v-list-item-title class="text-h5 mb-1">
                         {{ selectedSampleIndex.name }} 
@@ -831,21 +844,6 @@
                                 </template>
                                 Already run
                             </v-tooltip>
-                            <v-tooltip :key="`queuerror-${que.status.error}-${que.index}`" v-else-if="que.status.error"
-                                :color="'orange lighten-1'"
-                                dark left
-                            >
-                                <template v-slot:activator="{ on, attrs }">
-                                        <v-icon
-                                            large color="orange lighten-1"
-                                            v-bind="attrs"
-                                            v-on="on" @click="sheet = true"
-                                        >
-                                            mdi-exclamation
-                                        </v-icon>
-                                </template>
-                                <span>{{ que.status.error }}</span>
-                            </v-tooltip>
                             <v-tooltip  v-else-if=" que.status.success ==0 "
                                 dark left
                             >
@@ -859,6 +857,21 @@
                                     </v-icon>
                                 </template>
                                 Completed Successfully 
+                            </v-tooltip>
+                            <v-tooltip :key="`queuerror-${que.status.error}-${que.index}`" v-else-if="que.status.error || que.status.code != 0"
+                                :color="'orange lighten-1'"
+                                dark left
+                            >
+                                <template v-slot:activator="{ on, attrs }">
+                                        <v-icon
+                                            large color="orange lighten-1"
+                                            v-bind="attrs"
+                                            v-on="on" @click="sheet = true"
+                                        >
+                                            mdi-exclamation
+                                        </v-icon>
+                                </template>
+                                <span>{{ que.status.error }}</span>
                             </v-tooltip>
                             {{ `${que.sample && que.sample.sample ? que.sample.sample : ''} ` }}
                             <v-spacer></v-spacer>

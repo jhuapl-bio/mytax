@@ -34,12 +34,14 @@ export  class Classifier {
     initialize(){
         let sample = this.sample
         let path_1 = sample.path_1 
-        let outpath = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample ) :  path.join(path.dirname(path_1), sample.sample)            
+        let outpath = this.outputdir
+        if (!outpath){
+            outpath = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample ) :  path.join(path.dirname(path_1), sample.sample)       
+        }
         let sampleReport = getReportName(this.filepath, this.path_2, outpath)
-        let fullreport = (this.sample.format == 'directory' ? path.join(path_1,  sample.sample, 'full.report') :  path.join(outpath, 'full.report'))
+        let fullreport =path.join(outpath, 'full.report') 
         this.fullreport = fullreport
         this.sampleReport = sampleReport
-        
         this.generateCommandString()
     }
     async stop(){
@@ -98,6 +100,7 @@ export  class Classifier {
                         $this.status.success = code
                         $this.status.running = false
                         $this.status.historical = false
+                        
                         $this.process = null
                         $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
 
@@ -105,7 +108,12 @@ export  class Classifier {
                     });
                     $this.process = classify
                 } else {
-                    resolve(0)
+                    $this.status.success = 0
+                    $this.status.running = false
+                    $this.status.historical = true
+                    $this.status.logs.push['Historically gathered report, pre-run already']
+                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                    resolve()
                 }
             }).catch((err)=>{
                 logger.info(`${err} Error in starting classification job for sample ${$this.name}`)
@@ -130,7 +138,7 @@ export  class Classifier {
     generateCommandString(){
         const $this = this
         let report = this.fullreport
-        let outputdir = path.dirname(report)
+        let outputdir = this.outputdir
         let command = ` bash ${__dirname}/src/bundle.sh \\
             -i "${$this.filepath}" \\
             -o "${outputdir}"  \\

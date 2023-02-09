@@ -23,7 +23,16 @@ export  class Sample {
         this.reportWatcher = null
         this.config = {}
         this.pause = false
-        
+        this.outputdir  = ( sample.demux ? path.join(sample.path_1, 'demultiplexed') : path.join(path.dirname(sample.path_1), sample.sample)  )
+        if (sample.demux){
+            this.outputdir =  path.join(sample.path_1, 'demultiplexed') 
+        } else {
+            if (sample.format == 'file'){
+                this.outputdir = path.join(path.dirname(sample.path_1), sample.sample) 
+            } else {
+                this.outputdir = path.join((sample.path_1), sample.sample) 
+            }
+        }
         this.barcode = null
         this.queueList = []
         this.queue = queue 
@@ -32,17 +41,29 @@ export  class Sample {
         this.overwrite = false
         
     }
+    cleanup(){
+        try{
+            if (this.watcherDemux){
+                this.watcherDemux.close()
+            }
+            if (this.watcher){
+                this.watcher.close()
+            }
+            this.cancel()
+        } catch (err){
+            logger.error(`${err} failure cleanup up sample ${this.sample}`)
+        }
+    }
     async defineBarcoder(sampleObj, path_1, priority ){
         let barcoder = new Barcoder(sampleObj, path_1)        
         barcoder.ws = this.ws
         const $this = this
         barcoder.priority = ( priority ? priority : 0)
-
+        barcoder.outputdir = this.getOutputDir(path_1, sampleObj)
         barcoder.gpu = this.gpu 
         barcoder.config = this.config
         barcoder.bundleconfig = this.bundleconfig
         barcoder.overwrite = this.overwrite
-       
         let msg;
         let code 
         msg = this.defineQueueMessage(barcoder)
@@ -51,7 +72,6 @@ export  class Sample {
         this.updateStatusQueueList(barcoder, msg.index)
         this.ws.send(JSON.stringify({ type: "recentQueue", data: msg }))
         this.defineQueueJob(barcoder)
-        
         return barcoder
     }
     defineClassifier(sampleObj, path_1, priority ){
@@ -62,6 +82,7 @@ export  class Sample {
         classifier.config = this.config
         classifier.priority = ( priority ? priority : 0)
         classifier.gpu = this.gpu
+        classifier.outputdir = this.getOutputDir(path_1, sampleObj)
         classifier.bundleconfig = this.bundleconfig
         classifier.overwrite = this.overwrite
         
@@ -123,6 +144,7 @@ export  class Sample {
             this.files = []            
             this.watchDirectory()
         }  
+        $this.reportWatch()
         return 
     }
     stop(index){
@@ -152,7 +174,7 @@ export  class Sample {
         msg.filepath = obj.filepath
         msg.sampleReport = obj.sampleReport
         msg.fullreport = obj.fullreport
-        msg.sample = this.sample
+        msg.sample = this.sampleObj
         this.updateStatusQueueList(obj)
         msg.index = this.queueList.length 
         this.ws.send(JSON.stringify({ type: "recentQueue", data: msg })) 
@@ -198,7 +220,8 @@ export  class Sample {
         }
     }
     defineBarcoderSamplename(filepath){
-        return `${this.sample}-${path.basename(path.dirname(filepath))}`
+        let basename = `${path.basename(path.dirname(filepath))}`
+        return `${basename == this.sample ? this.sample : `${this.sample}-${basename}`}`
     }
     defineBarcoderOutputfile(filepath){
         let sample = _.cloneDeep(this.sampleObj)
@@ -226,7 +249,7 @@ export  class Sample {
                 this.defineQueueJob(sampleo)
                 return 
             } else {
-                // logger.info(`Never seen this file process before ${filepath}, creating a new job`)
+                logger.info(`Never seen this file process before ${filepath}, creating a new job`)
                 if (sampleObj.demux && type == 'classifier'){
                     sampleo = $this.defineBarcoderOutputfile(filepath) 
                     $this.defineClassifier(sampleo, filepath, 1)
@@ -274,7 +297,7 @@ export  class Sample {
     sendReportQueueJob(filepath){
         let id = `${filepath}-ReportSampleSending`
         const $this = this;
-        this.queue.push({
+        let send = {
             jobnumber: id,
             id: id,
             name: this.defineBarcoderSamplename(filepath),
@@ -283,7 +306,8 @@ export  class Sample {
             sample: this.sample, 
             priority: 2,
             bind: this 
-        })
+        }
+        this.queue.push(send)
     }
     async reportWatch(type){
         const $this  =this
@@ -294,12 +318,18 @@ export  class Sample {
             logger.error(`${err} error in deleting demux watcher`)
         }
         try{
-            let dirpath = this.path_1 ? this.path_1 : this.path_2
-            let demuxoutpath = ( this.demuxoutpath ? this.demuxoutpath :  path.join(dirpath, 'demultiplexed') )
-            logger.info(`________watching report files from ${demuxoutpath}_________`)
-            await mkdirp.sync(demuxoutpath)
+            let outputdir = this.outputdir
+            logger.info(`________watching report files from ${this.outputdir}_________`)
+            if (this.outputdir)    {
+                try{
+                    await mkdirp.sync(this.outputdir)
+                } catch (err){
+                    logger.error(`${err} error in creating output dir in report watch`)
+                }
+            }
+            
             this.reportWatcher = chokidar.watch([
-                `${demuxoutpath}/**/full.report`], {ignored: /^\./, persistent: true, usePolling: true })
+                `${outputdir}/**/full.report`], {ignored: /^\./, persistent: true, usePolling: true })
                 .on('add', function(filepath) {
                     logger.info(`REPORT WATCH: File ${filepath} has been ADDED NEWLY`);
                     $this.sendReportQueueJob(filepath)
@@ -372,6 +402,25 @@ export  class Sample {
 
        
     }
+    getOutputDir(path_1, sample){
+        try{
+            if (sample.demux){
+                return  path.join((path_1 ? path.dirname(path_1) : path.dirname(this.path_1)), 'demultiplexed')
+            } else {
+                if (sample.format == 'file'){
+                    if (this.sampleObj.demux){
+                        return  path.join(path.dirname(path_1 ? path_1 : this.path_1), path.dirname(path.basename(path_1 ? path_1 : this.path_1)))
+                    } else {
+                        return  path.join(path.dirname(path_1 ? path_1 : this.path_1), this.sample)
+                    }
+                } else {
+                    return path.join((this.path_1 ? this.path_1 : this.path_2), this.sample)
+                }
+            }
+        } catch(err){
+            logger.error(`${err} error in setting output dir`)
+        }
+    }
     async watchDirectory(){
         let sample = this.sampleObj
         const $this = this;
@@ -417,7 +466,6 @@ export  class Sample {
 
             $this.barcodeWatch()
         }
-        $this.reportWatch()
     
 
     

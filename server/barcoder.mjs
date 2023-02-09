@@ -23,6 +23,7 @@ export  class Barcoder {
             historical: null, 
             logs: []
         }
+        
        
 
 
@@ -94,14 +95,14 @@ export  class Barcoder {
                     $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                     ls.stdout.on('data', (data) => { 
                         $this.status.logs.push(`${data}`)
-                        $this.status.logs.slice(0,4)
+                        $this.status.logs.slice(0,14)
                         // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         logger.info(`stdout: ${data}`);
                     });
  
                     ls.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
-                        $this.status.logs.slice(0,4)
+                        $this.status.logs.slice(0,14)
                         // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: this.sample, index: $this.index, 'status' :  $this.status })) 
                         logger.error(`stderr: ${data}`); 
                     });
@@ -142,14 +143,15 @@ export  class Barcoder {
         let basename = removeExtension(filepath);
         let stagepath_demux = path.join(dirpath, 'staged', path.basename(filepath))
         let stagepath_Demux_filename = path.join(stagepath_demux, path.basename(filepath))
-        let output_path = path.join(dirpath, 'demultiplexed')
+        let output_path = this.outputdir
         this.stagepath_demux = stagepath_demux
         this.demux_outpath = output_path
         let ext = ".fastq.gz"
         let individual_output_path = path.join(stagepath_demux, 'demultiplexed')
+        // let guppy_version = ( this.gpu ? 'guppy_barcoder_gpu' : 'guppy_barcoder_cpu')
         let kits = this.sample.kits ? `--barcode_kits ${this.sample.kits}` : ''
         let command = `rm -r ${stagepath_demux}; mkdir -p ${stagepath_demux};  \\
-        ln -s ${filepath} ${stagepath_Demux_filename};   guppy_barcoder --require_barcodes_both_ends --compress_fastq --disable_pings  \\
+        ln -s ${filepath} ${stagepath_Demux_filename};  guppy_barcoder --require_barcodes_both_ends --compress_fastq --disable_pings  \\
         -i "${path.dirname(stagepath_Demux_filename)}" \\
         -s "${individual_output_path}" \\
         ${kits} ${this.gpu ? this.gpu : ''};  \\
