@@ -30,10 +30,14 @@ SHELL ["conda", "run", "-n", "mytax2", "/bin/bash", "-c"]
 WORKDIR /opt
 
 # Get Guppy barcoder for demux purposes
-RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy_5.1.15_linux64.tar.gz -O /opt/guppy_5.tar.gz
-
-RUN    tar -xvzf /opt/guppy_5.tar.gz && \
-    ln -sf /opt/ont-guppy/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && rm /opt/guppy_5.tar.gz
+RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy_5.1.15_linux64.tar.gz -O ./guppy_5_gpu.tar.gz
+RUN    tar -xvzf /opt/guppy_5_gpu.tar.gz && \
+    ln -sf /opt/ont-guppy/bin/guppy_barcoder /usr/local/bin/guppy_barcoder_gpu && rm /opt/guppy_5_gpu.tar.gz
+RUN wget https://mirror.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_5.1.15_linux64.tar.gz -O ./guppy_5_cpu.tar.gz
+RUN tar -xvzf /opt/guppy_5_cpu.tar.gz && \
+    ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder_cpu && \
+    ln -sf /opt/ont-guppy-cpu/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && \
+    rm /opt/guppy_5_cpu.tar.gz
     
 COPY ./package.json /opt/package.json
 
