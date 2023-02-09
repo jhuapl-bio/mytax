@@ -22,7 +22,6 @@ export  class Orchestrator {
         this.watcherBC = {} 
         this.queueRecords = {}
        
-
         this.bundleconfigDefaults= [
             {
                 name: "NCBI names.dmp file", 
@@ -91,7 +90,15 @@ export  class Orchestrator {
 
 
     } 
-    
+    cleanup(){
+        try{
+            for (let[key, sample] of Object.entries(this.samples)){
+                sample.cleanup()
+            }
+        } catch (err){
+            logger.error(`${err} error in config set ${type}`)
+        }
+    }
     async setSampleSingle(s, overwrite){
         try{
             if (this.samples[s.sample]){
@@ -320,7 +327,7 @@ export  class Orchestrator {
         delete this.queue
         const queue = new Queue(async function (name, cb) { 
             try{
-                logger.info(`Priority (lower is more priority): ${name.priority}, id: ${name.id}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
+                // logger.info(`Priority (lower is more priority): ${name.priority}, id: ${name.id}, Type: ${name.type}, Sample: ${name.sample}, Job#: ${name.jobnumber}`)
                 if (name.type != 'report'){
                     await name.bind.start()    
                 } else { 

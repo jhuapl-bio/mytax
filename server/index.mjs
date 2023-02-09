@@ -41,63 +41,66 @@ let output = "/Users/merribb1/Documents/Projects/real-time-reporting/data/classi
 let websocket;
 
 let max = 0
-let orchestrator = null
+let storage = {}
 // Get the /ws websocket route
 app.ws('/ws', async function(ws, req) {
 
-    if (orchestrator){
-        orchestrator.ws = ws  
+    if (storage.orchestrator){
+        
         try{
             logger.info(`Orchestrator exists already, skipping creation`)
+            storage.orchestrator.cleanup()
+            storage.orchestrator = null
+            delete storage.orchestrator
         } catch(err){
             logger.error(`${err} error in closing existing websocket`)
         }
     } else {
         logger.info(`Orchestrator doesnt exist already, creating....`)
-        orchestrator = new Orchestrator(ws);
-        orchestrator.ws = ws  
     }
      
+    storage.orchestrator = new Orchestrator(ws);
+    storage.orchestrator.ws = ws  
     ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
-    ws.send(JSON.stringify({ type: "getbundleconfig", data: orchestrator.bundleconfig }));
-    orchestrator.ws.on('message', async function(command) {
+    ws.send(JSON.stringify({ type: "getbundleconfig", data: storage.orchestrator.bundleconfig }));
+    storage.orchestrator.ws.on('message', async function(command) {
         // Let's put our message in JSON.stringify, and send it to the user who just sent the message
         // logger.info(`${command}`)
         command=JSON.parse(command) 
         if (command['type'] == 'message'){
             ws.send(JSON.stringify({ "message" : "hello" }));
         } else if (command.type == 'config'){
-            ws.send(JSON.stringify({ type: "config", "message" : orchestrator.config }));
+            ws.send(JSON.stringify({ type: "config", "message" : storage.orchestrator.config }));
         } else if (command.type == 'getbundleconfig'){
-            ws.send(JSON.stringify({ type: "getbundleconfig", "message" : orchestrator.bundleconfig }));
+            ws.send(JSON.stringify({ type: "getbundleconfig", "message" : storage.orchestrator.bundleconfig }));
         } else if (command.type == 'runbundle'){
-            orchestrator.runBundle = command.config
+            storage.orchestrator.runBundle = command.config
         } else if (command.type == 'updateBundleconfig'){
-            orchestrator.setConfig(command.config, 'bundle')
+            storage.orchestrator.setConfig(command.config, 'bundle')
         } else if (command.type == 'updateConfig'){
-            orchestrator.setConfig(command.config, 'config')
+            storage.orchestrator.setConfig(command.config, 'config')
         } else if (command.type == 'cancel'){
             logger.info(`${command.index}: ${command.sample}, canceling....`)
-            orchestrator.cancel(command.index, command.sample)
+            storage.orchestrator.cancel(command.index, command.sample)
         } else if (command.type == 'rerun'){
             logger.info(`${command.index}: ${command.sample}, rerunning....`)
-            orchestrator.rerun(command.index, command.sample)
+            storage.orchestrator.rerun(command.index, command.sample)
         } else if (command.type == 'extractTaxid'){ 
-            orchestrator.extractTaxid(command.taxid).then((f)=>{
+            storage.orchestrator.extractTaxid(command.taxid).then((f)=>{
                 ws.send(JSON.stringify({ type: "reads", "message" : f }));
             })
         } else if (command.type == 'start'){ 
             try{
                 let i=0
                 logger.info(`Starting run from samplesheet `) 
-                orchestrator.setSamples(command)
+                storage.orchestrator.setSamples(command)
             } catch(err){
                 logger.error(err)
             } 
         } else if (command.type == 'flush'){
             try{
                 logger.info(`Flushing queue`)
-                orchestrator.flush()
+                storage.orchestrator.flush()
                 ws.send(JSON.stringify({ type: "flushed" }));
             } catch(err){
                 logger.error(err)
@@ -105,7 +108,7 @@ app.ws('/ws', async function(ws, req) {
         } else if (command.type == 'gpu'){
             try{
                 let i=0
-                orchestrator.setGpu(command.gpu)
+                storage.orchestrator.setGpu(command.gpu)
                 logger.info(`Barcoding: GPU ${command.gpu ? 'Enabled' : 'Disabled'} `) 
             } catch(err){
                 logger.error(err)
@@ -114,7 +117,7 @@ app.ws('/ws', async function(ws, req) {
             try{ 
                 let i=0
                 logger.info(`Starting restart of a sample ${command.sample}, ${command.overwrite}`) 
-                orchestrator.setSampleSingle(command.sample, command.overwrite)
+                storage.orchestrator.setSampleSingle(command.sample, command.overwrite)
                
             } catch(err){
                 logger.error(err)
@@ -124,9 +127,9 @@ app.ws('/ws', async function(ws, req) {
                 let i=0
                 logger.info(`Pausing Run(s) value: ${command.pause}`) 
                 if (command.pause){
-                    orchestrator.pause()
+                    storage.orchestrator.pause()
                 } else {
-                    orchestrator.resume()
+                    storage.orchestrator.resume()
                 }
             } catch(err){
                 logger.error(err)
