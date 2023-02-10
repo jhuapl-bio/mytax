@@ -87,6 +87,7 @@
                 @rerun="rerun"
                 :anyRunning="anyRunning"
                 @pausedChange="pausedChange"
+                :pausedServer="pausedServer"
                 :logs="logs"
                 @updateConfig="updateConfig"
                 :samplesheetName="samplesheet"
@@ -310,6 +311,7 @@ export default {
             socket: {},
             drawer: false,
             anyRunning: false,
+            pausedServer: false,
             selectedsamples: [],
             status: {},
             uniquenametypes: {
@@ -503,7 +505,6 @@ export default {
                 if(indexSamples == -1){
                   this.selectedsamples.push(parsedMessage.samplename)
                 }
-                console.log(parsedMessage)
                 let data  = await this.importData(parsedMessage.data, null, parsedMessage.samplename)
                 this.stagedData[parsedMessage.samplename] = data
                 if (!this.paused){
@@ -551,6 +552,9 @@ export default {
             } else if (parsedMessage.type == 'error'){
               console.error(parsedMessage.message)
             } else if (parsedMessage.type == 'message'){
+              console.log(parsedMessage.message,"<<")
+            } else if (parsedMessage.type == 'paused'){
+              this.pausedServer=parsedMessage.message
             } else if (parsedMessage.type == 'anyRunning'){
               this.anyRunning = parsedMessage.status
             } else if (parsedMessage.type == 'recentQueue'){
