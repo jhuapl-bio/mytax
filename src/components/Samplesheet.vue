@@ -605,7 +605,7 @@
                     >
                         {{ anyCompleted(item.sample) ? 'mdi-check-circle' : 'mdi-exclamation' }}
                     </v-icon>
-                    <v-tooltip  v-if="current && typeof current == 'object' && current[item.sample] " left>
+                    <v-tooltip  v-if="1==1|| current && typeof current == 'object'  && current[item.sample] " left>
                         <template v-slot:activator="{ on, attrs }">
                             <v-icon
                                 medium color="indigo"
@@ -992,7 +992,7 @@
 
   export default { 
     name: 'Samplesheet',
-    props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs', 'bundleconfig', 'queueList', 'anyRunning', 'queueLength'],
+    props: ["samplesheet", 'samplesheetName', 'seen', 'current', 'logs', 'bundleconfig', 'queueList', 'anyRunning', 'queueLength', 'pausedServer'],
     components: {
         VueJsonToCsv,
         
@@ -1009,23 +1009,13 @@
       dialog (val) {
         val || this.closeItem()
       },
-    //   samples(val){
-    //     const $this = this
-    //     val.forEach((sample)=>{
-    //         try{ 
-    //             if ($this.queueList[sample.sample]){
-    //                 let any = $this.queueList[sample.sample].some((f)=>{
-    //                     return f.status.success == 0
-    //                 })
-    //                 $this.anyCompleted[sample.sample] = any
-                
-    //             }
-    //         } catch (err){
-    //             console.error(err)
-    //         }
-    //     })
-            
-    //   },
+      pausedServer(val){
+        if (val != this.paused){
+            console.log("server sent paused status change")
+            this.paused = val
+        }
+      },
+    
       bundleconfig (val){
         this.stagedBundleConfig = val
       },
