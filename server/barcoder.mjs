@@ -74,7 +74,7 @@ export  class Barcoder {
                 this.status.error=`Canceled job`
                 this.status.success = -1
                 logger.info(`Process of demux is ended in a midrun, exiting and continuing the queue if it exists currently......`)
-                this.ws.send(JSON.stringify({ type: "status", samplename: this.name, sample: this.sample,  index: this.index, 'status' :  this.status })) 
+                // this.ws.send(JSON.stringify({ type: "status", samplename: this.name, sample: this.sample,  index: this.index, 'status' :  this.status })) 
                 return 
             } catch (err){
                 logger.error(`${err} failure to exit process appropriately`)
@@ -127,6 +127,7 @@ export  class Barcoder {
                 } else {
                     $this.status.success = 0
                     $this.status.historical = true
+                    logger.info(`${$this.name} already seen file, overwrite disabled`)
                     $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                     resolve(0)
                 }

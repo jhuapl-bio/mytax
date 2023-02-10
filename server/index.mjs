@@ -6,32 +6,28 @@ import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-import express from 'express'
-import expressWs from 'express-ws'
+// import express from 'express'
 import {Orchestrator} from "./server.mjs"
-
-
-
+import WebSocket, { WebSocketServer } from 'ws';
 
 
 // Our port
 let port = 3000;
 
 // App and server
-let app = express();
-let server = http.createServer(app).listen(port);    
+// let app = express();
+// let server = http.createServer(app).listen(port);    
 
 // Apply expressWs
-expressWs(app, server);
+// expressWs(app, server);
 
-app.use(express.static(__dirname + '/views'));
+// app.use(express.static(__dirname + '/views'));
 
 // Get the route / 
-app.get('/', (req, res) => {
-    logger.info("Welcome to the app")
-    res.status(200).send("Welcome to our app");
-});
+// app.get('/', (req, res) => {
+//     logger.info("Welcome to the app")
+//     res.status(200).send("Welcome to our app");
+// });
 
 let dirpath = '/Users/merribb1/Desktop/test-data2/demux-fastq_pass'
 let input = "/Users/merribb1/Documents/Projects/real-time-reporting/data/"
@@ -42,11 +38,33 @@ let websocket;
 
 let max = 0
 let storage = {}
-// Get the /ws websocket route
-app.ws('/ws', async function(ws, req) {
 
+let ws = new WebSocketServer({
+    port: port,
+    perMessageDeflate: {
+      zlibDeflateOptions: {
+        // See zlib defaults.
+        chunkSize: 1024,
+        memLevel: 7,
+        level: 3
+      },
+      zlibInflateOptions: {
+        chunkSize: 10 * 1024
+      },
+      // Other options settable:
+      clientNoContextTakeover: true, // Defaults to negotiated value.
+      serverNoContextTakeover: true, // Defaults to negotiated value.
+      serverMaxWindowBits: 10, // Defaults to negotiated value.
+      // Below options specified as default values.
+      concurrencyLimit: 1000, // Limits zlib concurrency for perf.
+      threshold: 1024 // Size (in bytes) below which messages
+      // should not be compressed if context takeover is disabled.
+    }
+});
+ws.on('connection', (ws) => {
+    
+    // Get the /ws websocket route
     if (storage.orchestrator){
-        
         try{
             logger.info(`Orchestrator exists already, skipping creation`)
             storage.orchestrator.cleanup()
@@ -58,7 +76,7 @@ app.ws('/ws', async function(ws, req) {
     } else {
         logger.info(`Orchestrator doesnt exist already, creating....`)
     }
-     
+    
     storage.orchestrator = new Orchestrator(ws);
     storage.orchestrator.ws = ws  
     ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
@@ -118,7 +136,7 @@ app.ws('/ws', async function(ws, req) {
                 let i=0
                 logger.info(`Starting restart of a sample ${command.sample}, ${command.overwrite}`) 
                 storage.orchestrator.setSampleSingle(command.sample, command.overwrite)
-               
+            
             } catch(err){
                 logger.error(err)
             }  
@@ -148,17 +166,12 @@ app.ws('/ws', async function(ws, req) {
 
         //     ////////////////////////////////////////////////////////////////////////////////////
             
-          
+        
             
         //     ////////////////////////////////////////////////////////////////////////////////////
             
-       
+    
         //     ////////////////////////////////////////////////////////////////////////////////////
         // }
-    });
-    
-
-
-
-
-});
+    });        
+})

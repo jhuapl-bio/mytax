@@ -5,14 +5,14 @@ import { getReportName, rmFile, removeExtension, globFiles } from './controllers
 import {logger} from './logger.js'
 import fs from "file-system"
 import chokidar from 'chokidar'
-
+import {AbortError} from 'p-queue'
 import {Barcoder} from "./barcoder.mjs"
 import _ from 'lodash';
 import { mkdirp } from 'mkdirp'
 
 export  class Sample { 
     
-    constructor(sample, queue, ws){         
+    constructor(sample, queue, ws){          
         for (let key of Object.keys(sample)){
             this[key] = sample[key]
         }
@@ -20,9 +20,11 @@ export  class Sample {
         this.fullstop = false
         this.queueRecords = []
         this.watcher = null
+        const $this = this
+        
         this.reportWatcher = null
         this.config = {}
-        this.pause = false
+        this.paused = false
         this.outputdir  = ( sample.demux ? path.join(sample.path_1, 'demultiplexed') : path.join(path.dirname(sample.path_1), sample.sample)  )
         if (sample.demux){
             this.outputdir =  path.join(sample.path_1, 'demultiplexed') 
@@ -44,10 +46,19 @@ export  class Sample {
     cleanup(){
         try{
             if (this.watcherDemux){
-                this.watcherDemux.close()
+                this.watcherDemux.close().then(() => console.log('closed demux'));
+                this.watcherDemux._watched.clear()
+                delete this.watcherDemux
             }
-            if (this.watcher){
-                this.watcher.close()
+            if (this.samples[key].watcher){
+                this.watcher.close().then(() => console.log('closed water'));
+                $this.samples[key].watcher._watched.clear()
+                delete this.watcher
+            }
+            if (this.samples[key].reportWatcher){
+                this.reportWatcher.close().then(() => console.log('closed report'));
+                this.reportWatcher._watched.clear()
+                delete this.reportWatcher
             }
             this.cancel()
         } catch (err){
@@ -109,15 +120,27 @@ export  class Sample {
         let id =  this.getId(obj.index)
         let index = this.getIndexJob(obj.filepath)
         const $this = this;
-        this.queue.push({
-            jobnumber: obj.index,
-            id: id,
-            type: obj.type,
-            sample: this.sample, 
-            priority: obj.priority ? obj.priority : 0,
-            bind: obj 
-        })
+       
+        try {
+            const controller = new AbortController();
+            obj.controller = controller
+            await this.queue.add(async ({signal}) => { 
+                $this.queueRecords[obj.index] = obj
+                signal.addEventListener('abort', () => {
+                    logger.info(`aborting job ${obj.filepath}-${id}`)
+                    obj.stop()
+                }); 
+               
+                return await obj.start() 
+            }, {signal: controller.signal, priority: obj.priority ? obj.priority : 0});
+        } catch (error) {
+            if (!(error instanceof AbortError)) {
+                logger.error(`${error} error in queuing job ${obj.jobnumber} ${id}` )
+            }
+        }
+        
         obj.jobnumber = id
+
         if (index && index > -1){ 
             this.queueRecords[index] = obj
         } else {
@@ -138,13 +161,14 @@ export  class Sample {
                 logger.error(err)
             }
         }
+        $this.queue.start()
+        this.ws.send(JSON.stringify({ type: "paused",  message:  false })) 
+        
+        $this.resetWatchers()
         if (this.path_1 && this.format == 'file'){
             this.setJob(this.path_1, 'classifier')
-        } else if (this.path_1 ){
-            this.files = []            
-            this.watchDirectory()
-        }  
-        $this.reportWatch()
+        }
+        
         return 
     }
     stop(index){
@@ -183,16 +207,6 @@ export  class Sample {
     }
     cancel(index){
         const $this = this
-        try{
-            // if (this.watcherDemux){
-            //     this.watcherDemux.close()
-            // }
-            // if (this.watcher){
-            //     this.watcher.close()
-            // }
-        } catch (err){
-            logger.error(`${err} couldnt close waters`)
-        }
         if (index >=0 && index){
             try{ 
                 logger.info(`${job.name} stopping job at index ${index} `)
@@ -236,20 +250,46 @@ export  class Sample {
     getId(idx){
         return `${this.sample}-${idx}`
     }
+    async resetWatchers(config){
+        try{
+            if (!this.reportWatcher){
+                this.reportWatch()
+            }
+        } catch (Err){
+            logger.error(`${Err} error in watching reports`)
+        }
+        try{
+            if (!this.watcher && this.sampleObj.format == 'directory'){
+                this.watchDirectory()
+            }
+        } catch (Err){
+            logger.error(`${Err} error in watching base dir files`)
+        }
+        
+        try{
+            if (!this.watcherDemux && this.sampleObj.demux){
+                this.barcodeWatch()
+            }
+        } catch (err){
+            logger.error(`${err} error in watching barcodes`)
+        }
+    }
     setJob(filepath, type, overwrite){
         const $this = this 
         let sampleObj = this.sampleObj
         let sampleo = null
         let indexFilepath  = this.getIndexJob(filepath)
+        
         if (!this.paused){
             if (indexFilepath != -1){ 
-                logger.info(`Seen the filepath: ${filepath}, ${indexFilepath}`)
+                logger.info(`Seenfile ${filepath}, ${type}, overwrite force: ${overwrite}`)
                 sampleo = this.queueRecords[indexFilepath]
                 sampleo.overwrite = overwrite
                 this.defineQueueJob(sampleo)
                 return 
             } else {
-                logger.info(`Never seen this file process before ${filepath}, creating a new job`)
+                logger.info(`Never seen this file process before ${filepath}, creating a new job, paused: ${this.paused}`)
+                sampleObj.overwrite = overwrite
                 if (sampleObj.demux && type == 'classifier'){
                     sampleo = $this.defineBarcoderOutputfile(filepath) 
                     $this.defineClassifier(sampleo, filepath, 1)
@@ -294,20 +334,34 @@ export  class Sample {
         })
         
     }
-    sendReportQueueJob(filepath){
+    async sendReportQueueJob(filepath){
         let id = `${filepath}-ReportSampleSending`
         const $this = this;
+        let name = this.defineBarcoderSamplename(filepath)
         let send = {
             jobnumber: id,
             id: id,
-            name: this.defineBarcoderSamplename(filepath),
+            name: name,
             type: `report`,
             filepath: filepath,
             sample: this.sample, 
-            priority: 2,
+            priority: 0,
             bind: this 
         }
-        this.queue.push(send)
+        try {
+            const controller = new AbortController();
+            await this.queue.add(async ({signal}) => { 
+                signal.addEventListener('abort', () => {
+                    logger.info(`aborting report pulling ${id}`)
+                }); 
+                
+                return await this.getFullReportSample(filepath, name) 
+            }, {signal: controller.signal, priority: 2 });
+        } catch (error) {
+            if (!(error instanceof AbortError)) {
+                logger.error(`${error} error in queuing report send job  ${id}` )
+            }
+        }
     }
     async reportWatch(type){
         const $this  =this
@@ -328,7 +382,7 @@ export  class Sample {
                 }
             }
             
-            this.reportWatcher = chokidar.watch([
+            this.reportWatcher = await chokidar.watch([
                 `${outputdir}/**/full.report`], {ignored: /^\./, persistent: true, usePolling: true })
                 .on('add', function(filepath) {
                     logger.info(`REPORT WATCH: File ${filepath} has been ADDED NEWLY`);
@@ -347,6 +401,8 @@ export  class Sample {
                 }) 
         } catch (err){
             logger.error(`${err} error in watching for report files, no plots will be made for this sample: ${this.sample}`)
+        } finally {
+            return 
         }
 
     }
@@ -356,6 +412,7 @@ export  class Sample {
         if (this.watcherDemux ){
             try{
                 await this.watcherDemux.close()
+                delete this.watcherDemux
             } catch (err){
                 logger.error(`${err} error in closing watch demux chokidar`)
             }
@@ -368,7 +425,7 @@ export  class Sample {
             
             
             await mkdirp.sync(demuxoutpath)   
-            this.watcherDemux = chokidar.watch([ 
+            this.watcherDemux = await chokidar.watch([ 
                 `${demuxoutpath}/**/*fastq.gz`, 
                 `${demuxoutpath}/**/*fastq`,  
                 `${demuxoutpath}/**/*fq.gz`, 
@@ -396,7 +453,9 @@ export  class Sample {
         } catch (Err){ 
             logger.error(`${Err} Error in finding the dmux outpath`)
             throw Err
-        } 
+        } finally {
+            return 
+        }
         
         
 
@@ -428,13 +487,29 @@ export  class Sample {
         if (this.watcher ){
             try{
                 await this.watcher.close()
+                delete this.watcher
             } catch (err){
                 logger.error(`${err} error in closing  watch chokidar`)
             }
         } 
         
-        var watcher = chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true, usePolling: true });
-        this.watcher  = watcher
+        this.watcher = await chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true, usePolling: true })
+            .on('add', function(filepath) {
+                logger.info(`File ${filepath} has been added for sample: ${sample.sample}, demux: ${sample.demux}`);
+                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
+                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), false)
+            }) 
+            .on('change', function(filepath) { 
+                logger.info(`File ${filepath} has been changed, , demux: ${sample.demux}`);
+                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), true)
+            })
+            .on('unlink', function(filepath) {
+                logger.info(`File ${filepath} has been removed`);
+            })
+            .on('error', function(error) {
+                logger.error(`Error happened ${error}`); 
+            }) ;
+        
         
         let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
         let fullreport = path.join(outpath, sample.sample, 'full.report')
@@ -446,34 +521,7 @@ export  class Sample {
                 logger.error(err)
             }
         }
-        watcher  
-            .on('add', function(filepath) {
-                logger.info(`File ${filepath} has been added for sample: ${sample.sample}`);
-                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), false)
-            }) 
-            .on('change', function(filepath) { 
-                logger.info(`File ${filepath} has been changed`);
-                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), true)
-            })
-            .on('unlink', function(filepath) {
-                logger.info(`File ${filepath} has been removed`);
-            })
-            .on('error', function(error) {
-                logger.error(`Error happened ${error}`); 
-            })  
-        if (sample.demux ){  
-
-            $this.barcodeWatch()
-        }
-    
-
-    
-        
-        
-        
-    
-    
+        return 
     }  
     
 }

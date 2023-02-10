@@ -78,19 +78,19 @@ export  class Classifier {
                     classify.stdout.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,20)
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         logger.info(`${data} `);
                     }); 
                 
                     classify.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,20)
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status }))  
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status }))  
                         logger.error(`${data}`);
                     });
                     classify.on('error', function(error) {
                         logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         $this.status.error = err
                         $this.status.running = false
                         reject(error)
@@ -100,7 +100,6 @@ export  class Classifier {
                         $this.status.success = code
                         $this.status.running = false
                         $this.status.historical = false
-                        
                         $this.process = null
                         $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
 
@@ -111,6 +110,7 @@ export  class Classifier {
                     $this.status.success = 0
                     $this.status.running = false
                     $this.status.historical = true
+                    logger.info(`${this.fullreport} exists already`)
                     $this.status.logs.push['Historically gathered report, pre-run already']
                     $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                     resolve()
@@ -129,7 +129,7 @@ export  class Classifier {
             if (err){
                 logger.error(err)
             } else {
-                $this.ws.send(JSON.stringify({ type: "data", samplename: $this.name, "data" : data.toString()})) 
+                // $this.ws.send(JSON.stringify({ type: "data", samplename: $this.name, "data" : data.toString()})) 
             }
         
         })
