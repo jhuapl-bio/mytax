@@ -356,7 +356,7 @@ export  class Sample {
                 }); 
                 
                 return await this.getFullReportSample(filepath, name) 
-            }, {signal: controller.signal, priority: 2 });
+            }, {signal: controller.signal, priority: 0 });
         } catch (error) {
             if (!(error instanceof AbortError)) {
                 logger.error(`${error} error in queuing report send job  ${id}` )
