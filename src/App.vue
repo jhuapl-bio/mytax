@@ -550,9 +550,7 @@ export default {
             } else if (parsedMessage.type == 'reads'){
               this.reads = parsedMessage.message
             } else if (parsedMessage.type == 'error'){
-              console.error(parsedMessage.message)
             } else if (parsedMessage.type == 'message'){
-              console.log(parsedMessage.message,"<<")
             } else if (parsedMessage.type == 'paused'){
               this.pausedServer=parsedMessage.message
             } else if (parsedMessage.type == 'anyRunning'){
