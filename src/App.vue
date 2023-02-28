@@ -304,7 +304,6 @@ export default {
             return this.navigation.shown === false ? "Open" : "Closed";
       },
       samplekeys(){
-        console.log(this.fullData)
         return Object.keys(this.fullData)
       },
       icon () {
@@ -504,16 +503,22 @@ export default {
     },
     methods: {
       deleteRow(sample){
-        // delete this.selectedData[sample]
+        this.$delete(this.selectedData, sample)
         this.manuals[sample] = null
+        let index = this.selectedsamplesAll.findIndex(x => x === sample);
+        if (index >= 0){
+          this.selectedsamplesAll.splice(index, 1)
+          this.selectedsamples.splice(index, 1)
+        }
         if (this.topLevelSampleNames[sample]){
           this.topLevelSampleNames[sample].map((d)=>{
-            this.selectedData[d] = null
+            this.$delete(this.selectedData,d )
             let index = this.selectedsamples.findIndex(x => x === d);
-            console.log(index)
             if (index >= 0){
               this.selectedsamples.splice(index, 1)
+              this.selectedsamplesAll.splice(index, 1)
             }
+            
           })
         }
       },
@@ -671,20 +676,20 @@ export default {
               // this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)              
               this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
             }
-            else{
+            else{ 
               this.message = parsedMessage.message;
             }
           }
 
           $this.socket.onclose = function(e) {
-            console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+            // console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
             setTimeout(function() {
               $this.connect();
             }, 2000);
           };
 
           $this.socket.onerror = function(err) {
-            console.error('Socket encountered error: ', err.message, 'Closing socket');
+            // console.error('Socket encountered error: ', err.message, 'Closing socket');
             $this.connectedStatus = 'Disconnected Server, reattempting every 1 second. Check Logs and Network Settings'
             $this.socket.close();
           };
