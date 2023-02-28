@@ -254,12 +254,17 @@
           let filtered_taxa = childrenTaxes.filter((f)=>{
             return this.taxa.indexOf(f.label) > -1
           })
+          
           if (filtered_taxa.length == 0){
             legendElement = piechartLegendSVG.selectAll('g.legendElement')
-            .data(taxValues)
+            .data(taxValues.sort((a,b)=>{
+              return b.abu - a.abu
+            }))
           } else {
             legendElement = piechartLegendSVG.selectAll('g.legendElement')
-            .data(filtered_taxa)
+            .data(filtered_taxa.sort((a,b)=>{
+              return b.abu - a.abu
+            }))
           }
 
         } else {
@@ -274,7 +279,7 @@
           .append('g')
         
         legendEnter.attr('class', 'legendElement').sort((a, b) => {
-          return d3.descending(a.abu, b.abu)
+          return a.abu - b.abu
         })
           .on('click', function (d, f) {
             $this.jumpTo(f.taxid, f.rank_code)
