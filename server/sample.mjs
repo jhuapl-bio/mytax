@@ -309,7 +309,7 @@ export  class Sample {
             logger.info(`Paused: ${this.paused}, skipping ${filepath}. Please rerun if you want to get info again from this.`)
         }
     }
-    getFullReportSample(filepath, samplename){
+    getFullReportSample(filepath, samplename, sample){
         const $this = this
         return new Promise((resolve, reject)=>{
             logger.info(`${filepath}: file done, sending sample data for sample ${$this.sample}`)
@@ -320,7 +320,7 @@ export  class Sample {
                             logger.error(err)
                             reject(err)
                         } else {
-                            $this.ws.send(JSON.stringify({ type: "data", samplename: samplename, "data" : data.toString()})) 
+                            $this.ws.send(JSON.stringify({ type: "data", topLevelSampleNames: sample, samplename: samplename, "data" : data.toString()})) 
                             resolve()
                         }
                     } catch (err){
@@ -355,7 +355,7 @@ export  class Sample {
                     logger.info(`aborting report pulling ${id}`)
                 }); 
                 
-                return await this.getFullReportSample(filepath, name) 
+                return await this.getFullReportSample(filepath, name, $this.sample) 
             }, {signal: controller.signal, priority: 0 });
         } catch (error) {
             if (!(error instanceof AbortError)) {
