@@ -48,7 +48,7 @@
         </v-checkbox>
         
         <v-spacer></v-spacer>
-        <v-btn btn-and-icon  color="blue "  @mouseover="drawer=true" @click="drawer = true" >
+        <v-btn btn-and-icon  color="blue "  @mouseover="navigation.shown=true" @click="navigation.shown = true" >
           <v-progress-circular
               v-if="anyRunning "
               :indeterminate="true" top
@@ -62,62 +62,156 @@
         </v-btn>
         
       </v-app-bar> 
-      <v-main >
-        <v-alert
-          type="error" v-if="connectedStatus != 'Connected'"
-        >{{  connectedStatus }}</v-alert>
-        <v-navigation-drawer
-          v-model="drawer"
-          absolute width="88%"
-          temporary right
+      <div class="pt-6 "> 
+        
+        <v-navigation-drawer permanent class="pt-6"
+          app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
+          
         >   
-        <div style="width: 100%; height:100%; overflow-y:auto">
-              <Samplesheet
-                :samplesheet="samplesheetdata"
-                :queueLength="queueLength"
-                :bundleconfig="bundleconfig"
-                :seen="samplekeys"
-                :current="current"
-                :queueList="status"
-                @sendNewWatch="sendNewWatch"
-                @sendMessage="sendMessage"
-                @cancel="cancel"
-                @updateData="updateData"
-                @barcode="barcode"
-                @rerun="rerun"
-                :anyRunning="anyRunning"
-                @pausedChange="pausedChange"
-                :pausedServer="pausedServer"
-                :logs="logs"
-                @updateConfig="updateConfig"
-                :samplesheetName="samplesheet"
+        <!-- <div style="width: 100%; height:100%; overflow-y:auto"> -->
+            
+          <Samplesheet
+              :samplesheet="samplesheetdata"
+              :queueLength="queueLength"
+              :bundleconfig="bundleconfig"
+              :seen="samplekeys"
+              :current="current"
+              :queueList="status"
+              @sendNewWatch="sendNewWatch"
+              @sendMessage="sendMessage"
+              @cancel="cancel"
+              @updateData="updateData"
+              @barcode="barcode"
+              @rerun="rerun"
+              :anyRunning="anyRunning"
+              @pausedChange="pausedChange"
+              :pausedServer="pausedServer"
+              :logs="logs"
+              @updateConfig="updateConfig"
+              @deleteRow="deleteRow"
+              :samplesheetName="samplesheet"
+            >
+          </Samplesheet>
+          <div id="file"   @drop.prevent="addDropFileData" @dragover.prevent style="overflow-y: auto"  >
+            <v-file-input
+                :hint="'Add Another Kraken2 Report File'"
+                persistent-hint @input="addData" v-model="recentDataFileadded"
+                counter show-size overlap
+            >
+            </v-file-input>
+          </div>
+          <div class="mx-4">
+            
+            <v-autocomplete class="mt-3"
+              v-model="selectedsamples"
+              :items="selectedsamplesAll"
+              chips outlined
+              label="Samples"
+              multiple
+            >
+            
+            <template v-slot:prepend-item>
+              <v-list-item
+                ripple
+                @mousedown.prevent
+                @click="toggleSamples"
               >
-              </Samplesheet>
-            </div>
-        </v-navigation-drawer>
-        <v-row class="ml-4">
-          <v-col   sm="2">
-            <v-sheet class="fill-width scroll " style="max-height:92vh; overflow: auto;">
-              <v-spacer class="py-4"></v-spacer>
-              <v-autocomplete
-                v-model="selectedsamples"
-                :items="samplekeys"
-                outlined
-                dense
-                chips
-                small-chips
-                label="Samples"
-                multiple
+                <v-list-item-action>
+                  <v-icon :color="selectedsamples.length > 0 ? 'indigo darken-4' : ''">
+                    {{ icon  }}
+                  </v-icon>
+                </v-list-item-action>
+                <v-list-item-content>
+                  <v-list-item-title>
+                    Select All
+                  </v-list-item-title>
+                </v-list-item-content>
+              </v-list-item>
+              <v-divider class=""></v-divider>
+            </template>
+            <template v-slot:selection="{ attr, on, item, selected }">
+              <v-chip
+                v-bind="attr" small
+                :input-value="selected"
+                color="blue-grey"
+                class="white--text "
+                v-on="on"
+              >
+                <v-progress-circular
+                    indeterminate v-if="( current && current[item])"
+                    color="white" small size="15"
+                ></v-progress-circular>
+                <v-icon
+                    small v-else 
+                    :color="samplekeys && samplekeys.indexOf(item) > -1 ? 'white': 'white'"
+                >
+                  {{ !status[item] || status[item] && status[item].success != -1  ? 'mdi-check-circle' : 'mdi-exclamation'}}
+                </v-icon>
+                <span class="ml-2" v-text="item"></span>
+                <v-icon
+                    small v-if="manuals[item]" @click="deleteRow(item)"
+                    :color="`white`"
+                >
+                  mdi-cancel
+                </v-icon>
+                
+              </v-chip>
+            </template>
+              
+            
+            </v-autocomplete>
+            
+            <v-spacer class="py-0"></v-spacer>
+            
+            <v-text-field
+              hint="Max Depth of Tax Tree"
+              v-model="maxDepth"
+              persistent-hint 
+              single-line
+              type="number"
+            ></v-text-field>
+            <v-text-field
+              hint="Min Depth of Tax Tree"
+              v-model="minDepth"
+              persistent-hint 
+              single-line
+              type="number"
+            ></v-text-field>
+            <v-spacer class="py-4"></v-spacer>
+            <v-text-field
+              hint="Min Percent in Sample"
+              v-model="minPercent"
+              persistent-hint 
+              single-line
+              type="number"
+            ></v-text-field>
+      
+            <v-slider
+              v-model="minPercent"
+              :min="0" 
+              :step="0.005"
+              :max="1"
+            ></v-slider>
+            <v-spacer class="py-4"></v-spacer>
+            <v-select
+              label="Tax Rank Codes"
+              v-model="defaults" multiple
+              :items="defaultsList"
+              item-text="value"
+              @change="filter"
+              item-value="value"
+              persistent-hint 
+              
               >
               <template v-slot:prepend-item>
                 <v-list-item
                   ripple
                   @mousedown.prevent
-                  @click="toggleSamples"
+                  @click="toggle"
                 >
                   <v-list-item-action>
-                    <v-icon :color="selectedsamples.length > 0 ? 'indigo darken-4' : ''">
-                       {{ icon  }}
+                    <v-icon :color="defaults.length > 0 ? 'indigo darken-4' : ''">
+                      {{ icon }}
                     </v-icon>
                   </v-list-item-action>
                   <v-list-item-content>
@@ -128,102 +222,24 @@
                 </v-list-item>
                 <v-divider class="mt-2"></v-divider>
               </template>
-              <template v-slot:selection="{ attr, on, item, selected }">
-                <v-chip
-                  v-bind="attr" small
-                  :input-value="selected"
-                  color="blue-grey"
-                  class="white--text"
-                  v-on="on"
-                >
-                  <v-progress-circular
-                      indeterminate v-if="( current && current[item])"
-                      color="white" small size="15"
-                  ></v-progress-circular>
-                  <v-icon
-                      small v-else 
-                      :color="samplekeys && samplekeys.indexOf(item) > -1 ? 'white': 'white'"
-                  >
-                    {{ !status[item] || status[item] && status[item].success != -1  ? 'mdi-check-circle' : 'mdi-exclamation'}}
-                  </v-icon>
-                  <span class="ml-2" v-text="item"></span>
-                </v-chip>
-              </template>
-                
-              
-              </v-autocomplete>
-              
-              <v-spacer class="py-0"></v-spacer>
-              
-              <v-text-field
-                hint="Max Depth of Tax Tree"
-                v-model="maxDepth"
-                persistent-hint 
-                single-line
-                type="number"
-              ></v-text-field>
-              <v-text-field
-                hint="Min Depth of Tax Tree"
-                v-model="minDepth"
-                persistent-hint 
-                single-line
-                type="number"
-              ></v-text-field>
-              <v-spacer class="py-4"></v-spacer>
-              <v-text-field
-                hint="Min Percent in Sample"
-                v-model="minPercent"
-                persistent-hint 
-                single-line
-                type="number"
-              ></v-text-field>
-        
-              <v-slider
-                v-model="minPercent"
-                :min="0" 
-                :step="0.005"
-                :max="1"
-              ></v-slider>
-              <v-spacer class="py-4"></v-spacer>
-              <v-select
-                label="Tax Rank Codes"
-                v-model="defaults" multiple
-                :items="defaultsList"
-                item-text="value"
-                @change="filter"
-                item-value="value"
-                persistent-hint 
-                
-                >
-                <template v-slot:prepend-item>
-                  <v-list-item
-                    ripple
-                    @mousedown.prevent
-                    @click="toggle"
-                  >
-                    <v-list-item-action>
-                      <v-icon :color="defaults.length > 0 ? 'indigo darken-4' : ''">
-                        {{ icon }}
-                      </v-icon>
-                    </v-list-item-action>
-                    <v-list-item-content>
-                      <v-list-item-title>
-                        Select All
-                      </v-list-item-title>
-                    </v-list-item-content>
-                  </v-list-item>
-                  <v-divider class="mt-2"></v-divider>
-                </template>
-              
-              </v-select>
-            </v-sheet>
-          </v-col>
-        
+            
+            </v-select>
+          </div>
+          </v-navigation-drawer>
+        </div> 
+      <v-main >
+        <v-alert
+          type="error" v-if="connectedStatus != 'Connected'"
+        >{{  connectedStatus }}</v-alert>
+        <v-row class="ml-4">
+          
           <v-col
-              sm="10"
+              sm="12"
               id=""
               class="overflow-y-auto  my-0"
           >
+             
+          
               <v-tabs-items v-model="tab"
               >
 
@@ -237,6 +253,7 @@
                           :sampleData="selectedData"
                           :bundleconfig="bundleconfig"
                           :namesData="uniquenametypes"
+                          :fullsize="fullsize"
                           :selectedsamples="selectedsamples"
                           :socket="socket"
                       >
@@ -263,7 +280,7 @@ import * as d3 from 'd3'
 import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
 import _ from 'lodash'
-
+import path from "path"
 
 
 export default {
@@ -283,7 +300,13 @@ export default {
       }
     },
     computed: {
-      
+      direction() {
+            return this.navigation.shown === false ? "Open" : "Closed";
+      },
+      samplekeys(){
+        console.log(this.fullData)
+        return Object.keys(this.fullData)
+      },
       icon () {
         if (this.selectedAllSamples) return 'mdi-checkbox-marked'
         if (this.selectedSomeSamples) return 'mdi-minus-box'
@@ -308,11 +331,18 @@ export default {
         return {
           search: '',
             queueLength: 0,
+            manuals: {},
+            recentDataFileadded: null,
             socket: {},
-            drawer: false,
+            navigation: {
+                shown: true,
+                width: 550,
+                borderSize: 3
+            },
             anyRunning: false,
             pausedServer: false,
             selectedsamples: [],
+            selectedsamplesAll: [],
             status: {},
             uniquenametypes: {
               'default (scientific name)': 1
@@ -321,12 +351,12 @@ export default {
             config: {},
             current: {},
             bundleindex:1,
-            
+            topLevelSampleNames: [],
             names_file_input: null,
             names_file: "/names.tsv",
             seen: [],
             mapped_names : {},
-            samplekeys: [],
+            // samplekeys: [],
             database_file: null,
             db_option: "file",
             selectedData: {},
@@ -362,6 +392,7 @@ export default {
             jsondata: null, 
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
+            fullsize: {},
             matchSingle: ".*fastq",
             ext: ".fastq", 
             compressed: false,
@@ -440,7 +471,8 @@ export default {
     async mounted() {
         // Calculate the URL for the websocket. If you have a fixed URL, then you can remove all this and simply put in
         // ws://your-url-here.com or wss:// for secure websockets.
-        
+        this.setBorderWidth();
+        this.setEvents();
         this.importNames(this.names_file)
         try{
           let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
@@ -453,7 +485,7 @@ export default {
           this.samplesheet = samplesheet
           this.samplesheetdata = data
           if (this.samplesheetdata.length == 0){
-              this.drawer=true
+              this.navigation.shown=true
           }
         } catch (err){
           console.error(err,"<<<")
@@ -471,6 +503,82 @@ export default {
 
     },
     methods: {
+      deleteRow(sample){
+        // delete this.selectedData[sample]
+        this.manuals[sample] = null
+        if (this.topLevelSampleNames[sample]){
+          this.topLevelSampleNames[sample].map((d)=>{
+            this.selectedData[d] = null
+            let index = this.selectedsamples.findIndex(x => x === d);
+            console.log(index)
+            if (index >= 0){
+              this.selectedsamples.splice(index, 1)
+            }
+          })
+        }
+      },
+      addDropFileData(e) {
+        this.addData(e.dataTransfer.files[0])
+      },
+      addDropFile(e) { 
+        this.names_file_input = e.dataTransfer.files[0]; 
+      },
+      addData(val){
+          const $this  = this
+          let reader = new FileReader();  
+          reader.addEventListener("load", parseFile, false);
+          reader.readAsText(val);
+          let name  = path.parse(val.name).name
+          async function parseFile(){
+            await $this.importData(reader.result, null, name, true)
+          }
+      },
+      setBorderWidth() {
+          let i = this.$refs.information_panel_drawer.$el.querySelector(
+              ".v-navigation-drawer__border"
+          );
+          i.style.width = this.navigation.borderSize + "px";
+          i.style.cursor = "ew-resize";
+        },
+        setEvents() {
+            const minSize = this.navigation.borderSize;
+            const el = this.$refs.information_panel_drawer.$el;
+            const drawerBorder = el.querySelector(".v-navigation-drawer__border");
+            const vm = this;
+            const direction = el.classList.contains("v-navigation-drawer--right")
+                ? "right"
+                : "left";
+
+            function resize(e) {
+                document.body.style.cursor = "ew-resize";
+                let f = direction === "right"
+                    ? document.body.scrollWidth - e.clientX
+                    : e.clientX;
+                el.style.width = f + "px";
+            }
+
+            drawerBorder.addEventListener(
+                "mousedown",
+                function (e) {
+                    if (e.offsetX < minSize) {
+                        let m_pos = e.x;
+                        el.style.transition = 'initial'; document.addEventListener("mousemove", resize, false);
+                    }
+                },
+                false
+            );
+
+            document.addEventListener(
+                "mouseup",
+                function () {
+                    el.style.transition = '';
+                    vm.navigation.width = el.style.width;
+                    document.body.style.cursor = "";
+                    document.removeEventListener("mousemove", resize, false);
+                },
+                false
+            );
+        },
         pausedChange(val){
           this.paused = val
         },
@@ -501,27 +609,14 @@ export default {
             // If those data attributes exist, we can then console log or show data to the user on their web page.
             if (parsedMessage.type == 'data'){
               ( async ()=>{
-                let indexSamples = this.selectedsamples.indexOf(parsedMessage.samplename)
-                if(indexSamples == -1){
-                  this.selectedsamples.push(parsedMessage.samplename)
+                await this.importData(parsedMessage.data, null, parsedMessage.samplename)
+                if (!this.topLevelSampleNames[parsedMessage.topLevelSampleNames]){
+                  this.topLevelSampleNames[parsedMessage.topLevelSampleNames] = []
                 }
-                let data  = await this.importData(parsedMessage.data, null, parsedMessage.samplename)
-                this.stagedData[parsedMessage.samplename] = data
-                if (!this.paused){
-                  
-                  this.sampledata[parsedMessage.samplename] = data
-                  
-                  let index = this.selectedsamples.indexOf(parsedMessage.samplename)
-                  if ( index > -1){
-                    this.selectedData[parsedMessage.samplename] = data
-                  } else  if (index == -1 && this.selectedData[parsedMessage.samplename]){
-                    delete this.selectedData[parsedMessage.samplename]
-                  }
-              
-                } 
-                this.samplekeys = Object.keys(this.selectedData)
-                
-                
+                let index = this.topLevelSampleNames[parsedMessage.topLevelSampleNames].indexOf(parsedMessage.samplename)
+                if (index < 0 ){
+                  this.topLevelSampleNames[parsedMessage.topLevelSampleNames].push(parsedMessage.samplename)
+                }
               })().catch((Err)=>{
                 console.error(Err)
               })
@@ -632,9 +727,7 @@ export default {
         return mappings
       },
       
-        addDropFile(e) { 
-            this.names_file_input = e.dataTransfer.files[0]; 
-        },
+        
         runBundleUpdate(){
           this.sendMessage(JSON.stringify({
                 type: "runbundle", 
@@ -704,7 +797,6 @@ export default {
               }
             ));
           } else {
-            this.samplekeys = []
             this.sendMessage(JSON.stringify({
                   type: "start", 
                     samplesheet: this.samplesheetdata,
@@ -855,13 +947,19 @@ export default {
             console.error(Err)
           }
         },
-        async importData(information, type, sample){
+        async importData(information, type, sample, manual){
           let text;
           if (type == 'file'){
             text = await d3.text(information)
           } else {
             text = information
           }
+          let indexSamples = this.selectedsamplesAll.indexOf(sample)
+          if(indexSamples == -1){
+            this.selectedsamplesAll.push(sample)
+            this.selectedsamples.push(sample)
+          }
+          let fullsize = 0
           const $this = this
           let uniques  = {}
           let base = {
@@ -902,9 +1000,11 @@ export default {
               source: null,
               depth: found
             }
+            fullsize += parseInt(d[2])
             if ( found == 0  ){
               base.value += parseFloat(data.value)
               base.num_fragments_clade+= parseInt(data.num_fragments_clade)
+             
             }
             
             uniques[d[3]] = 1
@@ -912,7 +1012,7 @@ export default {
             return data
           })
        
-          
+          this.fullsize[sample] = fullsize
           data.unshift(base)
           this.fullData[sample] = data
           data = this.filterData(data)
@@ -922,7 +1022,22 @@ export default {
               this.defaultsList.push(f)
             }
           })
-          // this.defaultsList = Object.keys(uniques)
+          this.stagedData[sample] = data
+          if (!this.paused){
+            
+            this.sampledata[sample] = data
+            
+            let index = this.selectedsamples.indexOf(sample)
+            if ( index > -1){
+              this.selectedData[sample] = data
+            } else  if (index == -1 && this.selectedData[sample]){
+              delete this.selectedData[sample]
+            }
+        
+          } 
+          if (manual){
+            this.manuals[sample] = 1
+          }
           return data 
           
           

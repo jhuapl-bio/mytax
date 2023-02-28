@@ -231,7 +231,7 @@
           
       }
     },
-    props: ["socket", "selectedsamples", "sampleData", "namesData", 'bundleconfig'],
+    props: ["socket", "selectedsamples", "sampleData", "namesData", 'bundleconfig', 'fullsize'],
     watch: {
       sampleData: {
         deep:true, 

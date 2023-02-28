@@ -23,12 +23,529 @@
 <template>
     <v-row >
         <v-col sm="12" >
-            
-            <v-data-table
+            <v-alert type="warning" 
+                v-if="dataSamples.length == 0"
+            > Your Datasheet is Empty, please add rows manually or upload your own Samplesheet.csv file
+            </v-alert>
+            <v-toolbar extended>
+                <v-btn
+                    color="black lighten-2"
+                    dark  
+
+                    @click="sheet = true"
+                >
+                    Logs
+                    <v-tooltip >
+                        <template v-slot:activator="{ on }">
+                            <v-icon class="ml-2" small v-on="on">mdi-comment</v-icon>
+                        </template>
+                        View Logging
+                    </v-tooltip>
+                    
+                </v-btn>
+                <template v-slot:extension>
+                    <div style="display:flex; " class="mb-4 mt-3">
+                        <div id="filedropfilename"   @drop.prevent="addDropFile" @dragover.prevent style="overflow-y: auto" class="" >
+                            <v-file-input
+                                :width="'100px'"
+                                v-model="name" 
+                                :hint="samplesheetName"
+                                persistent-hint counter show-size overlap
+                            >
+                            </v-file-input>
+                        </div>
+                        <vue-json-to-csv  v-if="dataSamples.length > 0"
+                            :csv-title="CSVTITLE"
+                            :json-data="dataSamples">
+                            <v-tooltip  >
+                                <template v-slot:activator="{ on }">
+                                    <v-btn fab dark  v-on="on" x-small>
+                                        <v-icon >mdi-download</v-icon>
+                                    </v-btn>
+                                </template>
+                                Download Samplesheet
+                            </v-tooltip>
+                        </vue-json-to-csv>
+                    </div>
+                </template>
+                <v-tooltip  >
+                    <template v-slot:activator="{ on }">
+                        <v-btn  v-on="on" fab class="mx-2" color="info"  x-small @click="forceRestart()">
+                            <v-icon>mdi-restart</v-icon>
+                        </v-btn>
+                    </template>
+                    Restart All Jobs
+                </v-tooltip>
+                <v-tooltip  >
+                    <template v-slot:activator="{ on }">
+                        <v-btn color="primary "
+                            dark  v-on="on" x-small fab
+                            class="mx-2"
+                            @click="flush()">
+                            <v-icon>mdi-close-circle-multiple-outline</v-icon>
+                        </v-btn>
+                    </template>
+                    Stop All Jobs
+                </v-tooltip>
+                <v-tooltip   v-if="!paused" :key="`${paused}-pausedbutton`">
+                    <template v-slot:activator="{ on }">
+                        <v-badge 
+                            color="green lighten-2"  overlap 
+                            :content="`${queueLength > 0 ? queueLength : ''}`" 
+                        >
+                            <v-btn color="orange "
+                                    dark  fab x-small
+                                    v-on="on"  
+                                    class="mx-2 "
+                                    @click="paused = true">
+                                <v-icon>mdi-pause-circle</v-icon>
+                            </v-btn>
+                        </v-badge>
+                    </template>
+                    Pause Queued Jobs
+                </v-tooltip>
+                <v-tooltip v-if="paused" >
+                    <template v-slot:activator="{ on }">
+                        <v-btn color="secondary "
+                            dark  fab x-small
+                            v-on="on"
+                            class="mx-2"
+                            @click="paused = false">
+                            <v-icon>mdi-play-box</v-icon>
+                        </v-btn>
+                    </template>
+                    Resume Jobs Waiting
+                </v-tooltip>
+                <v-dialog
+                    v-model="dialog"
+                    max-width="500px"
+                    >
+                    <template v-slot:activator="{ on, attrs }">
+                
+                        <v-btn fab
+                            color="primary"
+                            dark  x-small
+                            class="mx-2" v-on="on"
+                            v-bind="attrs"
+                            
+                            >
+                            <v-tooltip  >
+                                <template v-slot:activator="{ on }">
+                                    <v-icon  v-on="on">mdi-plus</v-icon>
+                                </template>
+                                Add Entry To Samplesheet
+                            </v-tooltip>
+                        </v-btn>
+                            
+                    </template>
+                    <v-card>
+                        <v-card-title>
+                        <span class="text-h5">{{ formTitle }}</span>
+                        </v-card-title>
+
+                        <v-card-text>
+                        <v-container>
+                            <v-row>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-text-field
+                                v-model="editedItem.sample"
+                                label="Sample Name"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-text-field
+                                v-model="editedItem.path_1"
+                                label="Path 1"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-text-field
+                                v-model="editedItem.path_2"
+                                label="Path 2"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-text-field
+                                v-model="editedItem.database"
+                                label="Database"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-select
+                                    v-model="editedItem.format"
+                                    :items="['file', 'directory']"
+                                    label="Type/Format"
+                                ></v-select>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-select
+                                    v-model="editedItem.compressed"
+                                    :items="['TRUE', 'FALSE']"
+                                    label="Compressed"
+                                ></v-select>
+                            </v-col>
+                            <v-col
+                                cols="12"
+                                sm="6"
+                                md="4"
+                            >
+                                <v-select
+                                    v-model="editedItem.platform"
+                                    :items="['oxford', 'illumina']"
+                                    label="Platform"
+                                ></v-select>
+                            </v-col>
+                            </v-row>
+                        </v-container>
+                        </v-card-text>
+
+                        <v-card-actions>
+                            <v-spacer></v-spacer>
+                            <v-btn
+                                color="blue darken-1"
+                                text  x-small
+                                @click="closeItem"
+                            >
+                                Cancel
+                            </v-btn>
+                            <v-btn
+                                color="blue darken-1"  x-small
+                                text
+                                @click="saveItem"
+                            >
+                                Save
+                            </v-btn>
+                        </v-card-actions>
+                    </v-card>
+                    
+                </v-dialog>
+                <v-dialog v-model="dialogDelete" max-width="500px">
+                    <v-card>
+                        <v-card-title class="text-h5">Are you sure you want to delete this item?</v-card-title>
+                        <v-card-actions>
+                        <v-spacer></v-spacer>
+                        <v-btn  x-small color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
+                        <v-btn  x-small color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
+                        <v-spacer></v-spacer>
+                        </v-card-actions>
+                    </v-card>
+                </v-dialog>
+                <v-dialog
+                    v-model="dialogAdvanced"
+                >
+                    <template v-slot:activator="{ on, attrs }">
+                        <v-btn
+                            color="red lighten-2"
+                            dark fab x-small
+                            class="mx-4"
+                            v-bind="attrs"
+                            v-on="on"
+                        >
+                            <v-tooltip  left>
+                                <template v-slot:activator="{ on }">
+                                    <v-icon v-on="on">mdi-cog</v-icon>
+                                </template>
+                                Advanced Configurations
+                            </v-tooltip>
+                        </v-btn>
+                    </template>
+                    <v-toolbar extended
+                        dark
+                    >
+                        <template v-slot:extension>
+                            
+                            <v-tabs v-model="tab" align-with-title
+                                color="basil" 
+                            >
+                                <v-tabs-slider color="purple"></v-tabs-slider>          
+                                <v-tab  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
+                                    {{tabItem}}
+                                </v-tab>
+                            </v-tabs>
+                        </template>
+                    </v-toolbar>
+                    <v-tabs-items  width="100%"
+                        v-model="tab" 
+                    >
+                        <v-tab-item :key="`one`" >
+                            <v-card v-if="stagedBundleConfig">
+                                <v-card-title class="text-h5 grey lighten-2">
+                                    Names Mapping Config
+                                </v-card-title>
+                                <v-list>
+                                <v-list-item 
+                                    v-for="[key,value] of Object.entries(stagedBundleConfig)" :key="`${key}-advancedbundled`"
+
+                                > 
+                                    <v-sheet  v-if="(!value || typeof value =='object')" width="100%">
+                                        <v-checkbox 
+                                            v-if="typeof value.value == 'boolean'"
+                                            v-model="stagedBundleConfig[key].value" :label="`${key}: -${stagedBundleConfig[key].arg}`"
+                                        >
+                                        </v-checkbox>
+                                        <v-text-field v-model="stagedBundleConfig[key].value" type="number" :label="`${key}: -${stagedBundleConfig[key].arg}`" v-else-if="typeof value.value == 'number'" >
+                                        </v-text-field>
+                                        <v-text-field v-model="stagedBundleConfig[key].value" v-else :label="`${key}: -${stagedBundleConfig[key].arg}`">
+                                        </v-text-field>
+                                    </v-sheet>
+                                </v-list-item>
+
+                                </v-list>
+                                <v-card-actions>
+                                    <v-btn small type="info"  x-small @click="updateConfig('bundle')" >
+                                        Update Config
+                                    </v-btn>
+                                </v-card-actions>
+                            </v-card>
+                        </v-tab-item>
+                        <v-tab-item :key="`two`">
+                            <v-card>
+                                <v-card-title class="text-h5 grey lighten-2">
+                                    Kraken2 Advanced commands
+                                </v-card-title>
+                                <v-list>
+                                <v-list-item
+                                    v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
+
+                                >
+                                    <v-checkbox 
+                                    v-if="typeof value == 'boolean'"
+                                    v-model="config[key]" :label="`--${key}?`"
+                                    >
+                                    </v-checkbox>
+                                    <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
+                                    </v-text-field>
+                                    <v-text-field v-model="config[key]" v-else :label="`--${key}`">
+                                    </v-text-field>
+                                </v-list-item>
+
+                                </v-list>
+                                <v-card-actions>
+                                <v-btn small type="info"  x-small @click="updateConfig('kraken2')">
+                                    Update Config
+                                </v-btn>
+                                </v-card-actions>
+                            </v-card>
+                        </v-tab-item>
+                    
+                    </v-tabs-items>
+                    
+                </v-dialog>
+            </v-toolbar>
+            <v-spacer></v-spacer>
+            <v-dialog
+                v-model="sheet"
+                inset
+            >
+                
+                <v-card
+                    class="text-left logDiv "
+                    style="overflow:auto"
+                >
+                    <v-toolbar  dark>
+                        <v-toolbar-title>Server Logs</v-toolbar-title>
+
+                        <v-spacer></v-spacer>
+
+                        <v-btn icon @click="sheet = false" x-large fab>
+                            <v-icon large >mdi-close-circle</v-icon>
+                        </v-btn>
+                    </v-toolbar>
+                    <v-card-text class="my-3 mb-2" style="max-height: 80vh; overflow-y:auto">
+                        
+                        <span v-for="(row,index) in logs.slice().reverse()" :key="'sheet'+index">
+                        <v-icon
+                            dark v-if="row.level == 'error'"
+                            left color="red"
+                        >
+                            mdi-alert-circle-outline
+                        </v-icon>
+                        <v-icon
+                            dark v-else
+                            left color="blue"
+                        >
+                            mdi-information
+                        </v-icon>
+                        <code>{{row.message}}</code>
+                        <br>
+                        </span>
+                    </v-card-text>
+                
+                </v-card>
+            </v-dialog>
+            <v-card
+                class="pt-5"
+            >
+                <v-list  
+                    :style="{
+                        'align-items':'left',
+                        'padding': 0,
+                        'margin': 0,
+                    }">
+                    <v-list-group
+                            no-action v-model="sample.active"
+                            v-for="sample in samples" 
+                            :key="sample.sample"
+                        > 
+                        
+                        <template v-slot:activator>
+                            <v-list-item-content>
+                                <v-list-item-title>{{ sample.sample }}</v-list-item-title>
+                            </v-list-item-content>
+                            <v-list-item-action >
+                                <div style="display:flex"> 
+                                    <v-tooltip  >
+                                        <template v-slot:activator="{ on, attrs }">
+                                            <v-icon
+                                                medium color="indigo"
+                                                v-bind="attrs" 
+                                                v-on="on"
+                                                @click="forceRestart(sample)"
+                                            >
+                                                {{ !sample.demux ? `mdi-play-circle` : `mdi-view-week` }}
+                                            </v-icon>
+                                        </template>
+                                        <span>{{ !sample.demux ? `Classify the path of fastq(s)` : `Demux a directory of fastq files` }} </span>
+                                    </v-tooltip>
+                                    <span>{{ !sample.demux ? `Classify` : `Demux` }} </span>
+                                </div>
+                            </v-list-item-action>
+                            <v-list-item-action>
+                                <v-btn fab x-small @click="selectedSample = queueList[sample.sample]; dialogJobs = true"  
+                                    >
+                                    <v-icon>mdi-comment</v-icon>
+                                </v-btn>
+                            </v-list-item-action>
+                            <v-spacer></v-spacer>
+                            <v-list-item-action>
+                                <v-icon
+                                    medium
+                                    class="" color=""
+                                    @click="editItem(sample);" 
+                                >
+                                    mdi-pencil 
+                                </v-icon>
+                                <v-progress-circular
+                                    indeterminate v-if="current && typeof current == 'object' && current[sample.sample]"
+                                    color="primary" medium size="22"
+                                ></v-progress-circular>
+                                <v-icon
+                                    medium  v-else-if="sample.format !=='run'"  :key="`${sample.sample}-runsamplemajorbutton`" :color="anyCompleted(sample.sample) ? 'green' : 'orange'"
+                                >
+                                    {{ anyCompleted(sample.sample) ? 'mdi-check-circle' : 'mdi-exclamation' }}
+                                </v-icon>
+                            </v-list-item-action>
+                            <v-list-item-action>
+                                <v-tooltip  v-if="1==1|| current && typeof current == 'object'  && current[sample.sample] " left>
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <v-icon
+                                            medium color="indigo"
+                                            v-bind="attrs"
+                                            v-on="on"
+                                            @click="cancelJob(null, sample.sample)"
+                                        >
+                                        mdi-cancel
+                                        </v-icon>
+                                    </template>
+                                    <span>Cancel Sample Job(s)</span>
+                                </v-tooltip>
+                                <v-icon
+                                    medium class="" color="orange"
+                                    @click="deleteItem(sample)"
+                                >
+                                    mdi-delete
+                                </v-icon>
+                            </v-list-item-action>
+                        </template>
+                        
+                        <v-list-item 
+                            :style="{
+                                'text-align':'left',
+                                'overflow-wrap': 'break-word'
+                            }" class="mx-10"
+                            v-for="key4 in Object.keys(sample).filter((f)=>{
+                                return f != 'sample' && f != 'active'
+                            })"
+                            :key="`${key4}-${sample}`"
+                        >
+                            <v-list-item-content 
+                                :style="{
+                                    'text-align':'left',
+                                    'overflow-wrap': 'break-word'
+                                }" class="mx-0">
+                                <v-list-item-title class="font-weight-bold">{{ key4 }}</v-list-item-title>
+                                <v-list-item-subtitle class=""  v-if="sample[key4] == '' || !sample[key4]">(Empty)</v-list-item-subtitle>
+                                <v-switch v-if="adjustable[key4]['type'] == 'boolean'" v-model="sample[key4]"> </v-switch>
+                                <v-select v-else-if="adjustable[key4]['type'] == 'list'"
+                                    v-model="sample[key4]" solo
+                                    :items="adjustable[key4].values"
+                                    label="Select"
+                                    single-line
+                                ></v-select>
+                                <v-edit-dialog v-else-if="adjustable[key4].type == 'string'"
+                                    :return-value.sync="sample[key4]"
+                                    large
+                                    :rules="[containsPlatform]"
+                                    persistent
+                                    @save="save"
+                                    @cancel="cancel"
+                                    @open="open"
+                                    @close="close"
+                                >
+                                
+                                <div style="display: flex;  ">
+                                    <code class="overflow-auto" style="">{{ sample[key4] }}</code>
+                                    <v-spacer class="mx-10"></v-spacer>
+                                    
+                                </div>
+                                <template v-slot:input>
+                                    <div class="mt-4 text-h6">
+                                    Update Value
+                                    </div>
+                                    <v-text-field
+                                        v-model="sample[key4]"
+                                        label="Edit"
+                                        single-line
+                                        counter
+                                        autofocus
+                                    ></v-text-field>
+                                </template>
+                                </v-edit-dialog>
+                        </v-list-item-content>
+                        </v-list-item>
+                    </v-list-group>
+                </v-list>
+                
+            </v-card >
+            <!-- <v-data-table
                 :items="samples"
                 :headers="headers"
                 :calculate-widths=true
-                max-height="500" 
+                
                 fixed-header
                 item-key="sample"
                 class="elevation-1 mx-5 px-6 "					        
@@ -36,7 +553,7 @@
                 <template v-slot:top >
                     <v-toolbar  extended 
                         extension-height="8" class="pt-2" >
-                        <template v-slot:extension height="30px" class="">
+                        <template v-slot:extension class="">
                             
                             <v-progress-linear
                                 :active="anyRunning "
@@ -127,303 +644,12 @@
                             Resume Jobs Waiting
                         </v-tooltip>
                         <v-spacer></v-spacer>
-                        <v-dialog
-                            v-model="dialog"
-                            max-width="500px"
-                            >
-                            <template v-slot:activator="{ on, attrs }">
                         
-                                <v-btn fab
-                                    color="primary"
-                                    dark  x-small
-                                    class="mx-2" v-on="on"
-                                    v-bind="attrs"
-                                    
-                                    >
-                                    <v-tooltip  >
-                                        <template v-slot:activator="{ on }">
-                                            <v-icon  v-on="on">mdi-plus</v-icon>
-                                        </template>
-                                        Add Entry To Samplesheet
-                                    </v-tooltip>
-                                </v-btn>
-                                    
-                            </template>
-                            <v-card>
-                                <v-card-title>
-                                <span class="text-h5">{{ formTitle }}</span>
-                                </v-card-title>
-
-                                <v-card-text>
-                                <v-container>
-                                    <v-row>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-text-field
-                                        v-model="editedItem.sample"
-                                        label="Sample Name"
-                                        ></v-text-field>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-text-field
-                                        v-model="editedItem.path_1"
-                                        label="Path 1"
-                                        ></v-text-field>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-text-field
-                                        v-model="editedItem.path_2"
-                                        label="Path 2"
-                                        ></v-text-field>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-text-field
-                                        v-model="editedItem.database"
-                                        label="Database"
-                                        ></v-text-field>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-select
-                                            v-model="editedItem.format"
-                                            :items="['file', 'directory']"
-                                            label="Type/Format"
-                                        ></v-select>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-select
-                                            v-model="editedItem.compressed"
-                                            :items="['TRUE', 'FALSE']"
-                                            label="Compressed"
-                                        ></v-select>
-                                    </v-col>
-                                    <v-col
-                                        cols="12"
-                                        sm="6"
-                                        md="4"
-                                    >
-                                        <v-select
-                                            v-model="editedItem.platform"
-                                            :items="['oxford', 'illumina']"
-                                            label="Platform"
-                                        ></v-select>
-                                    </v-col>
-                                    </v-row>
-                                </v-container>
-                                </v-card-text>
-
-                                <v-card-actions>
-                                <v-spacer></v-spacer>
-                                <v-btn
-                                    color="blue darken-1"
-                                    text  x-small
-                                    @click="closeItem"
-                                >
-                                    Cancel
-                                </v-btn>
-                                <v-btn
-                                    color="blue darken-1"  x-small
-                                    text
-                                    @click="saveItem"
-                                >
-                                    Save
-                                </v-btn>
-                                </v-card-actions>
-                            </v-card>
-                            
-                        </v-dialog>
-                        <v-dialog v-model="dialogDelete" max-width="500px">
-                            <v-card>
-                                <v-card-title class="text-h5">Are you sure you want to delete this item?</v-card-title>
-                                <v-card-actions>
-                                <v-spacer></v-spacer>
-                                <v-btn  x-small color="blue darken-1" text @click="closeDelete">Cancel</v-btn>
-                                <v-btn  x-small color="blue darken-1" text @click="deleteItemConfirm">OK</v-btn>
-                                <v-spacer></v-spacer>
-                                </v-card-actions>
-                            </v-card>
-                        </v-dialog>
-                        <v-dialog
-                            v-model="dialogAdvanced"
-                        >
-                            <template v-slot:activator="{ on, attrs }">
-                                <v-btn
-                                    color="red lighten-2"
-                                    dark fab x-small
-                                    class="mx-4"
-                                    v-bind="attrs"
-                                    v-on="on"
-                                >
-                                    <v-tooltip  left>
-                                        <template v-slot:activator="{ on }">
-                                            <v-icon v-on="on">mdi-cog</v-icon>
-                                        </template>
-                                        Advanced Configurations
-                                    </v-tooltip>
-                                </v-btn>
-                            </template>
-                            <v-toolbar extended
-                                dark
-                            >
-                                <template v-slot:extension>
-                                    
-                                    <v-tabs v-model="tab" align-with-title
-                                        color="basil" 
-                                    >
-                                        <v-tabs-slider color="purple"></v-tabs-slider>          
-                                        <v-tab  v-for="(tabItem, key) in tabs"  :key="`${key}-tab`">
-                                            {{tabItem}}
-                                        </v-tab>
-                                    </v-tabs>
-                                </template>
-                            </v-toolbar>
-                            <v-tabs-items height="100%" width="100%"
-                                v-model="tab" 
-                            >
-                                <v-tab-item :key="`one`" >
-                                    <v-card v-if="stagedBundleConfig">
-                                        <v-card-title class="text-h5 grey lighten-2">
-                                            Names Mapping Config
-                                        </v-card-title>
-                                        <v-list>
-                                        <v-list-item 
-                                            v-for="[key,value] of Object.entries(stagedBundleConfig)" :key="`${key}-advancedbundled`"
-
-                                        > 
-                                            <v-sheet  v-if="(!value || typeof value =='object')" width="100%">
-                                                <v-checkbox 
-                                                    v-if="typeof value.value == 'boolean'"
-                                                    v-model="stagedBundleConfig[key].value" :label="`${key}: -${stagedBundleConfig[key].arg}`"
-                                                >
-                                                </v-checkbox>
-                                                <v-text-field v-model="stagedBundleConfig[key].value" type="number" :label="`${key}: -${stagedBundleConfig[key].arg}`" v-else-if="typeof value.value == 'number'" >
-                                                </v-text-field>
-                                                <v-text-field v-model="stagedBundleConfig[key].value" v-else :label="`${key}: -${stagedBundleConfig[key].arg}`">
-                                                </v-text-field>
-                                            </v-sheet>
-                                        </v-list-item>
-
-                                        </v-list>
-                                        <v-card-actions>
-                                            <v-btn small type="info"  x-small @click="updateConfig('bundle')" >
-                                                Update Config
-                                            </v-btn>
-                                        </v-card-actions>
-                                    </v-card>
-                                </v-tab-item>
-                                <v-tab-item :key="`two`">
-                                    <v-card>
-                                        <v-card-title class="text-h5 grey lighten-2">
-                                            Kraken2 Advanced commands
-                                        </v-card-title>
-                                        <v-list>
-                                        <v-list-item
-                                            v-for="[key,value] of Object.entries(config)" :key="`${key}-advancedkraken2`"
-
-                                        >
-                                            <v-checkbox 
-                                            v-if="typeof value == 'boolean'"
-                                            v-model="config[key]" :label="`--${key}?`"
-                                            >
-                                            </v-checkbox>
-                                            <v-text-field v-model="config[key]" type="number" :label="`--${key}`" v-else-if="typeof value == 'number'" >
-                                            </v-text-field>
-                                            <v-text-field v-model="config[key]" v-else :label="`--${key}`">
-                                            </v-text-field>
-                                        </v-list-item>
-
-                                        </v-list>
-                                        <v-card-actions>
-                                        <v-btn small type="info"  x-small @click="updateConfig('kraken2')">
-                                            Update Config
-                                        </v-btn>
-                                        </v-card-actions>
-                                    </v-card>
-                                </v-tab-item>
-                            
-                            </v-tabs-items>
-                            
-                        </v-dialog>
                         <v-spacer></v-spacer>
-                        <v-btn
-                            color="black lighten-2"
-                            dark  
-
-                            @click="sheet = true"
-                        >
-                            Logs
-                            <v-tooltip >
-                                <template v-slot:activator="{ on }">
-                                    <v-icon class="ml-2" small v-on="on">mdi-comment</v-icon>
-                                </template>
-                                View Logging
-                            </v-tooltip>
-                            
-                        </v-btn>
+                        
                 </v-toolbar>
             
-                <v-dialog
-                    v-model="sheet"
-                    inset
-                >
-                    
-                    <v-card
-                        class="text-left logDiv mx-0"
-                        style="overflow:auto"
-                    >
-                        <v-toolbar  dark>
-                            <v-toolbar-title>Server Logs</v-toolbar-title>
-
-                            <v-spacer></v-spacer>
-
-                            <v-btn icon @click="sheet = false" x-large fab>
-                                <v-icon large >mdi-close-circle</v-icon>
-                            </v-btn>
-                        </v-toolbar>
-                        <v-card-text class="my-3 mb-2" style="max-height: 80vh; overflow-y:auto">
-                            
-                            <span v-for="(row,index) in logs.slice().reverse()" :key="'sheet'+index">
-                            <v-icon
-                                dark v-if="row.level == 'error'"
-                                left color="red"
-                            >
-                                mdi-alert-circle-outline
-                            </v-icon>
-                            <v-icon
-                                dark v-else
-                                left color="blue"
-                            >
-                                mdi-information
-                            </v-icon>
-                            <code>{{row.message}}</code>
-                            <br>
-                            </span>
-                        </v-card-text>
-                    
-                    </v-card>
-                </v-dialog>
+                
 
                 </template>
 
@@ -654,7 +880,7 @@
                         
                 </template>
                 
-            </v-data-table>
+            </v-data-table> -->
         </v-col>
         <v-dialog
             style="overflow-x:auto; width:100%" absolute v-model="dialogQueue" v-if="dialogQueue"
@@ -1009,6 +1235,7 @@
       dialog (val) {
         val || this.closeItem()
       },
+
       pausedServer(val){
         if (val != this.paused){
             console.log("server sent paused status change")
@@ -1099,8 +1326,45 @@
           dialogQueue: false,
           dialogLogs: false,
           attributes: [
-            'format', 'platform', 'database', 'sample', 'demux', 'path_1', 'path_2', 'filepath'
+            'format', 
+            'platform', 
+            'database', 
+            'sample', 
+            'demux', 
+            'path_1', 
+            'path_2', 
           ],
+          adjustable: {
+            format: {
+                type: 'list', 
+                values: ['file', 'directory']
+            }, 
+            path_1: {
+                type: 'string',
+            }, 
+            path_2: {
+                type: 'string'
+            }, 
+            demux: {
+                type: 'boolean'
+            },
+            compressed: {
+                type: 'boolean'
+            },
+            pattern: {
+                type: 'string'
+            }, 
+            kits: {
+                type: 'string'
+            }, 
+            database: {
+                type: 'string'
+            },
+            platform: {
+                type: 'list',
+                values: ['oxford', 'illumina']
+            }
+          },
           tabs: ['Script Config for Name mapping', 'Kraken2 Advanced Config'],
           advanced:true,
           sheet:false,
@@ -1156,32 +1420,40 @@
             {
                 text: "Demultiplex",
                 value: 'demux',
+                type: 'boolean',
                 sortable: false,
             },
             {
                 text: "Sample Name",
                 value: "sample",
+                type: 'string',
                 sortable: true,
             },
             {
                 text: "Path 1",
                 value: "path_1",
+                type: 'string',
                 sortable: true,
             },
             {
                 text: "Path 2",
                 value: "path_2",
+                type: 'string',
                 align:"center"  ,              
                 sortable: true,
             },
             {
                 text: "Format",
                 value: "format",
+                type: 'list',
+                values: ['directory', 'file'],
                 sortable: true,
             },
             {
                 text: "Platform",
                 value: "platform",
+                type: 'list',
+                value: ['oxford', 'illumina'],
                 align:"center"  ,              
                 sortable: true,
             },
@@ -1189,21 +1461,25 @@
                 text: "Kraken2 Database",
                 value: "database",
                 sortable: true,
+                type: 'string',
                 cellClass: "text-wrap overflow-auto ",
             },
             {
                 text: "Compressed (gz)",
                 value: "compressed",
+                type: 'boolean',
                 sortable: false,
             },
             {
                 text: "Pattern to match barcodes",
                 value: "pattern",
+                type: 'string',
                 sortable: false,
             },
             {
                 text: "Barcode Kits",
                 value: "kits",
+                type: 'string',
                 sortable: false,
             },
             
@@ -1213,6 +1489,7 @@
       }
     },
     async mounted() {
+        
         this.config['memory-mapping']=true
         this.config['gzip-compressed'] = false
         this.config['bzip2-compressed'] = false
@@ -1231,6 +1508,7 @@
         updateConfig(type){
             this.$emit("updateConfig", (type == 'bundle' ? this.stagedBundleConfig : this.config ), type)
         },
+        
         anyCompleted(sample){
             try{ 
                 if (this.queueList[sample]){
@@ -1291,14 +1569,16 @@
         },
         deleteItem (item) {
             this.editedIndex = this.dataSamples.indexOf(item)
-            console.log(this.editedIndex,"<<<<<<")
             this.editedItem = Object.assign({}, item)
             this.dialogDelete = true 
         },
         deleteItemConfirm () {
-            // this.dataSamples.splice(this.editedIndex, 1)
+            let name = this.dataSamples[this.editedIndex]
             this.dataSamples.splice(this.editedIndex,1)
             this.closeDelete()
+            if (name && name.sample){
+                this.$emit("deleteRow", name.sample)
+            }
         },
         editItem (item) {
             this.editedIndex = _.cloneDeep(this.dataSamples.indexOf(item))
@@ -1316,6 +1596,7 @@
             this.dialogDelete = false
             this.$nextTick(() => {
             this.editedItem = Object.assign({}, this.defaultItem)
+            
             this.editedIndex = -1
             })
         },
@@ -1348,8 +1629,8 @@ code {
   overflow: auto;
 }
 .table{
-	max-width: calc(100% - 48px);
-	max-height: calc(100vh - 170px);
+	/* max-width: calc(100% - 48px); */
+	/* max-height: calc(100vh - 170px); */
 }
 .v-data-table {
 	overflow: auto;
