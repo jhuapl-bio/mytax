@@ -62,9 +62,9 @@
         </v-btn>
         
       </v-app-bar> 
-      <div class="pt-6 "> 
+      <div class="pt-6 mx-3"> 
         
-        <v-navigation-drawer permanent class="pt-6"
+        <v-navigation-drawer permanent class="pt-6 mx-3"
           app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
           
         >   
