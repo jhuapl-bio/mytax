@@ -1,0 +1,40 @@
+name: Deploy Mytax Website
+
+# Trigger when there is a push to the master branch
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+
+  deploy:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [14.x]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Use Node.js ${{matrix.node-version}}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{matrix.node-version}}
+
+    - uses: actions/cache@v2
+      with:
+        path: "**/node_modules"
+        key: ${{ runner.os }}-node_modules-${{ hashFiles('**/package-lock.json') }}
+
+    - run: npm install
+
+    - run: npm run build
+
+    - name: Deploy to Github pages
+      uses: JamesIves/github-pages-deploy-action@4.1.1
+      with:
+        branch: gh-pages
+        folder: dist
