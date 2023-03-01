@@ -267,8 +267,8 @@
               
         this.boxWidth = ( (width - this.margin.left - this.margin.right) / unique_taxids.length )
         let zoom = d3.zoom()
-				.scaleExtent([1, 3])
-        .translateExtent([[0-this.margin.left, 0-this.margin.top - this.boxHeight/2],[this.width, this.height]])
+				.scaleExtent([0.8, 3])
+        .translateExtent([[0-this.margin.left, 0-this.margin.top - this.boxHeight/2],[this.width, this.height+ this.margin.top]])
 				.on("zoom", zoomed);
         function zoomed(e){
           return svg.attr('transform', e.transform);
@@ -381,7 +381,7 @@
           
           function getSizeX(d) {
             var bbox = this.getBBox(),
-              cbbox = $this.margin.left + ($this.margin.left/2),
+              cbbox = $this.margin.left + ($this.margin.left),
               scale = Math.min(cbbox/bbox.width , $this.boxHeight);
             sizes[d] = scale
             return d
@@ -389,7 +389,7 @@
           function getSizeY(d) {
             
             var bbox = this.getBBox(),
-              cbbox = $this.margin.bottom - $this.margin.top,
+              cbbox = $this.margin.bottom - $this.margin.top/2,
               scale = Math.min(cbbox/bbox.height, $this.height, $this.boxWidth/bbox.width);
             sizesY[d] = scale
             return d

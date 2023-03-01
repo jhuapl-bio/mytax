@@ -414,7 +414,7 @@
                         
                         <template v-slot:activator>
                             <v-list-item-content>
-                                <v-list-item-title>{{ sample.sample }}</v-list-item-title>
+                                <v-list-item-title style="text-align:left">{{ sample.sample }}</v-list-item-title>
                             </v-list-item-content>
                             <v-list-item-action >
                                 <div style="display:flex"> 
@@ -423,7 +423,7 @@
                                             <v-icon
                                                 medium color="indigo"
                                                 v-bind="attrs" 
-                                                v-on="on"
+                                                v-on="on" class="mr-2"
                                                 @click="forceRestart(sample)"
                                             >
                                                 {{ !sample.demux ? `mdi-play-circle` : `mdi-view-week` }}
@@ -434,8 +434,8 @@
                                     <span>{{ !sample.demux ? `Classify` : `Demux` }} </span>
                                 </div>
                             </v-list-item-action>
-                            <v-list-item-action>
-                                <v-btn fab x-small @click="selectedSample = queueList[sample.sample]; dialogJobs = true"  
+                            <v-list-item-action  class="ml-3">
+                                <v-btn  fab x-small @click="selectedSample = queueList[sample.sample]; dialogJobs = true"  
                                     >
                                     <v-icon>mdi-comment</v-icon>
                                 </v-btn>
