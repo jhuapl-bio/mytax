@@ -2,6 +2,7 @@ import glob from "glob-all"
 import {logger} from './logger.js'
 import PQueue from 'p-queue';
 
+import  { WebSocketServer } from 'ws';
 
 import path, { resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -24,6 +25,7 @@ export  class Orchestrator {
         this.watcherBC = {} 
         this.queueRecords = {}
         const $this = this
+        // this.portServer = 7688
         this.bundleconfigDefaults= [
             {
                 name: "NCBI names.dmp file", 
@@ -44,7 +46,7 @@ export  class Orchestrator {
         this.bundleconfig = this.bundleconfigDefaults[1]
         this.runBundle = true
         this.queueLengthInterval = true
-
+        // this.create_Report_WS(this.portServer)
         
         this.samples = []
         this.watchdir = null
@@ -83,7 +85,7 @@ export  class Orchestrator {
         logger.on("data", (stream)=>{ 
             let output = stream   
             try{   
-                this.ws.send(JSON.stringify({ type: "logs", "data" : output }))
+                this.ws.emit("logs", { data : output })
             } catch (err){ 
                 console.error("no websocket connection %o", err)
             }
@@ -92,10 +94,20 @@ export  class Orchestrator {
 
 
     } 
+    
     cleanup(){
+        // try{
+        //     if (this.reportWs){
+        //         this.reportWs.close() 
+        //     }
+        // } catch (err){
+        //     logger.error(err)
+        // }
+        const $this = this
         try{
             for (let key  of Object.keys(this.samples)){
-                this.samples[key].cleanup()
+                logger.info(`${key}, cleaning up sample`)
+                $this.samples[key].cleanup()
             }
         } catch (err){
             logger.error(`${err} error in config set ${type}`)
@@ -116,7 +128,7 @@ export  class Orchestrator {
             logger.error(`${err}, error in setting sample`)
         }
         try{
-            let sample = new Sample(s, this.queue, this.ws)
+            let sample = new Sample(s, this.queue, this.ws, this.reportWs)
             sample.gpu = this.gpu
             sample.overwrite = overwrite
             sample.config = this.config
@@ -252,7 +264,6 @@ export  class Orchestrator {
         
         return new Promise((resolve, reject)=>{
             try{
-                // $this.ws.send(JSON.stringify({ type: "current", current : sample.sample, running: true }))
                 let barcoder = new Barcoder(sample, filepath)
                 resolve(barcoder)
             } catch (err){
@@ -285,7 +296,7 @@ export  class Orchestrator {
                     if ($this.seenfiles.fastqs.indexOf(directory) == -1){
                         $this.setupSample(entry, false)
                         $this.seenfiles.fastqs.push(directory)
-                        $this.ws.send(JSON.stringify({ type: "add", "data" :  entry })) 
+                        $this.ws.emit( "add", { data :  entry })
                     }
                     
                 })
@@ -328,7 +339,7 @@ export  class Orchestrator {
         }
         this.queueSizeInterval = setInterval(()=>{
             if ($this.queueLengthInterval){
-                $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.size + 1})) 
+                $this.ws.emit( "queueLength",   { data: $this.queue.size + 1})
             } else {
             }
         },1000)
@@ -341,7 +352,6 @@ export  class Orchestrator {
 
         $this.queue.on("active", (f) => {
             try{
-                // this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.size })) 
                 $this.queueLengthInterval = true
             } catch (err){
                 logger.error(`${err} error in sending status of add in queue`)
@@ -353,8 +363,7 @@ export  class Orchestrator {
         $this.queue.on("empty", () => {
             logger.info("Ended queue")
             try{
-                this.ws.send(JSON.stringify({ type: "anyRunning",  status: false}))
-                // this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.size })) 
+                this.ws.emit( "anyRunning", { status: false})
             } catch (err){
                 logger.error(`${err} error in sending status of running in queue`) 
             }
@@ -363,8 +372,8 @@ export  class Orchestrator {
             logger.info("Idle queue, all jobs completed")
             $this.queueLengthInterval = false
             try{
-                this.ws.send(JSON.stringify({ type: "anyRunning",  status: false}))
-                this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.size })) 
+                this.ws.emit("anyRunning",  {status: false})
+                this.ws.emit("queueLength",  {data: $this.queue.size })
             } catch (err){
                 logger.error(`${err} error in sending status of running in queue`)
             }
@@ -372,7 +381,6 @@ export  class Orchestrator {
         
         $this.queue.on('completed', function ( result) {
             logger.info(`task completed ${result}`)
-            // $this.ws.send(JSON.stringify({ type: "queueLength",  data: $this.queue.size })) 
         })
        
      
@@ -386,21 +394,20 @@ export  class Orchestrator {
             }
             this.queue.start()
               
-            this.ws.send(JSON.stringify({ type: "paused",  message: false }))
+            this.ws.emit("paused",  {message: false })
         } catch (err){
             logger.error(`${err} error in resuming the job(s)`)
-            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+            this.ws.emit( "error",  {message: err})
         }
     }
     async rerun(index, sample){
         try{
             if (this.samples[sample].demux){
-                
                 this.samples[sample].overwrite = true
             }
             const $this  = this
             this.queue.start()
-            this.ws.send(JSON.stringify({ type: "paused",  message: false }))
+            this.ws.emit( "paused",  {message: false })
             this.samples[sample].resetWatchers() 
             this.samples[sample].paused=false
             if (this.samples[sample] && this.samples[sample].queueRecords){
@@ -409,17 +416,17 @@ export  class Orchestrator {
                 job.overwrite = true 
                 job.recombine = true
                 job.paused = false 
+                this.samples[sample].defineQueueJob(job)
+                // this.samples[sample].setJob(job.filepath, job.type, true)
                 
-                this.samples[sample].setJob(job.filepath, job.type, true)
-                
-                this.ws.send(JSON.stringify({ type: "message",  message: `Rerunning... ${sample}`}))
+                this.ws.emit("message",  {message: `Rerunning... ${sample}`})
             } else {
-                this.ws.send(JSON.stringify({ type: "error",  message: `Rerunning ... failed`}))
+                this.ws.emit( "error",  {message: `Rerunning ... failed`})
             }
             
         } catch (err){
             logger.error(`${err} error in rerunning the job(s)`)
-            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+            this.ws.emit( "error", { message: err})
             
         }
     }
@@ -427,10 +434,10 @@ export  class Orchestrator {
         try{
             this.logger.info(`Pausing the queue for all running samples`)
             this.queue.pause()
-            this.ws.send(JSON.stringify({ type: "paused",  message: true }))
+            this.ws.emit( "paused", { message: true })
         } catch (err){
             logger.error(`${err} error in pausing the job(s)`)
-            this.ws.send(JSON.stringify({ type: "error",  message: err})) 
+            this.ws.emit("error",  {message: err})
         }
     }
     async removeReport(){
@@ -686,8 +693,8 @@ export  class Orchestrator {
             }
             await this.queue.clear()
             
-            this.ws.send(JSON.stringify({ type: "queueLength", data: 0 }))
-            this.ws.send(JSON.stringify({ type: "flushed"}))
+            this.ws.emit( "queueLength", { data: 0 })
+            this.ws.emit( "flushed" )
             
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)
@@ -701,7 +708,7 @@ export  class Orchestrator {
             try{
                 barcoder.start().then((f)=>{
                     console.log(`${f} code exited for run of barcoder`)
-                    $this.ws.send(JSON.stringify({ type: "recentQueue", data: barcoder }))
+                    $this.ws.emit("recentQueue", { data: barcoder })
                 }).catch((err)=>{
                     logger.error(err)
                 })
@@ -714,7 +721,7 @@ export  class Orchestrator {
                 let barcoder = new Classifier(sample, filepath)
                 classifier.start().then((f)=>{
                     console.log(`${f} code exited for run of barcoder`)
-                    $this.ws.send(JSON.stringify({ type: "recentQueue", data: classifier }))
+                    $this.ws.emit( "recentQueue", {data: classifier })
                 }).catch((err)=>{
                     logger.error(err)
                 })
@@ -835,7 +842,7 @@ export  class Orchestrator {
             });
             classify.on('exit', (data) => {
                 logger.info(`finished classification for: ${filepath}`);
-                $this.ws.send(JSON.stringify({ type: "current", current : samplename, running: false }))
+                $this.ws.emit("current", {current : samplename, running: false })
                 let reportpath = path.join(outputdir, `full.report`)
                 $this.sendFullReportSample(reportpath, samplename)
                 

@@ -1,16 +1,15 @@
 
-import path, { resolve } from 'path'
+import path from 'path'
 import  { spawn } from 'child_process';
 import { removeExtension, globFiles } from './controllers.mjs';
 import {logger} from './logger.js'
-import chokidar from 'chokidar'
-import fs from "file-system"
 
 export  class Barcoder { 
-    constructor(sample, filepath){ 
+    constructor(sample){ 
         this.name = sample.sample
-        this.dirpath = sample.path_1 ? sample.path_1 : sample.path_2
-        this.filepath = filepath
+        this.filepath  = sample.path_1 ? sample.path_1 : sample.path_2
+        this.dirpath = path.dirname(this.filepath)
+        this.outputdir = path.join(this.dirpath, 'demultiplexed')
         this.sample = sample
         this.watcher = null
         this.run = sample.run
@@ -74,7 +73,6 @@ export  class Barcoder {
                 this.status.error=`Canceled job`
                 this.status.success = -1
                 logger.info(`Process of demux is ended in a midrun, exiting and continuing the queue if it exists currently......`)
-                // this.ws.send(JSON.stringify({ type: "status", samplename: this.name, sample: this.sample,  index: this.index, 'status' :  this.status })) 
                 return 
             } catch (err){
                 logger.error(`${err} failure to exit process appropriately`)
@@ -92,25 +90,22 @@ export  class Barcoder {
                 if (rundemux){  
                     var  ls = spawn('bash', ['-c', command ]);
                     $this.status.running = true
-                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                    $this.ws.emit( "status",  {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     ls.stdout.on('data', (data) => { 
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,14)
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         logger.info(`stdout: ${data}`);
                     });
  
                     ls.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,14)
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: this.sample, index: $this.index, 'status' :  $this.status })) 
                         logger.error(`stderr: ${data}`); 
                     });
                     ls.on('error', function(error) {
                         logger.error(`Error happened ${error}`);
                         $this.status.error = err
                         $this.status.running = false
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         resolve(error) 
                     })  
                     ls.on('exit', (code) => {
@@ -119,7 +114,7 @@ export  class Barcoder {
                         $this.status.historical = false
                         $this.status.running = false
                         $this.status.error  = code !== 0 ? 'Error in job' : null
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        $this.ws.emit( "status", {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                         resolve( code )
                     }); 
                     $this.process = ls
@@ -128,7 +123,7 @@ export  class Barcoder {
                     $this.status.success = 0
                     $this.status.historical = true
                     logger.info(`${$this.name} already seen file, overwrite disabled`)
-                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                    $this.ws.emit( "status", {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     resolve(0)
                 }
             }).catch((err)=>{

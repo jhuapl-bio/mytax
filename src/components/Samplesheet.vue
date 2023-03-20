@@ -1269,8 +1269,11 @@
           async function parseFile(){
             $this.stagedData = await d3.csvParse(reader.result)
             $this.stagedData = $this.stagedData.filter((f)=>{
+                f.demux = f.demux && f.demux != 'false' && f.demux != 'FALSE' && f.demux != 'False' ? true : false
+                f.compressed = f.compressed && f.compressed != 'false' && f.compressed != 'FALSE' && f.compressed != 'False' ? true : false
                 return f.sample && f.sample != ''
             })
+            console.log($this.stagedData)
           }
       },
       dialogDelete (val) {
@@ -1513,7 +1516,7 @@
             try{ 
                 if (this.queueList[sample]){
                     let any = this.queueList[sample].some((f)=>{
-                        return f.status.success == 0
+                        return f.status.success == 0 
                     })
                     return  any
                 
@@ -1533,7 +1536,7 @@
             this.$emit("barcode", item)
         },
         flush(){
-            this.$emit("sendMessage", JSON.stringify({type: "flush" }));
+            this.$emit("sendMessage", { type: "flush" });
              
         },
         cancelJob(index, sample){

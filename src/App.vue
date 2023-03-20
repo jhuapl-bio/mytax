@@ -281,6 +281,7 @@ import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
 import _ from 'lodash'
 import path from "path"
+import { io } from "socket.io-client";
 
 
 export default {
@@ -333,6 +334,7 @@ export default {
             manuals: {},
             recentDataFileadded: null,
             socket: {},
+            socketReport: {},
             navigation: {
                 shown: true,
                 width: 550,
@@ -411,11 +413,11 @@ export default {
     watch: {
       gpu(val){
         try{
-          this.sendMessage(JSON.stringify({
+          this.sendMessage({
                 type: "gpu", 
-                gpu:  val
+                gpu:  val,
             }
-          ));
+          );
         } catch (err){
           console.error(err)
         }
@@ -451,7 +453,7 @@ export default {
       },
       
       paused(newValue){
-        this.sendMessage(JSON.stringify({type: "pause", pause: newValue }));
+        this.sendMessage({type: "pause", pause: newValue  });
       },
       minDepth(){
         this.filter()
@@ -489,14 +491,7 @@ export default {
         } catch (err){
           console.error(err,"<<<")
         }
-        let mappings = {}
-        const $this = this
-        let value = "Acinetobacter johnsonii;Acinetobacter genomospecies 7 (synonym), Acinetobacter genomosp. 7 (not a cat) (synonym)"
-        let val = $this.extractValue(value)
-        // this.matchPaired = process.env.VUE_APP_paired_string
-        // this.matchSingle = process.env.VUE_APP_single_string
-        
-        
+        // this.connectReport()
         this.connect()
       
 
@@ -587,9 +582,9 @@ export default {
         pausedChange(val){
           this.paused = val
         },
-        async connect(){
+        async connectReport(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
-          const port = ':3000';
+          const port = ':7688';
           // this.ext = process.env.VUE_APP_ext
           // this.compressed = process.env.VUE_APP_compressed
           const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port + '/ws'
@@ -597,102 +592,199 @@ export default {
           // Define socket and attach it to our data object
           
           const $this  = this
-          $this.socket = await new WebSocket(echoSocketUrl);
-          $this.socket.onopen = (basepath) => {
-              console.log('Websocket connected.');
-              $this.connectedStatus = 'Connected';
-              
-
-              $this.sendMessage(JSON.stringify({type: "message", "message" : "Hello, server."}));
-              $this.sendMessage(JSON.stringify({type: "gpu", gpu: $this.gpu }));
-              $this.sendMessage(JSON.stringify({type: "start", samplesheet: $this.samplesheetdata, overwrite: false }));
+          // this.socketReport = await new WebSocket(echoSocketUrl);
+          this.socketReport.onopen = (basepath) => {
+              console.log('Websocket connected for reports.');
           }
-
-          this.socket.onmessage = (event) => {
-            // We can parse the data we know to be JSON, and then check it for data attributes
-            let parsedMessage = JSON.parse(event.data);
-            // If those data attributes exist, we can then console log or show data to the user on their web page.
-            if (parsedMessage.type == 'data'){
-              ( async ()=>{
-                await this.importData(parsedMessage.data, null, parsedMessage.samplename)
-                if (!this.topLevelSampleNames[parsedMessage.topLevelSampleNames]){
-                  this.topLevelSampleNames[parsedMessage.topLevelSampleNames] = []
-                }
-                let index = this.topLevelSampleNames[parsedMessage.topLevelSampleNames].indexOf(parsedMessage.samplename)
-                if (index < 0 ){
-                  this.topLevelSampleNames[parsedMessage.topLevelSampleNames].push(parsedMessage.samplename)
-                }
-              })().catch((Err)=>{
-                console.error(Err)
-              })
-                
-            } else if (parsedMessage.type == 'add'){
-              this.samplesheetdata.push(parsedMessage.data)
-            } else if (parsedMessage.type == 'playback'){
-              this.playbackdata = parsedMessage.message;
-            } else if (parsedMessage.type == 'basepathserver'){
-              this.basepathserver = parsedMessage.data;
-            } else if (parsedMessage.type == 'getbundleconfig'){
-              this.bundleconfig = parsedMessage.data;
-            } else if (parsedMessage.type == 'queueLength'){
-              this.queueLength = parsedMessage.data
-            } else if (parsedMessage.type == 'logs'){
-              this.logs.push(parsedMessage.data)
-              const lasts = this.logs.slice(-100);
-              this.logs = lasts 
-
-            } else if (parsedMessage.type == 'config'){
-              this.config = parsedMessage.message
-            } else if (parsedMessage.type == 'flushed'){
-              for(let key of Object.keys(this.current)){
-                this.current[key]= null
-              }
-            } else if (parsedMessage.type == 'reads'){
-              this.reads = parsedMessage.message
-            } else if (parsedMessage.type == 'error'){
-            } else if (parsedMessage.type == 'message'){
-            } else if (parsedMessage.type == 'paused'){
-              this.pausedServer=parsedMessage.message
-            } else if (parsedMessage.type == 'anyRunning'){
-              this.anyRunning = parsedMessage.status
-            } else if (parsedMessage.type == 'recentQueue'){
-              if (!this.status[parsedMessage.data.name]){
-                this.status[parsedMessage.data.name] = []
-              } 
-              
-              if (parsedMessage.data.index >=0){
-                this.$set(this.status[parsedMessage.data.name], parsedMessage.data.index, parsedMessage.data)
-              } else {
-                this.$set(this.status[parsedMessage.data.name], this.status[parsedMessage.data.name].length > 0 ? this.status[parsedMessage.data.name].length-1:0, parsedMessage.data)
-              }
-              
-            } else if (parsedMessage.type == 'status'){
-              if (!this.status[parsedMessage.samplename]){
-                this.status[parsedMessage.samplename] = []
-              } 
-              this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
-              // this.status[parsedMessage.samplename][parsedMessage.index] = Object.assign({}, this.status[parsedMessage.samplename][parsedMessage.index], parsedMessage.status, )
-              this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
-              // this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)              
-              this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
-            }
-            else{ 
-              this.message = parsedMessage.message;
-            }
-          }
-
-          $this.socket.onclose = function(e) {
+          this.socketReport.onclose = function(e) {
             // console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
             setTimeout(function() {
-              $this.connect();
+              $this.connectReport();
             }, 2000);
           };
 
-          $this.socket.onerror = function(err) {
+          this.sockeReport.onerror = function(err) {
             // console.error('Socket encountered error: ', err.message, 'Closing socket');
             $this.connectedStatus = 'Disconnected Server, reattempting every 1 second. Check Logs and Network Settings'
-            $this.socket.close();
+            $this.socketReport.close();
           };
+          this.socketReport.onmessage = (event) => {
+            // console.log(event,"<<<<<<<<<<")
+          }
+        },
+        async connect(){
+          const socketProtocol = (window.location.protocol === 'https:' ? 'https:' : 'http:')
+          const port = ':7689';
+          // this.ext = process.env.VUE_APP_ext
+          // this.compressed = process.env.VUE_APP_compressed
+          const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port
+          // this.defaults = this.defaultsList
+          // Define socket and attach it to our data object
+          this.socket = io(echoSocketUrl, {
+            withCredentials: true,
+            extraHeaders: {
+              "my-custom-header": "abcd"
+            }
+          });
+          const $this  = this
+          // $this.socket = await new WebSocket(echoSocketUrl);
+          this.socket.on('disconnect', function(e) {
+            console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+            // setTimeout(function() {
+            //   $this.connect();
+            // }, 2000);
+          });
+
+          this.socket.on('error', function(err) {
+            console.error('Socket encountered error: ', err.message, 'Closing socket');
+            $this.connectedStatus = 'Disconnected Server, reattempting every 1 second. Check Logs and Network Settings'
+            $this.socket.close();
+          });
+          this.socket.on("connect_error", (err) => {
+            console.error('Socket encountered error: ', err, 'Closing socket');
+          });
+          $this.socket.on('connect', () => {
+              console.log('Websocket connected.');
+              $this.connectedStatus = 'Connected';
+              $this.socket.emit("message", {type: "message"})
+              $this.socket.on("message", (e)=>{
+              })
+              $this.socket.on("add",(e)=>{
+                this.samplesheetdata.push(e.data)
+              })
+              $this.socket.on('recentQueue', (e)=>{
+                if (!this.status[e.data.name]){
+                  this.status[e.data.name] = []
+                } 
+                
+                if (e.data.index >=0){
+                  this.$set(this.status[e.data.name], e.data.index, e.data)
+                } else {
+                  this.$set(this.status[e.data.name], this.status[e.data.name].length > 0 ? this.status[e.data.name].length-1:0, e.data)
+                }
+              
+              }) 
+              $this.socket.on('status', (e)=>{
+                if (!this.status[e.samplename]){
+                  this.status[e.samplename] = []
+                } 
+                this.$set(this.status[e.samplename][e.index], 'status', e.status)
+                this.$set(this.status[e.samplename][e.index], 'sample', e.sample)
+                this.$set(this.current, e.samplename, e.status.running)   
+              })
+              $this.socket.on("basepathserver",(e)=>{
+                this.basepathserver = e.data;
+              })
+              $this.socket.on("paused",(e)=>{
+                this.pausedServer=e.message
+              })
+              $this.socket.on("getbundleconfig",(e)=>{
+                this.bundleconfig = e.data;
+              })
+              $this.socket.on("anyRunning", (e)=>{
+                this.anyRunning = e.status
+              })
+              $this.socket.on('queueLength', (e)=>{
+                this.queueLength = e.data
+              }) 
+              $this.socket.on('logs', (e)=>{
+                this.logs.push(e.data)
+                const lasts = this.logs.slice(-100);
+                this.logs = lasts 
+              } )
+              $this.socket.on("data", (e)=>{
+                ( async ()=>{
+                  await this.importData(e.data, null, e.samplename)
+                  if (!this.topLevelSampleNames[e.topLevelSampleNames]){
+                    this.topLevelSampleNames[e.topLevelSampleNames] = []
+                  }
+                  let index = this.topLevelSampleNames[e.topLevelSampleNames].indexOf(e.samplename)
+                  if (index < 0 ){
+                    this.topLevelSampleNames[e.topLevelSampleNames].push(e.samplename)
+                  }
+                })().catch((Err)=>{
+                  console.error(Err)
+                })
+              })
+              $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
+              $this.socket.emit("start", { samplesheet: $this.samplesheetdata, overwrite: false });
+          })
+
+          // this.socket.onmessage = (event) => {
+          //   // We can parse the data we know to be JSON, and then check it for data attributes
+          //   let parsedMessage = JSON.parse(event.data);
+          //   // If those data attributes exist, we can then console log or show data to the user on their web page.
+          //   if (parsedMessage.type == 'data'){
+          //     ( async ()=>{
+          //       await this.importData(parsedMessage.data, null, parsedMessage.samplename)
+          //       if (!this.topLevelSampleNames[parsedMessage.topLevelSampleNames]){
+          //         this.topLevelSampleNames[parsedMessage.topLevelSampleNames] = []
+          //       }
+          //       let index = this.topLevelSampleNames[parsedMessage.topLevelSampleNames].indexOf(parsedMessage.samplename)
+          //       if (index < 0 ){
+          //         this.topLevelSampleNames[parsedMessage.topLevelSampleNames].push(parsedMessage.samplename)
+          //       }
+          //     })().catch((Err)=>{
+          //       console.error(Err)
+          //     })
+                
+          //   } else if (parsedMessage.type == 'add'){
+          //     this.samplesheetdata.push(parsedMessage.data)
+          //   } else if (parsedMessage.type == 'playback'){
+          //     this.playbackdata = parsedMessage.message;
+          //   } else if (parsedMessage.type == 'basepathserver'){
+          //     this.basepathserver = parsedMessage.data;
+          //   } else if (parsedMessage.type == 'getbundleconfig'){
+          //     this.bundleconfig = parsedMessage.data;
+          //   } else if (parsedMessage.type == 'queueLength'){
+          //     this.queueLength = parsedMessage.data
+          //   } else if (parsedMessage.type == 'logs'){
+          //     this.logs.push(parsedMessage.data)
+          //     const lasts = this.logs.slice(-100);
+          //     this.logs = lasts 
+
+          //   } else if (parsedMessage.type == 'config'){
+          //     this.config = parsedMessage.message
+          //   } else if (parsedMessage.type == 'flushed'){
+          //     for(let key of Object.keys(this.current)){
+          //       this.current[key]= null
+          //     }
+          //   } else if (parsedMessage.type == 'reads'){
+          //     this.reads = parsedMessage.message
+          //   } else if (parsedMessage.type == 'error'){
+          //   } else if (parsedMessage.type == 'message'){
+          //   } else if (parsedMessage.type == 'paused'){
+          //     this.pausedServer=parsedMessage.message
+          //   } else if (parsedMessage.type == 'anyRunning'){
+          //     this.anyRunning = parsedMessage.status
+          //   } 
+          // else if (parsedMessage.type == 'recentQueue'){
+          //     if (!this.status[parsedMessage.data.name]){
+          //       this.status[parsedMessage.data.name] = []
+          //     } 
+              
+          //     if (parsedMessage.data.index >=0){
+          //       this.$set(this.status[parsedMessage.data.name], parsedMessage.data.index, parsedMessage.data)
+          //     } else {
+          //       this.$set(this.status[parsedMessage.data.name], this.status[parsedMessage.data.name].length > 0 ? this.status[parsedMessage.data.name].length-1:0, parsedMessage.data)
+          //     }
+              
+          //   } else if (parsedMessage.type == 'status'){
+          //     if (!this.status[parsedMessage.samplename]){
+          //       this.status[parsedMessage.samplename] = []
+          //     } 
+          //     this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
+          //     // this.status[parsedMessage.samplename][parsedMessage.index] = Object.assign({}, this.status[parsedMessage.samplename][parsedMessage.index], parsedMessage.status, )
+          //     this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
+          //     // this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)              
+          //     this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
+          //   }
+          //   else{ 
+          //     this.message = parsedMessage.message;
+          //   }
+          // }
+
+          
         },
         extractValue(value){
           let mappings = {}
@@ -734,28 +826,28 @@ export default {
       
         
         runBundleUpdate(){
-          this.sendMessage(JSON.stringify({
+          this.sendMessage({
                 type: "runbundle", 
                 config: this.runBundle,
                   "message" : `Run Bundle config updates ${this.runBundle} `
               }
-          ));
+          );
         },
         updateConfig(data, val){
           if (val =='kraken2'){
-            this.sendMessage(JSON.stringify({
+            this.sendMessage({
                   type: "updateConfig", 
                   config: data,
                    "message" : `Config Updated for data, select restart run  next please `
                 }
-            ));
+            );
           } else if (val =='bundle'){
-            this.sendMessage(JSON.stringify({
+            this.sendMessage({
                   type: "updateBundleconfig", 
                   config: data,
                     "message" : `Bundle Config Updated for data, select restart run  next please `
                 }
-            ));
+            );
           }
 
         },
@@ -770,66 +862,67 @@ export default {
           this.selectedData = dataFull
         },
         async barcode(sample){
-          this.sendMessage(JSON.stringify({
+          this.sendMessage({
                 type: "barcode", 
                 sample: sample.sample,
                 kits: sample.kits,
                 dirpath: sample.path_1
             }
-          ));
+          );
         },
         async rerun(index, sample){
-          this.sendMessage(JSON.stringify({
+          this.sendMessage({
                 type: "rerun", 
                 overwrite: true,
                 sample: sample,
                 index: index,
                 "message" : `Begin rerun of ${sample}, job # ${index}`
             }
-          ));
+          );
         },
         async sendNewWatch(params){
           let restart = params.overwrite
           let sample = params.sample
           this.sampledata = {}
           this.stagedData = {}
-          if (sample){
-            this.sendMessage(JSON.stringify({
+          if (sample){ 
+            this.sendMessage({
                   type: "restart", 
                   overwrite: restart,
                   sample: sample,
-                  "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+                  "message" : `Begin restart directory ${this.watchdir}, classify with ${this.database} `
               }
-            ));
+            );
           } else {
-            this.sendMessage(JSON.stringify({
+            this.sendMessage({
                   type: "start", 
                     samplesheet: this.samplesheetdata,
                     overwrite: restart,
                     "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
                 }
-            ));
+            );
           }
           
         },
         cancel(data){
-          this.sendMessage(JSON.stringify({
+          console.log(data,"<<<")
+          this.sendMessage({
                   type: "cancel", 
                   index: data.index,
                   sample: data.sample,
                   "message" : `Cancel Index Job: ${data.index} for sample: ${data.sample}`
               }
-          ));
+          );
         },
         updateData(data){
           this.samplesheetdata = data
-          this.sendMessage(JSON.stringify({
+          this.sendMessage({
                   type: "start", 
                   samplesheet: this.samplesheetdata,
                   overwrite: false,
                   "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
               }
-          ));
+          );
         },
         addDropFiles(e) {
           this.value = Array.from(e.dataTransfer.files);
@@ -856,6 +949,7 @@ export default {
         waitForOpenConnection: function() {
             // We use this to measure how many times we have tried to connect to the websocket server
             // If it fails, it throws an error.
+            let socket = this.socket 
             return new Promise((resolve, reject) => {
                 const maxNumberOfAttempts = 10
                 const intervalTime = 200 
@@ -865,7 +959,7 @@ export default {
                     if (currentAttempt > maxNumberOfAttempts - 1) {
                         clearInterval(interval)
                         reject(new Error('Maximum number of attempts exceeded.'));
-                    } else if (this.socket.readyState === this.socket.OPEN) {
+                    } else if (socket.readyState === socket.OPEN) {
                         clearInterval(interval)
                         resolve()
                     }
@@ -873,16 +967,17 @@ export default {
                 }, intervalTime)
             })
         },
-        sendMessage: async function(message) {
+        sendMessage: async function( message) {
             // We use a custom send message function, so that we can maintain reliable connection with the
             // websocket server.
+            
             if (this.socket.readyState !== this.socket.OPEN) {
                 try {
-                    await this.waitForOpenConnection(this.socket)
-                    this.socket.send(message)
+                    await this.waitForOpenConnection()
+                    this.socket.emit(message.type, message)
                 } catch (err) { console.error(err) }
             } else {
-                this.socket.send(message)
+              this.socket.emit(message.type, message)
             }
         },
         parseData(data){
