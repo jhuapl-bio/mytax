@@ -12,11 +12,13 @@ import { mkdirp } from 'mkdirp'
 
 export  class Sample { 
     
-    constructor(sample, queue, ws){          
+    constructor(sample, queue, ws, wsReport){          
         for (let key of Object.keys(sample)){
-            this[key] = sample[key]
+            this[key] = sample[key] 
         }
         this.ws = ws
+        this.subrun = null
+        this.wsReport = wsReport 
         this.fullstop = false
         this.queueRecords = []
         this.watcher = null
@@ -50,12 +52,12 @@ export  class Sample {
                 this.watcherDemux._watched.clear()
                 delete this.watcherDemux
             }
-            if (this.samples[key].watcher){
+            if (this.watcher){
                 this.watcher.close().then(() => console.log('closed water'));
-                $this.samples[key].watcher._watched.clear()
+                this.watcher._watched.clear()
                 delete this.watcher
             }
-            if (this.samples[key].reportWatcher){
+            if (this.reportWatcher){
                 this.reportWatcher.close().then(() => console.log('closed report'));
                 this.reportWatcher._watched.clear()
                 delete this.reportWatcher
@@ -70,7 +72,7 @@ export  class Sample {
         barcoder.ws = this.ws
         const $this = this
         barcoder.priority = ( priority ? priority : 0)
-        barcoder.outputdir = this.getOutputDir(path_1, sampleObj)
+        barcoder.outputdir = this.getOutputDir(sampleObj)
         barcoder.gpu = this.gpu 
         barcoder.config = this.config
         barcoder.bundleconfig = this.bundleconfig
@@ -81,25 +83,25 @@ export  class Sample {
         barcoder.index = msg.index
         barcoder.type = 'barcoder'
         this.updateStatusQueueList(barcoder, msg.index)
-        this.ws.send(JSON.stringify({ type: "recentQueue", data: msg }))
+        this.ws.emit('recentQueue', { type: "recentQueue", data: msg })
         this.defineQueueJob(barcoder)
         return barcoder
     }
-    defineClassifier(sampleObj, path_1, priority ){
-        
-        let classifier = new Classifier(sampleObj, path_1)
+    defineClassifier(sampleObj, priority ){
+        let path_1 = sampleObj.path_1
+        let classifier = new Classifier(sampleObj)
         classifier.ws = this.ws
+
         const $this = this
         classifier.config = this.config
         classifier.priority = ( priority ? priority : 0)
         classifier.gpu = this.gpu
-        classifier.outputdir = this.getOutputDir(path_1, sampleObj)
+        classifier.outputdir = this.getOutputDir( sampleObj)
         classifier.bundleconfig = this.bundleconfig
-        classifier.overwrite = this.overwrite
-        
+        classifier.overwrite = this.overwrite 
         classifier.initialize()
-        let msg; let code; 
 
+        let msg; let code; 
         msg = this.defineQueueMessage(classifier)
         classifier.type = 'classifier'
         classifier.index = msg.index
@@ -162,12 +164,12 @@ export  class Sample {
             }
         }
         $this.queue.start()
-        this.ws.send(JSON.stringify({ type: "paused",  message:  false })) 
+        this.ws.emit('paused', { type: "paused",  message:  false }) 
         
         $this.resetWatchers()
-        if (this.path_1 && this.format == 'file'){
-            this.setJob(this.path_1, 'classifier')
-        }
+        // if (this.path_1 && this.format == 'file'){
+        //     this.setJob(this.path_1, 'classifier')
+        // }
         
         return 
     }
@@ -201,7 +203,7 @@ export  class Sample {
         msg.sample = this.sampleObj
         this.updateStatusQueueList(obj)
         msg.index = this.queueList.length 
-        this.ws.send(JSON.stringify({ type: "recentQueue", data: msg })) 
+        this.ws.emit('recentQueue', { type: "recentQueue", data: msg }) 
         this.queueList.push({info: msg, job: obj})
         return msg 
     }
@@ -235,7 +237,8 @@ export  class Sample {
     }
     defineBarcoderSamplename(filepath){
         let basename = `${path.basename(path.dirname(filepath))}`
-        return `${basename == this.sample ? this.sample : `${this.sample}-${basename}`}`
+        return basename ? basename : this.sample
+        // return `${basename == this.sample ? this.sample : `${this.sample}-${basename}`}`
     }
     defineBarcoderOutputfile(filepath){
         let sample = _.cloneDeep(this.sampleObj)
@@ -252,15 +255,17 @@ export  class Sample {
     }
     async resetWatchers(config){
         try{
-            if (!this.reportWatcher){
-                this.reportWatch()
-            }
+            // if (!this.reportWatcher){
+                this.reportWatch() 
+            // }
         } catch (Err){
             logger.error(`${Err} error in watching reports`)
         }
         try{
-            if (!this.watcher && this.sampleObj.format == 'directory'){
-                this.watchDirectory()
+            if (!this.watcher){
+                setTimeout(()=>{
+                    this.watchDirectory()
+                },1000)
             }
         } catch (Err){
             logger.error(`${Err} error in watching base dir files`)
@@ -268,39 +273,56 @@ export  class Sample {
         
         try{
             if (!this.watcherDemux && this.sampleObj.demux){
-                this.barcodeWatch()
+                setTimeout(()=>{
+                    this.barcodeWatch()
+                },1000)
             }
         } catch (err){
             logger.error(`${err} error in watching barcodes`)
         }
     }
-    setJob(filepath, type, overwrite){
+    createObjSample(path_1, path_2, format, type, outname, demux){
+        let sample = _.cloneDeep(this.sampleObj)
+        sample.path_1 = path_1
+        sample.subsample = outname ? outname : null
+        sample.path_2 = path_2
+        sample.format = format
+        sample.type = type 
+        sample.demux = demux
+        sample.overwrite = this.overwrite
+        return sample
+    }
+    setJob(sampleObj, overwrite){
         const $this = this 
-        let sampleObj = this.sampleObj
-        let sampleo = null
-        let indexFilepath  = this.getIndexJob(filepath)
         
+        let sampleo = null
+        let filepath = sampleObj.path_1
+        let type  = sampleObj.type
+        let indexFilepath  = this.getIndexJob(filepath)
         if (!this.paused){
             if (indexFilepath != -1){ 
                 logger.info(`Seenfile ${filepath}, ${type}, overwrite force: ${overwrite}`)
                 sampleo = this.queueRecords[indexFilepath]
                 sampleo.overwrite = overwrite
-                this.defineQueueJob(sampleo)
+                // this.defineQueueJob(sampleo)
                 return 
             } else {
                 logger.info(`Never seen this file process before ${filepath}, creating a new job, paused: ${this.paused}`)
                 sampleObj.overwrite = overwrite
-                if (sampleObj.demux && type == 'classifier'){
-                    sampleo = $this.defineBarcoderOutputfile(filepath) 
-                    $this.defineClassifier(sampleo, filepath, 1)
-                } else {
-                    if (type == 'barcoder'){
-                        $this.defineBarcoder(sampleObj, filepath)
-                    } 
-                    else { 
-                        $this.defineClassifier(sampleObj, filepath,1)
-                    }
+                // if (sampleObj.demux && type == 'classifier'){
+                //     sampleo = $this.defineBarcoderOutputfile(filepath) 
+                //     $this.defineClassifier(sampleObj, filepath, 1)
+                // } else { 
+                if (sampleObj.demux){
+                    $this.defineBarcoder(sampleObj)
+                } 
+                else {  
+                    $this.defineClassifier(sampleObj,1)
                 }
+
+
+
+                // }
                     
                 
                 return  
@@ -315,12 +337,20 @@ export  class Sample {
             logger.info(`${filepath}: file done, sending sample data for sample ${$this.sample}`)
             try{
                 fs.readFile(filepath,(err,data)=>{
-                    try{
+                    try{ 
                         if (err){
                             logger.error(err)
                             reject(err)
                         } else {
-                            $this.ws.send(JSON.stringify({ type: "data", topLevelSampleNames: sample, samplename: samplename, "data" : data.toString()})) 
+                            // console.log($this.ws)
+                            // if(!$this.ws.adapter.rooms['dataReports']){
+                            //     $this.ws.join('dataReports')
+                            // }
+                            // if ($this.ws.adapter.rooms['dataReports']){
+                                $this.ws.emit('data', { topLevelSampleNames: sample, samplename: samplename, "data" : data.toString()}) 
+                            // } else {
+                                // $this.ws.emit('data', { topLevelSampleNames: sample, samplename: samplename, "data" : data.toString()}) 
+                            // }
                             resolve()
                         }
                     } catch (err){
@@ -338,16 +368,7 @@ export  class Sample {
         let id = `${filepath}-ReportSampleSending`
         const $this = this;
         let name = this.defineBarcoderSamplename(filepath)
-        let send = {
-            jobnumber: id,
-            id: id,
-            name: name,
-            type: `report`,
-            filepath: filepath,
-            sample: this.sample, 
-            priority: 0,
-            bind: this 
-        }
+        console.log("_____\n"+name, filepath) 
         try {
             const controller = new AbortController();
             await this.queue.add(async ({signal}) => { 
@@ -356,7 +377,7 @@ export  class Sample {
                 }); 
                 
                 return await this.getFullReportSample(filepath, name, $this.sample) 
-            }, {signal: controller.signal, priority: 0 });
+            }, {signal: controller.signal, priority: 3 });
         } catch (error) {
             if (!(error instanceof AbortError)) {
                 logger.error(`${error} error in queuing report send job  ${id}` )
@@ -372,8 +393,10 @@ export  class Sample {
             logger.error(`${err} error in deleting demux watcher`)
         }
         try{
+            
             let outputdir = this.outputdir
-            logger.info(`________watching report files from ${this.outputdir}_________`)
+            
+            logger.info(`________watching report files from ${this.outputdir}   _________`)
             if (this.outputdir)    {
                 try{
                     await mkdirp.sync(this.outputdir)
@@ -381,10 +404,11 @@ export  class Sample {
                     logger.error(`${err} error in creating output dir in report watch`)
                 }
             }
-            
-            this.reportWatcher = await chokidar.watch([
-                `${outputdir}/**/full.report`], {ignored: /^\./, persistent: true, usePolling: true })
-                .on('add', function(filepath) {
+            let outpathmatch = `${outputdir}/${$this.pattern ? `${$this.pattern}/**/` : '**'}/full.report`
+            logger.info(`${outpathmatch} Watching this outpath`)
+            this.reportWatcher = await chokidar.watch([ 
+                outpathmatch ], {ignored: /^\./, persistent: true, usePolling: true })
+                .on('add', function(filepath) { 
                     logger.info(`REPORT WATCH: File ${filepath} has been ADDED NEWLY`);
                     $this.sendReportQueueJob(filepath)
                 })
@@ -408,7 +432,6 @@ export  class Sample {
     }
     async barcodeWatch(){
         const $this = this;
-        let watcherDemux
         if (this.watcherDemux ){
             try{
                 await this.watcherDemux.close()
@@ -423,23 +446,29 @@ export  class Sample {
             demuxoutpath = path.join(dirpath, 'demultiplexed') 
             this.demuxoutpath = demuxoutpath
             
-            
             await mkdirp.sync(demuxoutpath)   
-            this.watcherDemux = await chokidar.watch([ 
-                `${demuxoutpath}/**/*fastq.gz`, 
-                `${demuxoutpath}/**/*fastq`,  
-                `${demuxoutpath}/**/*fq.gz`, 
-                `${demuxoutpath}/**/*fq`], {ignored: /^\./, persistent: true,  usePolling: true   })
-                    .on('add', function(filepath) {
+            let watchpath = [ 
+                `${demuxoutpath}/${$this.pattern ? $this.pattern : '**'}/*fastq.gz`, 
+                `${demuxoutpath}/${$this.pattern ? $this.pattern : '**'}/*fastq`,  
+                `${demuxoutpath}/${$this.pattern ? $this.pattern : '**'}/*fq.gz`,  
+                `${demuxoutpath}/${$this.pattern ? $this.pattern : '**'}/*fq`]
+            this.watcherDemux = await chokidar.watch(watchpath, {ignored: /^\./, persistent: true,  usePolling: true   })
+                    .on('add', function(filepath) { 
                         logger.info(`Post DEMUX NEWLY CREATED: File ${filepath} has been ADDED for barcoding demux`);
-                        // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                        $this.setJob(filepath, "classifier", false)
+                        // $this.setJob(filepath, false)
+                        let sampleObj = $this.createObjSample(filepath, null, 'file', 'classifier', null)
+                        sampleObj.run = sampleObj.sample
+                        sampleObj.sample = `${sampleObj.sample}-${path.basename(path.dirname(filepath))}`
+                        $this.setJob(sampleObj, false)
                     })
 
                     .on('change', function(filepath) {
                         logger.info(`POST DEMUX ALTERED: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
-                        // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                        $this.setJob(filepath, "classifier", true)
+                        // $this.setJob(filepath, true)
+                        let sampleObj = $this.createObjSample(filepath, null, 'file', 'classifier', null)
+                        sampleObj.run = sampleObj.sample
+                        sampleObj.sample = `${sampleObj.sample}-${path.basename(path.dirname(filepath))}`
+                        $this.setJob(sampleObj, false)
                     })
                     .on('unlinkDir', function(directory) { 
                         logger.info(`Directory ${directory} has been removed`);
@@ -461,8 +490,9 @@ export  class Sample {
 
        
     }
-    getOutputDir(path_1, sample){
+    getOutputDir(sample){
         try{
+            let path_1 = sample.path_1
             if (sample.demux){
                 return  path.join((path_1 ? path.dirname(path_1) : path.dirname(this.path_1)), 'demultiplexed')
             } else {
@@ -492,16 +522,81 @@ export  class Sample {
                 logger.error(`${err} error in closing  watch chokidar`)
             }
         } 
-        
-        this.watcher = await chokidar.watch([`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`], {ignored: /^\./, persistent: true, usePolling: true })
+        let filewatchpaths = []
+        if (sample.format != 'directory'){
+            if (sample.path_2 && !sample.path_1){
+                filewatchpaths = [`${sample.path_2}`]
+            } else {
+                filewatchpaths = [`${sample.path_1}`]
+            }
+        } else {
+            if (sample.path_2 && !sample.path_1){
+                filewatchpaths = [`${sample.path_2}/*fastq.gz`,`${sample.path_2}/*fastq`,`${sample.path_2}/*fq.gz`, `${sample.path_2}/*fq`]
+            } else {
+                filewatchpaths = [`${sample.path_1}/*fastq.gz`,`${sample.path_1}/*fastq`,`${sample.path_1}/*fq.gz`, `${sample.path_1}/*fq`]
+
+            }
+        }
+        logger.info(`\n\n${filewatchpaths} ++++++++++++++++++ Watching filepaths`)
+        let seenfiles = {}
+
+        function defineSetting(filepath, demux){
+            if (!demux){
+                if (sample.format == 'directory' && sample.platform == 'illumina'){
+                    let basename = removeExtension(filepath, true)
+                    let baseSampleName = path.join(sample.path_1, basename)
+                    if (!seenfiles[baseSampleName]){
+                        seenfiles[baseSampleName]  =  {}
+                    }  
+                    try{
+                        globFiles( `${baseSampleName}*`  , {}).then((f)=>{
+                            if (f){
+                                let run = false
+                                f.forEach((fileI)=>{
+                                    if (!seenfiles[baseSampleName][fileI]){
+                                        run = true
+                                        seenfiles[baseSampleName][fileI] = 1
+                                    }
+                                })
+                                // console.log(f,run, baseSampleName, basename)
+                                if (run){
+                                    if (f.length ==2){
+                                        let sampleObj = $this.createObjSample(f[0], f[1], 'file', 'classifier', basename, false)
+                                        $this.setJob(sampleObj)
+
+                                    } else {
+                                        let sampleObj = $this.createObjSample(f[0], null, 'file', 'classifier', basename, false)
+                                        $this.setJob(sampleObj)
+                                    }
+                                } 
+                            }
+                        })
+                    } catch (err){
+                        logger.error(`${err} error in globbing files for added classification report catch`)
+                    }
+                } else if ($this.format == 'file') {
+                    logger.info(`File ${filepath} has been added for sample: ${sample.sample}, demux: ${sample.demux}`);
+                    let sampleObj = $this.createObjSample(sample.path_1, sample.path_2, 'file', 'classifier', null)
+                    $this.setJob(sampleObj, false)
+                } else {
+                    logger.info(`File ${filepath} has been added for sample: ${sample.sample}, demux: ${sample.demux}`);
+                    let sampleObj = $this.createObjSample(filepath, null, 'file', 'classifier', null)
+                    $this.setJob(sampleObj, false)
+                }
+            } else {
+                let sampleObj = $this.createObjSample(filepath, null, 'directory', 'barcoder', null, true )
+                $this.setJob(sampleObj, false)
+            }
+        }
+
+        this.watcher = await chokidar.watch(filewatchpaths, {ignored: /^\./, persistent: true, usePolling: true })
             .on('add', function(filepath) {
-                logger.info(`File ${filepath} has been added for sample: ${sample.sample}, demux: ${sample.demux}`);
-                // $this.ws.send(JSON.stringify({ "message" : `File ${filepath} has been added` }))
-                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), false)
+                logger.info(`filepath added to watch ${filepath}`)
+                defineSetting(filepath, $this.sampleObj.demux) 
             }) 
             .on('change', function(filepath) { 
                 logger.info(`File ${filepath} has been changed, , demux: ${sample.demux}`);
-                $this.setJob(filepath, (sample.demux ? 'barcoder' : 'classifier'), true)
+                defineSetting(filepath, $this.sampleObj.demux)
             })
             .on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);

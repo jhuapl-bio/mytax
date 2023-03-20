@@ -2,16 +2,20 @@ import path, { resolve } from 'path'
 import fs from "file-system"
 import glob from "glob-all"
 
-export function removeExtension(filename) {
-    return path.basename(filename.replace(/\.[^\/.]+/g, ''));
+export function removeExtension(filename, illumina) {
+    let filetrim = path.basename(filename.replace(/\.[^\/.]+/g, ''));
+    if (illumina){
+        filetrim = filetrim.replace(/_[\d]?$/g, "")
+    }
+    return filetrim
 }
-export function getReportName(path_1, path_2, outpath){
+export function getReportName(path_1, outpath, illumina){
     try{
-        if (path_1 && !path_2 ){ 
-            return path.join(outpath, `${path.parse(path_1).name}.report`)
-        } else {
-            return path.join(outpath, `${path.parse(path_1).name}.report`)
+        let path_reports = removeExtension(path_1)
+        if (illumina){
+            path_reports = path_reports.replace(/_[\d]?$/g, "")
         }
+        return path.join(outpath, `${removeExtension(path_reports)}.report`)
     } catch (err){
         throw err
     }
@@ -38,7 +42,7 @@ export function globFiles(pattern, options){
     if (!options){
         options = { ignore: [] }
     }
-    let globoptions = options
+    let globoptions = options 
     if (options.cwd){
         globoptions.cwd = options.cwd
     }

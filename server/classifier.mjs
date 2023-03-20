@@ -8,9 +8,17 @@ import { removeExtension, getReportName } from './controllers.mjs';
 import {logger} from './logger.js'
 import fs from "file-system"
 export  class Classifier { 
-    constructor(sample, filepath){         
+    constructor(sample){         
         this.name = sample.sample
-        this.filepath = (filepath ? filepath : sample.path_2 ? `${sample.path_1} ${sample.path_2}` : `${sample.path_1}` )
+        if (sample.filepath){
+            this.filepath = sample.filepath
+        } else {
+            if (sample.platform == 'illumina' && sample.path_1 && sample.path_2){
+                this.filepath = `${sample.path_1} ${sample.path_2}`
+            } else {
+                this.filepath = (sample.path_1 ? sample.path_1 : sample.path_2)
+            }
+        }
         this.dirpath = path.dirname(this.filepath)
         this.paired = ( sample.path_1 && sample.path_2 && sample.platform == 'illumina' ? true : false)
         this.gpu = ''
@@ -18,7 +26,7 @@ export  class Classifier {
         this.process = null
         sample.filepath = this.filepath
         this.sample = sample
-        
+        this.subsample = sample.subsample
         this.recombine = null
         this.status = {
             running: false, 
@@ -34,16 +42,19 @@ export  class Classifier {
     initialize(){
         let sample = this.sample
         let path_1 = sample.path_1 
-        let outpath = this.outputdir
-        if (!outpath){
-            outpath = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample ) :  path.join(path.dirname(path_1), sample.sample)       
+        let outpath=""
+        if (this.subsample){
+            outpath  = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample, this.subsample ) :  path.join(path.dirname(path_1), sample.sample, this.subsample)      
+        } else {
+            outpath  = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample ) :  path.join(path.dirname(path_1), sample.sample)      
         }
-        let sampleReport = getReportName(this.filepath, this.path_2, outpath)
+        
+        let sampleReport = getReportName(path_1, outpath, this.platform == 'illumina')
         let fullreport =path.join(outpath, 'full.report') 
         this.fullreport = fullreport
         this.sampleReport = sampleReport
         this.generateCommandString()
-    }
+    } 
     async stop(){
         if (this.process){
             try{
@@ -74,23 +85,20 @@ export  class Classifier {
                     $this.status.error = null
                     let command = $this.command
                     let classify = spawn('bash', ['-c', ` ${command}`]);
-                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                    $this.ws.emit( "status",{samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     classify.stdout.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,20)
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         logger.info(`${data} `);
                     }); 
                 
                     classify.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,20)
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status }))  
                         logger.error(`${data}`);
                     });
                     classify.on('error', function(error) {
                         logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
-                        // $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
                         $this.status.error = err
                         $this.status.running = false
                         reject(error)
@@ -101,7 +109,7 @@ export  class Classifier {
                         $this.status.running = false
                         $this.status.historical = false
                         $this.process = null
-                        $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                        $this.ws.emit('status', {samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
 
                         resolve( `${code}`)                
                     });
@@ -112,7 +120,7 @@ export  class Classifier {
                     $this.status.historical = true
                     logger.info(`${this.fullreport} exists already`)
                     $this.status.logs.push['Historically gathered report, pre-run already']
-                    $this.ws.send(JSON.stringify({ type: "status", samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })) 
+                    $this.ws.emit("status", {samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     resolve()
                 }
             }).catch((err)=>{
@@ -128,9 +136,7 @@ export  class Classifier {
         fs.readFile($this.fullreport,(err,data)=>{
             if (err){
                 logger.error(err)
-            } else {
-                // $this.ws.send(JSON.stringify({ type: "data", samplename: $this.name, "data" : data.toString()})) 
-            }
+            } 
         
         })
     }
@@ -139,9 +145,9 @@ export  class Classifier {
         const $this = this
         let report = this.fullreport
         let outputdir = this.outputdir
-        let command = ` bash ${__dirname}/src/bundle.sh \\
+        let command = `sleep 4; bash ${__dirname}/src/bundle.sh \\
             -i "${$this.filepath}" \\
-            -o "${outputdir}"  \\
+            -o "${this.sampleReport}"  \\
             -d "${$this.sample.database}" ${(this.recombine ? '-r' : '')} `
 
  

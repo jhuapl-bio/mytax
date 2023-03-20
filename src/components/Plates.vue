@@ -192,11 +192,11 @@
               }
        
             } else {
-              tops.push({
-                name: samplename,
-                top: "Nothing",
-                abu: 1
-              })
+              // tops.push({
+              //   name: samplename,
+              //   top: "Nothing",
+              //   abu: 0
+              // })
             }            
           }
         }
@@ -206,7 +206,9 @@
           attribute = this.selectedNameAttr
         }
         let seentaxids = {}
-        let unique_taxids = [ ... new Set(tops.map((f)=>{
+        let unique_taxids = [ ... new Set(tops.filter((f)=>{
+          return f.top  !== 'Nothing'
+        }).map((f)=>{
           if (f.top && f.top !== -1){
             
             seentaxids[f.top] = `${this.getText(f.top)}`
@@ -311,11 +313,11 @@
           .attr("width", this.boxWidth) 
           .attr("height", this.boxHeight)
           .style("fill", (d)=>{
-            return d.abu ? scalesHeatmap[d.name](`${d.abu}`) : 'white'
+            return  d.abu ? scalesHeatmap[d.name](`${d.abu}`) : 'white'
           })
         node.append("text").classed("nodeText", true)
                 .attr("font-family", "sans-serif")
-                .attr("font-size",'1em')
+                .attr("font-size",'0.75em')
                 .attr("x", this.boxWidth/2) // +/- 6 pixels relative to container
                 .attr("y", () => {
                   return this.boxHeight/2
@@ -358,7 +360,8 @@
             
         x.selectAll('text')
           .style("font-size", '1px')
-          .each(getSizeY)
+          .each(getSizeX)
+          .attr("dy", "0")
           .style("font-size", function(d) {  return sizesY[d] + "px"; })
             
             
@@ -376,21 +379,21 @@
           
           y.selectAll('text') // select all the text elements 
           .style("font-size", '1px')
-          .each(getSizeX)
+          .each(getSizeY)
           .style("font-size", function(d) {  return sizes[d] + "px"; });
           
-          function getSizeX(d) {
+          function getSizeY(d) {
             var bbox = this.getBBox(),
               cbbox = $this.margin.left + ($this.margin.left/2),
-              scale = Math.min(cbbox/bbox.width , $this.boxHeight);
+              scale = Math.min(cbbox/bbox.width/2, $this.boxWidth);
             sizes[d] = scale
             return d
           }
-          function getSizeY(d) {
+          function getSizeX(d) {
             
             var bbox = this.getBBox(),
               cbbox = $this.margin.bottom - $this.margin.top,
-              scale = Math.min(cbbox/bbox.height, $this.height, $this.boxWidth/bbox.width);
+              scale = Math.min(cbbox/bbox.height, $this.height, $this.boxWidth/2/bbox.width);
             sizesY[d] = scale
             return d
           }

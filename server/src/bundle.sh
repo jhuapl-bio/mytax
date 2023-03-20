@@ -29,7 +29,7 @@ usage() {
 	echo -e "   -p      appendable names.tsv attributes from -y argument file"
 	echo -e "   -c      column in which the attribute is located in -y argument file"
 	echo -e "   -v      column in which the value is located in -y argument file"
-	echo -e "   -o      output kraken2 base path directory "
+	echo -e "   -o      output kraken2 file path (absolute is preferred) "
 	echo -e "" 
 }
 
@@ -100,14 +100,16 @@ function real {
 
 __dirname=$(dirname $0)
 parsed=""; 
-reportName=$(basename $filepath)
+reportName=$output
 if [[ $samplepattern != '' ]]; then 	
 	parsed=$( echo $reportName | sed "s/${samplepattern}//g")
 else 
 	parsed="${reportName%.*}"
 fi 
 # parsed=$reportName
-outputBase=$output"/$parsed"
+outputBase=$parsed
+echo $reportName $parsed
+outputdir=$(dirname $output)
 outputReport="${outputBase}.report"
 outputAssigned="${outputBase}.out"
 # outputCombinedReport=$output"/classifications.full"
@@ -120,10 +122,9 @@ if [[ $type == 'paired' ]]; then
 	paired="--paired"
 fi 
 
-mkdir -p ${output}
+mkdir -p $outputdir
 
 echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report ${outputReport} $paired ${filepath} "
-
 # alreadyseen=0
 # if [[ -f ${outputBase}.report ]]; then
 # 	alreadyseen="${outputBase}.report.bk"
@@ -163,8 +164,8 @@ if [[ ! -z $names ]] && [[  -f ${outputBase}.report ]]; then
 	fi 
 fi 
 
-files=$( find ${output} -name "*report" -not -name "full.report" )
-fullReport="${output}/full.report"
+files=$( find ${outputdir} -name "*report" -not -name "full.report" )
+fullReport="${outputdir}/full.report"
 
 
 
@@ -174,9 +175,9 @@ echo "found existing full report" ${fullReport}
 i=0
 # if [[ $recombine == 'true' ]]; then 
 files=""
-for file in $(ls $output/*.report); do 
+for file in $(ls $outputdir/*.report); do 
 	basepath=$(basename $file)
-	if [[ $file !=  $output"/full.report" ]]; then 
+	if [[ $file !=  $outputdir"/full.report" ]]; then 
 		files=$files" $file"
 		i=$(( $i + 1 ))
 	fi 
