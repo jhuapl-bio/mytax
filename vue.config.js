@@ -7,7 +7,7 @@ module.exports = defineConfig({
   transpileDependencies: [ 
     'vuetify'
   ],
-  publicPath: '/',
+  publicPath: '/mytax',
   configureWebpack: {
     plugins: [new NodePolyfillPlugin()],
     optimization: {
