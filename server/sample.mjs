@@ -101,7 +101,7 @@ export  class Sample {
         classifier.overwrite = this.overwrite 
         classifier.initialize()
 
-        let msg; let code; 
+        let msg; 
         msg = this.defineQueueMessage(classifier)
         classifier.type = 'classifier'
         classifier.index = msg.index
@@ -558,10 +558,10 @@ export  class Sample {
                                         seenfiles[baseSampleName][fileI] = 1
                                     }
                                 })
-                                // console.log(f,run, baseSampleName, basename)
                                 if (run){
                                     if (f.length ==2){
                                         let sampleObj = $this.createObjSample(f[0], f[1], 'file', 'classifier', basename, false)
+                                        
                                         $this.setJob(sampleObj)
 
                                     } else {

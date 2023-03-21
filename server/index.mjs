@@ -13,8 +13,7 @@ import { Server } from "socket.io";
 
 
 // Our port
-let port = 7689;
-let portReport = 7688
+let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 
 // App and server
 let app = express();
@@ -22,16 +21,17 @@ let server = http.createServer(app)
 // Apply expressWs
 let params = {}
 let portclient = 8080
-if (process.env.NODE_ENV == 'development'){
+// if (process.env.NODE_ENV == 'development'){
+  console.log(process.env.NODE_ENV,"<<")
     params = {
         cors: {
-            origin: `${`http`}://localhost:${8080}`,
+            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`,`http://localhost:${4555}`],
             methods: ["GET", "POST"],
             allowedHeaders: ["my-custom-header"],
             credentials: true
         }
     }
-}
+// }
 
 let io = new Server(server, params);
 

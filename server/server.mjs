@@ -308,7 +308,7 @@ export  class Orchestrator {
     cancel(index, sample){
         const $this = this
         try{       
-            if (!index) {
+            if (!index && this.samples[sample]) {
                 let s = this.samples[sample]
                 $this.samples[sample].paused = true
                 Object.keys(s.queueRecords).map((f)=>{
@@ -317,7 +317,7 @@ export  class Orchestrator {
                     }
                 })
             } else {
-                if (index >= 0){
+                if (index >= 0 && this.samples[sample]){
                     if (this.samples[sample] && this.samples[sample].queueRecords[index]){
                         this.samples[sample].queueRecords[index].controller.abort()
                     }
