@@ -182,7 +182,7 @@
             this.parseddata[samplename] = sorted
             if (sorted.length  > 0){
               for (let i = 0; i < top_n; i++){
-                if (i < sorted.length){
+                if (i < sorted.length && isFinite(sorted[i][1])){
                   tops.push({
                     name: samplename, 
                     top: sorted[i][0],
@@ -239,7 +239,7 @@
                 word,
                 line = [],
                 lineNumber = 0,
-                lineHeight = 1.1, // ems
+                lineHeight = 1, // ems
                 y = text.attr("y"),
                 dy = parseFloat(text.attr("dy")),
                 tspan = text.text(null).append("tspan").attr("x", 0).attr("y", y).attr("dy", dy + "em")
@@ -313,7 +313,7 @@
           .attr("width", this.boxWidth) 
           .attr("height", this.boxHeight)
           .style("fill", (d)=>{
-            return  d.abu ? scalesHeatmap[d.name](`${d.abu}`) : 'white'
+            return  d.abu && d.abu <= 100 ? scalesHeatmap[d.name](`${d.abu}`) : 'white'
           })
         node.append("text").classed("nodeText", true)
                 .attr("font-family", "sans-serif")
@@ -351,17 +351,16 @@
         x.selectAll('text').style("font-size", 22)
           .style("overflow", "auto")
             .attr("transform", "rotate(0)")
-            .style("text-anchor", "center")
+            .style("text-anchor", "middle")
             
           
         x.selectAll(".tick text")
-          .call(wrap, $this.margin.top)
+          .call(wrap, $this.margin.bottom)
           
             
         x.selectAll('text')
           .style("font-size", '1px')
           .each(getSizeX)
-          .attr("dy", "0")
           .style("font-size", function(d) {  return sizesY[d] + "px"; })
             
             
@@ -385,7 +384,7 @@
           function getSizeY(d) {
             var bbox = this.getBBox(),
               cbbox = $this.margin.left + ($this.margin.left/2),
-              scale = Math.min(cbbox/bbox.width/2, $this.boxWidth);
+              scale = Math.min(cbbox/bbox.width/1.2, $this.boxWidth);
             sizes[d] = scale
             return d
           }
@@ -393,7 +392,7 @@
             
             var bbox = this.getBBox(),
               cbbox = $this.margin.bottom - $this.margin.top,
-              scale = Math.min(cbbox/bbox.height, $this.height, $this.boxWidth/2/bbox.width);
+              scale = Math.min(cbbox/bbox.height, $this.height, $this.boxWidth/1.2/bbox.width);
             sizesY[d] = scale
             return d
           }

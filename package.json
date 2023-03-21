@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve --port 8080",
+    "serveProduction": "export NODE_ENV=production && vue-cli-service serve --port 8080",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "server": "export NODE_ENV=development && nodemon server/index.mjs --watch"
+    "server": "export NODE_ENV=development && nodemon server/index.mjs --watch",
+    "production": "export NODE_ENV=production && node server/index.mjs "
   },
   "dependencies": {
+    "@mdi/font": "^7.2.96",
     "@vue/cli": "^5.0.8",
     "chokidar": "^3.5.3",
     "core-js": "^3.8.3",

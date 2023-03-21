@@ -159,6 +159,7 @@ export  class Barcoder {
         done\\
         `
         this.command = command
+        logger.info(`${command}`)
         return command
     }
 }

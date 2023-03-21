@@ -480,7 +480,7 @@ export default {
           let data = await d3.csv(`${samplesheet}`)
           data = data.filter((f)=>{
             f.demux = (f.demux == "true" || f.demux == "TRUE" || f.demux == "True" ? true : false )
-            f.compressed = (f.compressed == "true" || f.compressed == "TRUE" || f.compressed == "True" ? true : false )
+            // f.compressed = (f.compressed == "true" || f.compressed == "TRUE" || f.compressed == "True" ? true : false )
             return f.sample && f.sample != ''
           }) 
           this.samplesheet = samplesheet
@@ -614,7 +614,7 @@ export default {
         },
         async connect(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'https:' : 'http:')
-          const port = ':7689';
+          const port = process.env.NODE_ENV == 'development' ? ':7689' : ':7689';
           // this.ext = process.env.VUE_APP_ext
           // this.compressed = process.env.VUE_APP_compressed
           const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port
