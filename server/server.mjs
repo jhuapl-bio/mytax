@@ -96,13 +96,6 @@ export  class Orchestrator {
     } 
     
     cleanup(){
-        // try{
-        //     if (this.reportWs){
-        //         this.reportWs.close() 
-        //     }
-        // } catch (err){
-        //     logger.error(err)
-        // }
         const $this = this
         try{
             for (let key  of Object.keys(this.samples)){

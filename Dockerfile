@@ -42,13 +42,14 @@ COPY ./package.json /opt/package.json
 RUN npm install 
 
 COPY ./babel.config.js /opt/babel.config.js
+COPY ./.eslintignore /opt/.eslintignore
 COPY ./jsconfig.json /opt/jsconfig.js
-COPY ./vue.config.js /opt/vue.config.js
+COPY ./vue.config.docker.js /opt/vue.config.js
 COPY ./src /opt/src
+RUN npm run build
+
 COPY ./server /opt/server
-# RUN npm run build
-# RUN mkdir -p /MYTAX; cp -r ./dist/* /MYTAX/
-COPY dist /MYTAX
+# COPY dist  /usr/share/nginx/html/mytax
 COPY nginx.conf /etc/nginx/nginx.conf
 RUN useradd nginx 
 # RUN chown -R nginx:nginx /var/lib/nginx && \
@@ -56,7 +57,8 @@ RUN useradd nginx
 #         chown -R nginx:nginx /etc/nginx/conf.d
 # RUN touch /var/run/nginx.pid && \
 #         chown -R nginx:nginx /var/run/nginx.pid
-RUN chmod -R 777 /MYTAX
+RUN ln -s /opt/dist /usr/share/nginx/html/mytax && chmod -R 777 /usr/share/nginx/html/mytax
+EXPOSE 80
 
 CMD ["conda", "run", "-n", "mytax2", "/bin/bash", "-c"]
 
