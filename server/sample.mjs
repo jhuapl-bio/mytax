@@ -84,7 +84,7 @@ export  class Sample {
         barcoder.type = 'barcoder'
         this.updateStatusQueueList(barcoder, msg.index)
         this.ws.emit('recentQueue', { type: "recentQueue", data: msg })
-        this.defineQueueJob(barcoder)
+        this.defineQueueJob(barcoder) 
         return barcoder
     }
     defineClassifier(sampleObj, priority ){
@@ -100,7 +100,6 @@ export  class Sample {
         classifier.bundleconfig = this.bundleconfig
         classifier.overwrite = this.overwrite 
         classifier.initialize()
-
         let msg; 
         msg = this.defineQueueMessage(classifier)
         classifier.type = 'classifier'
@@ -461,14 +460,14 @@ export  class Sample {
                         sampleObj.sample = `${sampleObj.sample}-${path.basename(path.dirname(filepath))}`
                         $this.setJob(sampleObj, false)
                     })
-
+ 
                     .on('change', function(filepath) {
                         logger.info(`POST DEMUX ALTERED: File ${filepath} has been ALTERED follow demux ${$this.overwrite}`);
                         // $this.setJob(filepath, true)
                         let sampleObj = $this.createObjSample(filepath, null, 'file', 'classifier', null)
                         sampleObj.run = sampleObj.sample
                         sampleObj.sample = `${sampleObj.sample}-${path.basename(path.dirname(filepath))}`
-                        $this.setJob(sampleObj, false)
+                        // $this.setJob(sampleObj, false)
                     })
                     .on('unlinkDir', function(directory) { 
                         logger.info(`Directory ${directory} has been removed`);

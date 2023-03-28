@@ -221,6 +221,7 @@ export  class Classifier {
             } finally {
                 try{
                     exists.sample = await fs.existsSync(this.sampleReport)
+                    console.log(this.sampleReport, "REPORT", exists)
                 } catch (err){
                     logger.error(`${err} error in getting full report name for sample: ${sample}`)
                 } finally {

@@ -133,11 +133,32 @@ export  class Barcoder {
         })
         
     }
+    trimExtensions(filepath){
+        let iterations_max = 5
+        let iterations=0
+        try{
+            while (iterations < iterations_max) {
+                // ...
+                if (filepath.includes(".")) {            
+                    filepath = path.parse(filepath).name
+                }  else{
+                    break
+                }
+                iterations+=1
+            }
+            return filepath
+        } catch (err){
+            logger.error(`${err} error in trimming extensions`)
+            return filepath
+        }
+        
+    }
     generateCommandString(){
         let filepath = this.filepath
         let dirpath =  this.dirpath 
+        let basepath=path.basename(this.filepath)
         let basename = removeExtension(filepath);
-        let stagepath_demux = path.join(dirpath, 'staged', path.basename(filepath))
+        let stagepath_demux = path.join(dirpath, 'staged', this.trimExtensions(path.basename(filepath)) )
         let stagepath_Demux_filename = path.join(stagepath_demux, path.basename(filepath))
         let output_path = this.outputdir
         this.stagepath_demux = stagepath_demux
@@ -147,7 +168,7 @@ export  class Barcoder {
         // let guppy_version = ( this.gpu ? 'guppy_barcoder_gpu' : 'guppy_barcoder_cpu')
         let kits = this.sample.kits ? `--barcode_kits ${this.sample.kits}` : ''
         let command = `rm -r ${stagepath_demux}; mkdir -p ${stagepath_demux};  \\
-        ln -s ${filepath} ${stagepath_Demux_filename};  guppy_barcoder --require_barcodes_both_ends --compress_fastq --disable_pings  \\
+        ln -sf ${filepath} ${stagepath_Demux_filename};  guppy_barcoder  --compress_fastq --disable_pings  \\
         -i "${path.dirname(stagepath_Demux_filename)}" \\
         -s "${individual_output_path}" \\
         ${kits} ${this.gpu ? this.gpu : ''};  \\
@@ -159,7 +180,7 @@ export  class Barcoder {
         done\\
         `
         this.command = command
-        logger.info(`${command}`)
+        // logger.info(`${command}`)
         return command
     }
 }
