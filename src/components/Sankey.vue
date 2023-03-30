@@ -24,7 +24,7 @@
   <v-container   :ref="'boxContainer'" style="padding-top: 10px;  width: 97%">
     <v-row>
       <v-col sm="2">
-        <v-subheader v-if="samplename">{{samplename}}
+        <v-subheader v-if="samplenameparsed">{{samplenameparsed}}
         </v-subheader>
         <v-divider></v-divider>
         <br>
@@ -72,7 +72,7 @@
         </v-btn> -->
       </v-col>
       <v-col  sm="10">
-          <div style="overflow-x:auto " :id="`sankeyBox-${samplename}`">
+          <div style="overflow-x:auto " :id="`sankeyBox-${samplenameparsed}`">
           </div>
           <v-range-slider
             hint="Range of Ranks to Show"
@@ -205,13 +205,9 @@
       }
     },
     computed:{
-      // width(){
-      //   if (this.dimensions.width){
-      //     return this.dimensions.width
-      //   } else {
-      //     return (window.innerWidth ? window.innerWidth : 1000)
-      //   }
-      // },
+      samplenameparsed(){
+        return this.samplename.replace(/\./g, '')
+      },
       height(){
         if (this.dimensions.height){
           return this.dimensions.height
@@ -234,13 +230,13 @@
         this.Sankeychart(this.inputdata)
       },
       hideLabels(){
-        let div = d3.select(`#sankeyBox-${this.samplename}`)
+        let div = d3.select(`#sankeyBox-${this.samplenameparsed}`)
         this.updateSankey()
         // div.selectAll(".link").style("stroke-opacity", d => (this.rangeLabelDepth[0] <= d.target.depth && this.rangeLabelDepth[1] >= d.target.depth ? 0.7 : 0))
         // div.selectAll(".nodeText").style("opacity", d => (this.rangeLabelDepth[0] <= d.depth && this.rangeLabelDepth[1] >= d.depth ? 1 : 0))
       },
       colorLinks(){
-        let div = d3.select(`#sankeyBox-${this.samplename}`)
+        let div = d3.select(`#sankeyBox-${this.samplenameparsed}`)
         let link = div.selectAll(".link")
         
         link.attr("stroke", d => this.edgeColor === "none" ? "#aaa"
@@ -273,7 +269,7 @@
         
       },
       removeSankeychart(){
-        d3.select("#sankeyBox-"+this.samplename).selectAll("*").remove()
+        d3.select("#sankeyBox-"+this.samplenameparsed).selectAll("*").remove()
       },
       updateSankey(){
         const $this = this
@@ -480,7 +476,7 @@
             height = this.height - margin.top - margin.bottom;  
         // format variables
         
-        let sankeyBox = d3.select("#sankeyBox-"+this.samplename)
+        let sankeyBox = d3.select("#sankeyBox-"+this.samplenameparsed)
         // append the svg object to the body of the page
 
         let zoom = d3.zoom()
