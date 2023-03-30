@@ -1,1 +1,2 @@
 databases/flukraken2.tar.gz filter=lfs diff=lfs merge=lfs -text
+databases/taxonomy.tab filter=lfs diff=lfs merge=lfs -text

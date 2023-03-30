@@ -24,21 +24,21 @@
   <v-container  style="padding-top: 10px;   " :ref="'boxContainer'">
     <v-row>
       <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px;   ">
-        <div :id="`sunburstDiv-${samplename}`">
+        <div :id="`sunburstDiv-${samplenameparsed}`">
         </div>
       </v-col>
       <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0; pt-0 text-center">
         
-        <div :id="`legend_text-${samplename}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
+        <div :id="`legend_text-${samplenameparsed}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
           <h5>Legend</h5>
           <h6>Total Reads {{readCount}}</h6>
           <h6>at Rank Code: {{selectedAttribute}}</h6>
-          <span :id="`legend_text_label-${samplename}`" style="text-align:center; "/>
+          <span :id="`legend_text_label-${samplenameparsed}`" style="text-align:center; "/>
           <div v-if="selectedAttribute =='Deviation'" class="alert alert-info">
             <span>Color is Relative to +/- Max Abundance at a Given Rank</span>
           </div>
         </div>
-        <div :id="`legend_wrapper-${samplename}` "
+        <div :id="`legend_wrapper-${samplenameparsed}` "
               style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; max-height: 200px; overflow-y:auto;overflow-x:auto">
         </div>  
       </v-col>
@@ -73,7 +73,7 @@
       },
       
       selectedTaxid(val){
-        let ele = d3.select("#sunburstDiv-"+this.samplename).select(this.fetchArc("#sliceMain", val))
+        let ele = d3.select("#sunburstDiv-"+this.samplenameparsed).select(this.fetchArc("#sliceMain", val))
         let data = ele.data()[0]
         if (!ele.empty()){
           this.$emit("changeAttribute", data.data.data.rank_code)
@@ -107,6 +107,9 @@
      
     },  
     computed: {
+      samplenameparsed(){
+        return this.samplename.replace(/\./g, '')
+      },
       readCount(){
         let d = 0
         this.inputdata.filter((f)=>{
@@ -238,12 +241,12 @@
         const defaultColor = this.defaultColor
         let taxValues = this.getTaxValues()
         // const taxValues = this.taxValues 
-        const piechartLegendSVG = d3.select("#legendSVG-"+this.samplename).classed("svgPieChartLegend", true)
+        const piechartLegendSVG = d3.select("#legendSVG-"+this.samplenameparsed).classed("svgPieChartLegend", true)
           
-        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplename}`)
-        let legend_text_label = d3.select(`#legend_text_label-${this.samplename}`)
+        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplenameparsed}`)
+        let legend_text_label = d3.select(`#legend_text_label-${this.samplenameparsed}`)
         legend_text_label.text("Rank: " + selectedAttribute)
-        legend_text_label.text("Sample: " + this.samplename)
+        legend_text_label.text("Sample: " + this.samplenameparsed)
         legend_wrapper.style("overflow-y", "auto").style("overflow-x", "auto")
           
         piechartLegendSVG.selectAll(".legendElement").remove()
@@ -286,7 +289,7 @@
           })
           .attr("id", (d)=>{
 
-            return "legendElement-"+$this.samplename+d.taxid
+            return "legendElement-"+$this.samplenameparsed+d.taxid
           })          
           ;
 
@@ -354,7 +357,7 @@
               // Add white contour
               text.append('textPath').classed("whitecontour",true)
                 .attr('startOffset', '50%')
-                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplenameparsed}`)
                 .text((d =>{ 
                   return $this.getText(d.data.data)
                 }))
@@ -366,7 +369,7 @@
 
               text.append('textPath').classed("hiddentext",true)
                 .attr('startOffset', '50%')
-                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplename}`)
+                .attr('xlink:href', (_) => `#hiddenArc${_.data.data.taxid}-${$this.samplenameparsed}`)
                 .text(d =>  $this.getText(d.data.data))
                 .style('font-size', '10px')
                 .attr("dominant-baseline", "middle")
@@ -388,7 +391,7 @@
       },
       clearSunburst() {
         return new Promise((resolve) => {
-          d3.select('#sunburstDiv-'+this.samplename).html("")
+          d3.select('#sunburstDiv-'+this.samplenameparsed).html("")
           resolve()
         })
       },
@@ -400,7 +403,7 @@
         this.$emit("jumpTo", ele, rank)
       },
       fetchArc(arcName, taxid) {
-        return arcName + "-" + this.samplename + "-" + taxid 
+        return arcName + "-" + this.samplenameparsed + "-" + taxid 
       },
       updateSunburst(root) {
         const $this = this
@@ -502,13 +505,13 @@
                 return $this.fetchArc("slice", d.data.data.taxid)
               });
               returnable.append("title").text(function (d) {
-                return "Sample: " + $this.samplename + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
+                return "Sample: " + $this.samplenameparsed + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
                   "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
               })
               returnable.append('path')
                 .attr('class', 'hidden-arc')
                 .attr('id', (_) => {
-                  return `hiddenArc${_.data.data.taxid}-${$this.samplename}`
+                  return `hiddenArc${_.data.data.taxid}-${$this.samplenameparsed}`
                 })
                 .attr('d', (d)=>{
                   return middleArcLine(d)
@@ -580,19 +583,19 @@
       },
         
       async makeSunburst(data) { //https://observablehq.com/@d3/zoomable-sunburst  && Tom Mehoke (JHUAPL) && Brian Merritt (JHUAPL) references for Sunburst Code
-        let div = d3.select("#sunburstDiv-"+this.samplename)
-        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplename}`)
+        let div = d3.select("#sunburstDiv-"+this.samplenameparsed)
+        let legend_wrapper = d3.select(`#legend_wrapper-${this.samplenameparsed}`)
         div.select("svg").remove()
-        div.select("#legendSVG-"+this.samplename).remove()
+        div.select("#legendSVG-"+this.samplenameparsed).remove()
         legend_wrapper.html("")
-        legend_wrapper.append('svg').attr("id", "legendSVG-"+this.samplename)
+        legend_wrapper.append('svg').attr("id", "legendSVG-"+this.samplenameparsed)
         const pieHeight = this.height;
         const maxRadius = Math.round(pieHeight / 2);
         this.maxRadius = maxRadius
         let svg = div.append('svg')
           .style('max-width', maxRadius * 2)
           .style('max-height', this.height)
-          .attr('id', "sunburst-"+this.samplename);
+          .attr('id', "sunburst-"+this.samplenameparsed);
         this.svg = svg
         svg.selectAll(".slice").remove()
         svg.selectAll(".legendElement").remove()
