@@ -42,12 +42,7 @@ export  class Classifier {
     initialize(){
         let sample = this.sample
         let path_1 = sample.path_1 
-        let outpath=""
-        if (this.subsample){
-            outpath  = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample, this.subsample ) :  path.join(path.dirname(path_1), sample.sample, this.subsample)      
-        } else {
-            outpath  = this.sample.format == 'directory'  ? path.join(path_1,  sample.sample ) :  path.join(path.dirname(path_1), sample.sample)      
-        }
+        let outpath  = this.outputdir
         
         let sampleReport = getReportName(path_1, outpath, this.platform == 'illumina')
         let fullreport =path.join(outpath, 'full.report') 
@@ -110,7 +105,6 @@ export  class Classifier {
                         $this.status.historical = false
                         $this.process = null
                         $this.ws.emit('status', {samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
-
                         resolve( `${code}`)                
                     });
                     $this.process = classify
@@ -128,7 +122,6 @@ export  class Classifier {
                 reject(err)
             })
         })
-        
     }   
     sendFullReportSample(){
         const $this = this
@@ -144,7 +137,6 @@ export  class Classifier {
     generateCommandString(){
         const $this = this
         let report = this.fullreport
-        let outputdir = this.outputdir
         let command = `sleep 1; ls -lht ${this.filepath}; bash ${__dirname}/src/bundle.sh \\
             -i "${$this.filepath}" \\
             -o "${this.sampleReport}"  \\
@@ -221,7 +213,6 @@ export  class Classifier {
             } finally {
                 try{
                     exists.sample = await fs.existsSync(this.sampleReport)
-                    console.log(this.sampleReport, "REPORT", exists)
                 } catch (err){
                     logger.error(`${err} error in getting full report name for sample: ${sample}`)
                 } finally {

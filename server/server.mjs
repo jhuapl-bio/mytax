@@ -122,7 +122,7 @@ export  class Orchestrator {
         }
         try{
             let sample = new Sample(s, this.queue, this.ws, this.reportWs)
-            sample.gpu = this.gpu
+            sample.gpu = this.gpu 
             sample.overwrite = overwrite
             sample.config = this.config
             sample.pause = false

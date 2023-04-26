@@ -12,6 +12,7 @@ export function removeExtension(filename, illumina) {
 export function getReportName(path_1, outpath, illumina){
     try{
         let path_reports = removeExtension(path_1)
+        
         if (illumina){
             path_reports = path_reports.replace(/_[\d]?$/g, "")
         }

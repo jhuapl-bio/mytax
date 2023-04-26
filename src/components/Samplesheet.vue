@@ -415,9 +415,6 @@
                 
                 </v-card>
             </v-dialog>
-            <!-- <v-card
-                class="pt-5"
-            > -->
             <v-navigation-drawer
                 v-model="drawerSample"
                 absolute app
@@ -568,142 +565,7 @@
 
                     </v-list-item>
                 </v-list>
-                
-                <!-- <v-list  
-                    >
-                    <v-list-item
-                            no-action v-model="sample.active"
-                            v-for="sample in samples" 
-                            :key="sample.sample"
-                        > 
-                        
-                            <v-list-item-content>
-                                <v-list-item-title>{{ sample.sample }}</v-list-item-title>
-                            </v-list-item-content>
-                            <v-list-item-action >
-                                <div style="display:flex"> 
-                                    <v-tooltip  >
-                                        <template v-slot:activator="{ on, attrs }">
-                                            <v-icon
-                                                medium color="indigo"
-                                                v-bind="attrs" 
-                                                v-on="on"
-                                                @click="forceRestart(sample)"
-                                            >
-                                                {{ !sample.demux ? `mdi-play-circle` : `mdi-view-week` }}
-                                            </v-icon>
-                                        </template>
-                                        <span>{{ !sample.demux ? `Classify the path of fastq(s)` : `Demux a directory of fastq files` }} </span>
-                                    </v-tooltip>
-                                    <span>{{ !sample.demux ? `Classify` : `Demux` }} </span>
-                                </div>
-                            </v-list-item-action>
-                            <v-list-item-action>
-                                <v-btn fab x-small @click="selectedSample = queueList[sample.sample]; dialogJobs = true"  
-                                    >
-                                    <v-icon>mdi-comment</v-icon>
-                                </v-btn>
-                            </v-list-item-action>
-                            <v-spacer></v-spacer>
-                            <v-list-item-action>
-                                <v-icon
-                                    medium
-                                    class="" color=""
-                                    @click="editItem(sample);" 
-                                >
-                                    mdi-pencil 
-                                </v-icon>
-                                <v-progress-circular
-                                    indeterminate v-if="current && typeof current == 'object' && current[sample.sample]"
-                                    color="primary" medium size="22"
-                                ></v-progress-circular>
-                                <v-icon
-                                    medium  v-else-if="sample.format !=='run'"  :key="`${sample.sample}-runsamplemajorbutton`" :color="anyCompleted(sample.sample) ? 'green' : 'orange'"
-                                >
-                                    {{ anyCompleted(sample.sample) ? 'mdi-check-circle' : 'mdi-exclamation' }}
-                                </v-icon>
-                            </v-list-item-action>
-                            <v-list-item-action>
-                                <v-tooltip  v-if="1==1|| current && typeof current == 'object'  && current[sample.sample] " left>
-                                    <template v-slot:activator="{ on, attrs }">
-                                        <v-icon
-                                            medium color="indigo"
-                                            v-bind="attrs"
-                                            v-on="on"
-                                            @click="cancelJob(null, sample.sample)"
-                                        >
-                                        mdi-cancel
-                                        </v-icon>
-                                    </template>
-                                    <span>Cancel Sample Job(s)</span>
-                                </v-tooltip>
-                                <v-icon
-                                    medium class="" color="orange"
-                                    @click="deleteItem(sample)"
-                                >
-                                    mdi-delete
-                                </v-icon>
-                            </v-list-item-action>
-                        
-                        <v-list-item 
-                            :style="{
-                                'text-align':'left',
-                                'overflow-wrap': 'break-word'
-                            }" class="mx-10"
-                            v-for="key4 in Object.keys(sample).filter((f)=>{
-                                return f != 'sample' && f != 'active'
-                            })"
-                            :key="`${key4}-${sample}`"
-                        >
-                            <v-list-item-content 
-                                :style="{
-                                    'text-align':'left',
-                                    'overflow-wrap': 'break-word'
-                                }" class="mx-0">
-                                <v-list-item-title class="font-weight-bold">{{ key4 }}</v-list-item-title>
-                                <v-list-item-subtitle class=""  v-if="sample[key4] == '' || !sample[key4]">(Empty)</v-list-item-subtitle>
-                                <v-switch v-if="adjustable[key4]['type'] == 'boolean'" v-model="sample[key4]"> </v-switch>
-                                <v-select v-else-if="adjustable[key4]['type'] == 'list'"
-                                    v-model="sample[key4]" solo
-                                    :items="adjustable[key4].values"
-                                    label="Select"
-                                    single-line
-                                ></v-select>
-                                <v-edit-dialog v-else-if="adjustable[key4].type == 'string'"
-                                    :return-value.sync="sample[key4]"
-                                    large
-                                    :rules="[containsPlatform]"
-                                    persistent
-                                    @save="save"
-                                    @cancel="cancel"
-                                    @open="open"
-                                    @close="close"
-                                >
-                                
-                                <div style="display: flex;  ">
-                                    <code class="overflow-auto" style="">{{ sample[key4] }}</code>
-                                    <v-spacer class="mx-10"></v-spacer>
-                                    
-                                </div>
-                                <template v-slot:input>
-                                    <div class="mt-4 text-h6">
-                                    Update Value
-                                    </div>
-                                    <v-text-field
-                                        v-model="sample[key4]"
-                                        label="Edit"
-                                        single-line
-                                        counter
-                                        autofocus
-                                    ></v-text-field>
-                                </template>
-                                </v-edit-dialog>
-                        </v-list-item-content>
-                        </v-list-item>
-                    </v-list-item>
-                </v-list> -->
-<!--                 
-            </v-card > -->
+              
         </v-col>
         <v-dialog
             style="overflow-x:auto; width:100%" absolute v-model="dialogQueue" v-if="dialogQueue"
@@ -1073,7 +935,6 @@
           this.$emit("pausedChange", val)
       },
       queueList(val){
-        console.log(val,"queuelist changed")
       },
       stagedData (val){
           let filtered = []

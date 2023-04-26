@@ -68,7 +68,6 @@
           app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
           
         >   
-        <!-- <div style="width: 100%; height:100%; overflow-y:auto"> -->
             
           <Samplesheet
               :samplesheet="samplesheetdata"
@@ -668,6 +667,9 @@ export default {
                 if (!this.status[e.samplename]){
                   this.status[e.samplename] = []
                 } 
+                if (!this.status[e.samplename][e.index]){
+                  this.status[e.samplename][e.index] = {}
+                }
                 this.$set(this.status[e.samplename][e.index], 'status', e.status)
                 this.$set(this.status[e.samplename][e.index], 'sample', e.sample)
                 this.$set(this.current, e.samplename, e.status.running)   
@@ -695,6 +697,7 @@ export default {
               $this.socket.on("data", (e)=>{
                 ( async ()=>{
                   await this.importData(e.data, null, e.samplename)
+                  
                   if (!this.topLevelSampleNames[e.topLevelSampleNames]){
                     this.topLevelSampleNames[e.topLevelSampleNames] = []
                   }
@@ -710,80 +713,7 @@ export default {
               $this.socket.emit("start", { samplesheet: $this.samplesheetdata, overwrite: false });
           })
 
-          // this.socket.onmessage = (event) => {
-          //   // We can parse the data we know to be JSON, and then check it for data attributes
-          //   let parsedMessage = JSON.parse(event.data);
-          //   // If those data attributes exist, we can then console log or show data to the user on their web page.
-          //   if (parsedMessage.type == 'data'){
-          //     ( async ()=>{
-          //       await this.importData(parsedMessage.data, null, parsedMessage.samplename)
-          //       if (!this.topLevelSampleNames[parsedMessage.topLevelSampleNames]){
-          //         this.topLevelSampleNames[parsedMessage.topLevelSampleNames] = []
-          //       }
-          //       let index = this.topLevelSampleNames[parsedMessage.topLevelSampleNames].indexOf(parsedMessage.samplename)
-          //       if (index < 0 ){
-          //         this.topLevelSampleNames[parsedMessage.topLevelSampleNames].push(parsedMessage.samplename)
-          //       }
-          //     })().catch((Err)=>{
-          //       console.error(Err)
-          //     })
-                
-          //   } else if (parsedMessage.type == 'add'){
-          //     this.samplesheetdata.push(parsedMessage.data)
-          //   } else if (parsedMessage.type == 'playback'){
-          //     this.playbackdata = parsedMessage.message;
-          //   } else if (parsedMessage.type == 'basepathserver'){
-          //     this.basepathserver = parsedMessage.data;
-          //   } else if (parsedMessage.type == 'getbundleconfig'){
-          //     this.bundleconfig = parsedMessage.data;
-          //   } else if (parsedMessage.type == 'queueLength'){
-          //     this.queueLength = parsedMessage.data
-          //   } else if (parsedMessage.type == 'logs'){
-          //     this.logs.push(parsedMessage.data)
-          //     const lasts = this.logs.slice(-100);
-          //     this.logs = lasts 
-
-          //   } else if (parsedMessage.type == 'config'){
-          //     this.config = parsedMessage.message
-          //   } else if (parsedMessage.type == 'flushed'){
-          //     for(let key of Object.keys(this.current)){
-          //       this.current[key]= null
-          //     }
-          //   } else if (parsedMessage.type == 'reads'){
-          //     this.reads = parsedMessage.message
-          //   } else if (parsedMessage.type == 'error'){
-          //   } else if (parsedMessage.type == 'message'){
-          //   } else if (parsedMessage.type == 'paused'){
-          //     this.pausedServer=parsedMessage.message
-          //   } else if (parsedMessage.type == 'anyRunning'){
-          //     this.anyRunning = parsedMessage.status
-          //   } 
-          // else if (parsedMessage.type == 'recentQueue'){
-          //     if (!this.status[parsedMessage.data.name]){
-          //       this.status[parsedMessage.data.name] = []
-          //     } 
-              
-          //     if (parsedMessage.data.index >=0){
-          //       this.$set(this.status[parsedMessage.data.name], parsedMessage.data.index, parsedMessage.data)
-          //     } else {
-          //       this.$set(this.status[parsedMessage.data.name], this.status[parsedMessage.data.name].length > 0 ? this.status[parsedMessage.data.name].length-1:0, parsedMessage.data)
-          //     }
-              
-          //   } else if (parsedMessage.type == 'status'){
-          //     if (!this.status[parsedMessage.samplename]){
-          //       this.status[parsedMessage.samplename] = []
-          //     } 
-          //     this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'status', parsedMessage.status)
-          //     // this.status[parsedMessage.samplename][parsedMessage.index] = Object.assign({}, this.status[parsedMessage.samplename][parsedMessage.index], parsedMessage.status, )
-          //     this.$set(this.status[parsedMessage.samplename][parsedMessage.index], 'sample', parsedMessage.sample)
-          //     // this.$set(this.status[parsedMessage.samplename][parsedMessage.index].status, 'running', parsedMessage.status.running)              
-          //     this.$set(this.current, parsedMessage.samplename, parsedMessage.status.running)   
-          //   }
-          //   else{ 
-          //     this.message = parsedMessage.message;
-          //   }
-          // }
-
+         
           
         },
         extractValue(value){
@@ -1108,7 +1038,6 @@ export default {
             }
             
             uniques[d[3]] = 1
-            
             return data
           })
        

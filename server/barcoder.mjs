@@ -122,7 +122,7 @@ export  class Barcoder {
                 } else {
                     $this.status.success = 0
                     $this.status.historical = true
-                    logger.info(`${$this.name} already seen file, overwrite disabled`)
+                    // logger.info(`${$this.name} already seen file, overwrite disabled`)
                     $this.ws.emit( "status", {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     resolve(0)
                 }

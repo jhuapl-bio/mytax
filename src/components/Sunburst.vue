@@ -240,7 +240,6 @@
         let selectedAttribute = this.selectedAttribute
         const defaultColor = this.defaultColor
         let taxValues = this.getTaxValues()
-        // const taxValues = this.taxValues 
         const piechartLegendSVG = d3.select("#legendSVG-"+this.samplenameparsed).classed("svgPieChartLegend", true)
           
         let legend_wrapper = d3.select(`#legend_wrapper-${this.samplenameparsed}`)
@@ -505,7 +504,7 @@
                 return $this.fetchArc("slice", d.data.data.taxid)
               });
               returnable.append("title").text(function (d) {
-                return "Sample: " + $this.samplenameparsed + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nTotal reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
+                return "Sample: " + $this.samplenameparsed + "\nFull Name(s): " + d.data.data.full + "\nName: " + d.data.data.target + "\nPercent: " + d.data.data.value + "%\nDepth: " + d.data.depth +  "\nSelected Rank Total reads: " + $this.roundNumbers(d.data.data.num_fragments_clade, 0)  +
                   "\nAssigned reads: " + $this.roundNumbers(d.data.data.num_fragments_assigned, 0) + "\nRank: " + d.data.data.rank_code + "\nTaxid: " + d.data.data.taxid
               })
               returnable.append('path')
