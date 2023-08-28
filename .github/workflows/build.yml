@@ -17,7 +17,7 @@ jobs:
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      - name: Push to Docker Hub
+      - name: Build and Push to Docker Hub
         uses: docker/build-push-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -26,5 +26,6 @@ jobs:
           tag_with_ref: true
           tag_with_sha: true
           context: .
+          push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.package-version.outputs.current-version}}
