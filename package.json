@@ -1,6 +1,6 @@
 {
   "name": "mytax",
-  "version": "0.1.0",
+  "version": "v2.2.6",
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve --port 8080",
