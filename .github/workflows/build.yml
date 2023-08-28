@@ -22,10 +22,9 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: ${{ secrets.DOCKERHUB_REPOSITORY }}
           tag_with_ref: true
           tag_with_sha: true
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tag: jhuaplbio/basestack_mytax2:${{ steps.package-version.outputs.current-version}}
+          tags: jhuaplbio/basestack_mytax2:latest
