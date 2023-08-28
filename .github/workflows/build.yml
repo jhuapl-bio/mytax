@@ -26,5 +26,6 @@ jobs:
           tag_with_sha: true
           context: .
           push: true
+          file: "./Dockerfile"
           platforms: linux/amd64,linux/arm64
           tags: jhuaplbio/basestack_mytax2:latest
