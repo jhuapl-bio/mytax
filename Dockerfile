@@ -23,16 +23,17 @@ RUN apt-get install git -y \
 
 WORKDIR /opt
 
-# Get Guppy barcoder for demux purposes
-# RUN wget https://cdn.oxfordnanoportal.com/software/analysis/ont-guppy_6.4.6_linux64.tar.gz -O ./guppy_6_gpu.tar.gz
-# RUN wget https://cdn.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_6.4.6_linux64.tar.gz -O ./guppy_6_cpu.tar.gz
-# RUN    tar -xvzf /opt/guppy_6_gpu.tar.gz && mv /opt/ont-guppy /opt/ont-guppy-gpu  && rm /opt/guppy_6_gpu.tar.gz
-# RUN tar -xvzf /opt/guppy_6_cpu.tar.gz && mv /opt/ont-guppy-cpu /opt/ont-guppy && \
-#     ln -sf /opt/ont-guppy/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && \
-#     rm /opt/guppy_6_cpu.tar.gz
+# Get Guppy barcoder for demux purposes, remove the jsn files to save space. This will make basecalling unusable
+RUN wget https://cdn.oxfordnanoportal.com/software/analysis/ont-guppy_6.4.6_linux64.tar.gz -O ./guppy_6_gpu.tar.gz && \
+    tar -xvzf /opt/guppy_6_gpu.tar.gz && mv /opt/ont-guppy /opt/ont-guppy-gpu  && rm /opt/guppy_6_gpu.tar.gz && \
+    wget https://cdn.oxfordnanoportal.com/software/analysis/ont-guppy-cpu_6.4.6_linux64.tar.gz -O ./guppy_6_cpu.tar.gz && \
+    tar -xvzf /opt/guppy_6_cpu.tar.gz && mv /opt/ont-guppy-cpu /opt/ont-guppy && \
+    ln -sf /opt/ont-guppy/bin/guppy_barcoder /usr/local/bin/guppy_barcoder && \
+    rm /opt/guppy_6_cpu.tar.gz && rm /opt/ont-guppy/data/*.jsn && rm /opt/ont-guppy-gpu/data/*.jsn
 
-RUN wget https://github.com/DerrickWood/kraken2/archive/refs/tags/v2.1.3.tar.gz -O kraken2.tar.gz && \
-    tar -xvzf kraken2.tar.gz && rm kraken2.tar.gz && cd kraken2-2.1.3 && \
+# RUN wget https://github.com/DerrickWood/kraken2/archive/refs/tags/v2.1.3.tar.gz -O kraken2.tar.gz && \
+#     tar -xvzf kraken2.tar.gz && rm kraken2.tar.gz && \
+RUN git clone https://github.com/DerrickWood/kraken2.git --branch v2.1.3 && cd kraken2 && \
     ./install_kraken2.sh /usr/bin/ && \
     git clone https://github.com/jenniferlu717/KrakenTools.git && \
     cd KrakenTools && chmod +x *.py && \
