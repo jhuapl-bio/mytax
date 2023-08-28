@@ -1,8 +1,8 @@
 name: Build and push Docker image upon release
 
 on:
-  release:
-    types: [build]  
+  push:
+    - build
 jobs:
   push_to_registry:
     name: Build and push Docker image upon release
