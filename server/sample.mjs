@@ -103,11 +103,11 @@ export  class Sample {
         classifier.initialize()
         let msg; 
         // console.log(">>>>", classifier.sampleReport,"\n\t", "<<<<", this.sampleObj.sample, this.sampleObj.format, this.sampleObj.platform) 
-        // msg = this.defineQueueMessage(classifier)
-        // classifier.type = 'classifier'
-        // classifier.index = msg.index
-        // this.updateStatusQueueList(classifier, msg.index)
-        // $this.defineQueueJob(classifier )
+        msg = this.defineQueueMessage(classifier)
+        classifier.type = 'classifier'
+        classifier.index = msg.index
+        this.updateStatusQueueList(classifier, msg.index)
+        $this.defineQueueJob(classifier )
         return classifier
     }
     getIndexJob(filepath){

@@ -48,18 +48,17 @@
         </v-checkbox>
         
         <v-spacer></v-spacer>
-        <v-btn btn-and-icon  color="blue "  @mouseover="navigation.shown=true" @click="navigation.shown = true" >
+        <!-- <v-btn btn-and-icon  color="blue "  @mouseover="navigation.shown=true" @click="navigation.shown = true" > -->
           <v-progress-circular
               v-if="anyRunning "
               :indeterminate="true" top
               stream   class="mr-2" size="14"
               color="white"
           ></v-progress-circular>
-          Data Sheet
-          <span  v-if="!samplesheetdata || samplesheetdata.length <= 0 " class="pulse"></span>
+          <!-- <span  v-if="!samplesheetdata || samplesheetdata.length <= 0 " class="pulse"></span>
           <v-icon v-else class="ml-2">mdi-export</v-icon>
           
-        </v-btn>
+        </v-btn> -->
         
       </v-app-bar> 
       <div class="pt-6 "> 
@@ -475,6 +474,7 @@ export default {
         this.setEvents();
         this.importNames(this.names_file)
         try{
+          console.log(`${process.env.BASE_URL}/data/Samplesheet.csv`)
           let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
           let data = await d3.csv(`${samplesheet}`)
           data = data.filter((f)=>{
