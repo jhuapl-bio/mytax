@@ -8,6 +8,9 @@ jobs:
     name: Build and push Docker image upon release
     runs-on: ubuntu-latest
     steps:
+      - 
+        name: Checkout repository
+        uses: actions/checkout@v2
       -
         name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -17,7 +20,8 @@ jobs:
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      - name: Build and Push to Docker Hub
+      - 
+        name: Build and Push to Docker Hub
         uses: docker/build-push-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -28,4 +32,4 @@ jobs:
           push: true
           file: "./Dockerfile"
           platforms: linux/amd64,linux/arm64
-          tags: jhuaplbio/basestack_mytax2:latest
+          tags: jhuaplbio/basestack_mytax2:${{ steps.package-version.outputs.current-version}}
