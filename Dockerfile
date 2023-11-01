@@ -49,7 +49,7 @@ COPY ./vue.config.docker.js /opt/vue.config.js
 COPY ./src /opt/src
 RUN npm run build
 COPY ./server /opt/server
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY ./nginx.conf /etc/nginx/nginx.conf
 RUN useradd nginx && ln -s /opt/dist /usr/share/nginx/html/mytax && chmod -R 777 /usr/share/nginx/html/mytax
 EXPOSE 80
 

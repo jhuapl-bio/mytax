@@ -374,6 +374,7 @@ export default {
             selectedsample: null,
             fullData: [],
             type: "single",
+            runName: "no_name",
             database:null,
             watchdir:null,
             playbackdata: null,
@@ -474,7 +475,6 @@ export default {
         this.setEvents();
         this.importNames(this.names_file)
         try{
-          console.log(`${process.env.BASE_URL}/data/Samplesheet.csv`)
           let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
           let data = await d3.csv(`${samplesheet}`)
           data = data.filter((f)=>{
@@ -647,6 +647,7 @@ export default {
               $this.connectedStatus = 'Connected';
               $this.socket.emit("message", {type: "message"})
               $this.socket.on("message", (e)=>{
+
               })
               $this.socket.on("add",(e)=>{
                 this.samplesheetdata.push(e.data)
@@ -710,7 +711,11 @@ export default {
                 })
               })
               $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
-              $this.socket.emit("start", { samplesheet: $this.samplesheetdata, overwrite: false });
+              $this.socket.emit("start", { 
+                samplesheet: $this.samplesheetdata, 
+                run: this.runName, 
+                overwrite: false 
+              });
           })
 
          
@@ -803,6 +808,7 @@ export default {
         async rerun(index, sample){
           this.sendMessage({
                 type: "rerun", 
+                run: this.runName,
                 overwrite: true,
                 sample: sample,
                 index: index,
@@ -818,6 +824,7 @@ export default {
           if (sample){ 
             this.sendMessage({
                   type: "restart", 
+                  run: this.runName,
                   overwrite: restart,
                   sample: sample,
                   "message" : `Begin restart directory ${this.watchdir}, classify with ${this.database} `
@@ -827,6 +834,7 @@ export default {
             this.sendMessage({
                   type: "start", 
                     samplesheet: this.samplesheetdata,
+                    run: this.runName, 
                     overwrite: restart,
                     "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
                 }
@@ -835,7 +843,6 @@ export default {
           
         },
         cancel(data){
-          console.log(data,"<<<")
           this.sendMessage({
                   type: "cancel", 
                   index: data.index,
@@ -850,6 +857,7 @@ export default {
                   type: "start", 
                   samplesheet: this.samplesheetdata,
                   overwrite: false,
+                  run: this.runName, 
                   "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
               }
           );

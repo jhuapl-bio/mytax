@@ -416,7 +416,7 @@
                         returnable.attr('cursor', 'move')
                           .call(d3.drag()
                             .on('start', dragStart)
-                            .on('drag', dragMove)
+                            .on('drag', dragMove) 
                             );                  
                         return returnable
                       },

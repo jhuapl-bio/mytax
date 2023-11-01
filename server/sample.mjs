@@ -47,7 +47,7 @@ export  class Sample {
         
     }
     cleanup(){
-        try{
+        try{ 
             if (this.watcherDemux){
                 this.watcherDemux.close().then(() => logger.info('closed demux'));
                 this.watcherDemux._watched.clear()
@@ -102,7 +102,6 @@ export  class Sample {
         classifier.overwrite = this.overwrite 
         classifier.initialize()
         let msg; 
-        // console.log(">>>>", classifier.sampleReport,"\n\t", "<<<<", this.sampleObj.sample, this.sampleObj.format, this.sampleObj.platform) 
         msg = this.defineQueueMessage(classifier)
         classifier.type = 'classifier'
         classifier.index = msg.index

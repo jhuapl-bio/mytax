@@ -1,6 +1,7 @@
 import glob from "glob-all"
 import {logger} from './logger.js'
 import PQueue from 'p-queue';
+import os from 'os'
 
 import  { WebSocketServer } from 'ws';
 
@@ -25,7 +26,21 @@ export  class Orchestrator {
         this.watcherBC = {} 
         this.queueRecords = {}
         const $this = this
+        this.homepath = os.homedir();
+        this.savePath = path.join(this.homepath, ".config", "mytax2")
+        this.configuration = path.join(this.savePath, "config.json")
+        this.runs = path.join(this.savePath, "runs")
+        this.reports = path.join(this.savePath, "reports")
+
+        this.oxfordWatchPath = "/var/lib/minknow/data" 
         // this.portServer = 7688
+        try{
+            this.read_config()
+        } catch (err){
+            logger.error(err)
+        }
+
+
         this.bundleconfigDefaults= [
             {
                 name: "NCBI names.dmp file", 
@@ -90,10 +105,40 @@ export  class Orchestrator {
                 console.error("no websocket connection %o", err)
             }
         })
-
-
-
     } 
+    async read_config(){
+        let exists = await fs.existsSync(this.configuration)
+        if (!exists){
+            await this.setConfiguration()
+        } else {
+            let config = await fs.readFileSync(this.configuration)
+            config = JSON.parse(config)
+            this.savePath = config.savePath
+            this.oxfordWatchPath = config.oxfordWatchPath
+            return 
+        }
+    }
+    
+    async setConfiguration(){
+        try{
+            let exists = await fs.existsSync(this.savePath)
+            if (!exists){
+                await fs.mkdirSync(this.savePath, { recursive: true });
+
+                const config = {
+                    savePath: this.savePath,
+                    oxfordWatchPath: this.oxfordWatchPath
+                }
+
+                await fs.writeFileSync(
+                    this.configuration,
+                    JSON.stringify(config, null, 4)
+                )
+            }
+        } catch (err){
+            logger.error(err)
+        }
+    }
     
     cleanup(){
         const $this = this
@@ -133,8 +178,41 @@ export  class Orchestrator {
             logger.error(`${err}`)
         }
     }
+    async writeRun(config){
+        try{
+            // set a configuration with run name, smaplesheet, and the bundle config information in it as a json
+            console.log(config)
+            let outfile = path.join(this.runs, `${config.run}.json`)
+            // check if the run directory exists, if it does not make a directory
+            console.log(outfile)
+            let exists = await fs.existsSync(this.runs)
+            if (!exists) {
+                await fs.mkdirSync(this.runs, { recursive: true });
+            }
+            await fs.writeFileSync(outfile, JSON.stringify(config, null, 4))
+        } catch (err){
+            logger.error("Error in writing the run to a folder/file")
+            logger.error(err)
+        }
+    }
+    async setRun(configuration){ 
+        try{
+            // set a configuration with run name, smaplesheet, and the bundle config information in it as a json
+            let config = {
+                samplesheet: configuration.samplesheet,
+                run: configuration.run,
+                bundleconfig: this.bundleconfig
+            }
+            await this.writeRun(config)
+            this.runName = this.configuration.runName
+            this.samplesheet = this.configuration.samplesheet
+        } catch (err){
+            logger.error("Error in setting run ")
+            logger.error(err)
+        }
+    }
     async setSamples(samples, overwrite){
-        logger.info(`${process.env} ${path.cwd}-----${samples}`)
+        logger.info(`Env: ${process.env} ${path.cwd}-----${samples}`)
         const $this = this
         delete this.samples
         this.samples = {}
@@ -145,8 +223,6 @@ export  class Orchestrator {
         }
     }
     setConfig(config, type){
-        
-        
         const $this = this
         try{  
             logger.info(`${type}, setting the config`)
@@ -214,7 +290,7 @@ export  class Orchestrator {
         const $this = this
         let sampleObj = new Sample(sample)
 
-        if (overwrite){
+        if (overwrite){ 
             let outpath = path.join(path.dirname(sample.path_1), sample.sample)  
             let fullreport = path.join(outpath, 'full.report')
             let exists_returned = await fs.existsSync(fullreport)
@@ -364,7 +440,7 @@ export  class Orchestrator {
         $this.queue.on("idle", () => {
             logger.info("Idle queue, all jobs completed")
             $this.queueLengthInterval = false
-            try{
+            try{ 
                 this.ws.emit("anyRunning",  {status: false})
                 this.ws.emit("queueLength",  {data: $this.queue.size })
             } catch (err){

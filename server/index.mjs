@@ -22,7 +22,6 @@ let server = http.createServer(app)
 let params = {}
 let portclient = 8080
 // if (process.env.NODE_ENV == 'development'){
-  console.log(process.env.NODE_ENV,"<<")
     params = {
         cors: {
             origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`,`http://localhost:${4555}`],
@@ -105,14 +104,23 @@ io.on('connection', (ws) => {
     }  
   })
   ws.on('start', (msg) => {
-        try{
-            let i=0
-            logger.info(`Starting run from samplesheet ${JSON.stringify(msg)}`) 
-            storage.orchestrator.setSamples(msg)
-        } catch(err){
-            logger.error(err)
-        } 
-  })
+    try{
+        let i=0
+        logger.info(`Setting Run ${msg.run}`) 
+        storage.orchestrator.setRun(msg)
+    } catch(err){
+        logger.error(err)
+    } 
+})
+  // ws.on('start', (msg) => {
+  //       try{
+  //           let i=0
+  //           logger.info(`Starting run from samplesheet ${JSON.stringify(msg)}`) 
+  //           storage.orchestrator.setSamples(msg)
+  //       } catch(err){
+  //           logger.error(err)
+  //       } 
+  // })
   ws.on('flush', () => {
     try{
         logger.info(`Flushing queue`)
