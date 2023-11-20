@@ -1,21 +1,38 @@
 # Mytax2 - Realtime reporting
 
+
+## Create Conda Environment
+```
+conda create -f environment.yml
+```
+
+
 ## Project setup
 ```
 npm install
 ```
 
-### Compiles and hot-reloads for development
+## Starting Development
+
+Run the below 2 commands:
+
+### Compiles and hot-reloads for development on frontent
 ```
 npm run serve
 ```
 
-### Compiles and minifies for production
+### Compiles and hot-reloads for development on server
+```
+npm run server
+```
+
+
+## Building Production package
 ```
 npm run build
 ```
 
-### Lints and fixes files
+### Lints and fixes files (development only)
 ```
 npm run lint
 ```
