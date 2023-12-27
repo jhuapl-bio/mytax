@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { parse } from "csv-parse"
 import  { spawn } from 'child_process';
+import chokidar from 'chokidar';
 export  class Orchestrator { 
     constructor(socket){         
         this.queue = null
@@ -144,6 +145,159 @@ export  class Orchestrator {
             })
         }
     }
+    //Create async function to watch for new runs
+    async watchRuns(){
+        const $this = this;
+
+        //Specify directory to watch for new runs/directories being made
+        const rootPath = '';
+        
+        //Specify path to database (e.g minikraken2)
+        const dbpath = '';
+        //Specify max number of run watchers 
+        const maxRuns = 1;
+
+        let runPath;
+        // Array to store the paths of the most recent runs
+        const recentRuns = [];
+
+        //Check to see if runWatcher exists
+        if (this.runWatcher) {
+            try{
+                // Tries to close runwatcher 
+                await this.runWatcher.close();
+                // If close is successful, delete runWatcher property from "this"
+                delete this.runWatcher;
+            } catch (err){
+                logger.error(`$(err) error in closing runWatcher chokidar`)
+            }
+        }
+
+        //Initialize chokidar watcher on specified directory
+        //Start fastq watcher on only n runs - closing should only happen on the newest runs, append all the fastq watcher in a list and iterate through list to close old ones
+        this.runsWatcher = chokidar.watch(rootPath, {ignored: /^\./, persistent: true, usePolling: true, depth: 0, followSymlinks: false, awaitWriteFinish: true})
+            //Watch for new directories specifically
+            .on('addDir', function(dirpath) {
+                logger.info(`Directory ${dirpath} has been added to watch`)
+               
+                
+                // Add the value of dirpath to the beginning of array
+                recentRuns.unshift(dirpath)
+                // If the array length exceeds limit, remove elements from end of array
+                recentRuns.splice(maxRuns)
+                // Close fastq watchers for old runs
+                $this.closeOldFastqWatchers();
+                // Initialize chokidar watcher within the new directory
+                $this.initFastqWatcher(dirpath);
+                runPath = dirpath;
+            });
+        
+        this.closeOldFastqWatchers = function () {
+            //Loop over all the run paths associated with the current fastqWatchers object
+            Object.keys($this.fastqWatchers).forEach((runPath) => {
+                // If the runPath is not in the recentRuns array
+                if (!recentRuns.includes(runPath)) {
+                    try {
+                        // Close the watcher
+                        $this.fastqWatchers[runPath].close();
+                        delete $this.fastqWatchers[runPath];
+                        logger.info(`Directory ${runPath} has been removed from watch`)
+                    } catch (err) {
+                        logger.error(`$(err) error in closing fastq watcher for run: ${runPath}`);
+                    }
+                }
+            });
+        };
+        
+        // Function to initialize chokidar watcher for fastq files
+        this.initFastqWatcher = function (dirpath) {
+            // Initialize chokidar watcher within the new directory
+            const fastqWatcher = chokidar.watch([path.join(dirpath, '**', '**', 'fastq_pass', '**')], {
+                ignored: /(^|[\/\\])\../,
+                persistent: true,
+                usePolling: true,
+                //Hold add and change events until file size does not change for 2 seconds
+                awaitWriteFinish: true
+            })
+                .on('add', function(filepath) {
+                    //Once a completed fastq is detected, close run watcher
+                    //Once a .fastq file does not change for 2 seconds, initiate processing
+                    
+                    if (filepath.includes('barcode')) {
+                        processFastqFile(filepath, 'barcoded');
+                    } else {
+                        processFastqFile(filepath, 'nobarcode');
+                    }
+                })
+                .on('error', (error) => {
+                    console.error(`Fastq watcher error: ${error}`);
+                });
+            // Store the fastqWatcher instance in the fastqWatchers object
+            $this.fastqWatchers[dirpath] = fastqWatcher;
+        };
+    
+        // Object to store fastqWatcher instances for each run
+        this.fastqWatchers = {};
+       
+        function processFastqFile(filepath, subcase) {
+            if (filepath.endsWith('.fastq') || filepath.endsWith('.fq') || filepath.endsWith('.gz')) {
+                const dir = path.dirname(filepath);
+                logger.info(`fastq directory added to watch ${dir}`);
+
+                //Prepare samplesheet variables
+                const columns = ['sample', 'path_1', 'path_2', 'format', 'demux', 'platform', 'database', 'kits', 'pattern'];
+                const emptytsv = [columns.join('\t')].join('\n');
+                let tsvPath = runPath + '/samplesheet.tsv';
+                
+                //Check if samplesheet already exists
+                if (!fs.existsSync(tsvPath)) {
+                    fs.writeFileSync(tsvPath, emptytsv);
+                    logger.info(`samplesheet created: ${tsvPath}`);
+                }
+
+                //Get runName
+                const runName = path.basename(runPath);
+                const existingData = fs.readFileSync(tsvPath, 'utf-8');
+                const existingRows = existingData.trim().split('\n').map(row => row.split('\t'));
+                let appendRow;
+                let sampleBar;
+                if (subcase == 'barcoded') {
+                    //Extract barcode directory name
+                    const parentDir = path.dirname(filepath)
+                    const barcode = path.basename(parentDir)
+
+                    //Generate sample name based on run and barcode 
+                    sampleBar = runName + '_' + barcode
+
+                    //Check if the sample name already exists
+                    const isDuplicate = existingRows.some(row => row[0] === sampleBar);
+                   
+                    if (!isDuplicate) {
+                        //If new, create row and append to samplesheet
+                        appendRow = [sampleBar, path.dirname(filepath), '', 'directory', 'FALSE', 'oxford', dbpath, '', ''].join('\t');
+                        fs.appendFileSync(tsvPath, '\n' + appendRow);
+                        console.log(`Updated samplesheet.tsv with ${sampleBar}`);
+                    }   else {
+                        console.log(`Duplicate row detected for sample: ${sampleBar}`)
+                    }
+
+                } 
+                if (subcase == 'nobarcode') {
+                    //Check if the sample name already exists
+                    const isDuplicate = existingRows.some(row => row[0] === runName);
+                    if (!isDuplicate) {
+                        const sampleName = path.basename(runPath);
+                        appendRow = [sampleName, path.dirname(filepath), '', 'directory', 'FALSE', 'oxford', dbpath, '', ''].join('\t');
+                        fs.appendFileSync(tsvPath, '\n' + appendRow);
+                        console.log(`Updated samplesheet.tsv with ${runName}`);
+                    }   else {
+                        console.log(`Duplicate row detected for sample: ${runName}`)
+                    }
+                    
+                }
+            }
+        }
+    }         
     setConfig(config, type){
         
         
