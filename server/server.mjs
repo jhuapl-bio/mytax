@@ -220,7 +220,7 @@ export  class Orchestrator {
                 awaitWriteFinish: true
             })
                 .on('add', function(filepath) {
-                    //Once a completed fastq is detected, close run watcher
+                    
                     //Once a .fastq file does not change for 2 seconds, initiate processing
                     
                     if (filepath.includes('barcode')) {
@@ -248,7 +248,7 @@ export  class Orchestrator {
                 const columns = ['sample', 'path_1', 'path_2', 'format', 'demux', 'platform', 'database', 'kits', 'pattern'];
                 const emptytsv = [columns.join('\t')].join('\n');
                 let tsvPath = runPath + '/samplesheet.tsv';
-                
+
                 //Check if samplesheet already exists
                 if (!fs.existsSync(tsvPath)) {
                     fs.writeFileSync(tsvPath, emptytsv);
