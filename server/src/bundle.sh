@@ -183,6 +183,7 @@ for file in $(ls $outputdir/*.report); do
 	fi 
 done  
 if [[ $files != "" ]]; then 
+	echo $files 
 	combine_kreports.py --only-combined --no-headers  -o $fullReport -r  $files
 fi 
 

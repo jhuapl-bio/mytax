@@ -38,10 +38,12 @@
     "sass-loader": "^10.0.0",
     "socket.io": "^4.6.1",
     "socket.io-client": "^4.6.1",
+    "tar": "^6.2.0",
+    "unzipper": "^0.10.14",
     "vue": "^2.6.14",
     "vue-json-excel": "^0.3.0",
     "vue-json-to-csv": "^1.1.8",
-    "vue-sweetalert2": "^5.0.2",
+    "vue-sweetalert2": "^5.0.5",
     "vuetify": "^2.6.0",
     "winston": "^3.6.0",
     "ws": "^8.12.0"

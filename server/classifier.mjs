@@ -4,52 +4,54 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 import  { spawn } from 'child_process';
-import { removeExtension, getReportName } from './controllers.mjs';
+import { removeExtension,  getReportName, globFiles } from './controllers.mjs';
 import {logger} from './logger.js'
 import fs from "file-system"
+import { broadcastToAllActiveConnections } from './messenger.mjs';
 export  class Classifier { 
-    constructor(sample){         
+    constructor(sample){    
+
         this.name = sample.sample
-        if (sample.filepath){
-            this.filepath = sample.filepath
-        } else {
-            if (sample.platform == 'illumina' && sample.path_1 && sample.path_2){
-                this.filepath = `${sample.path_1} ${sample.path_2}`
-            } else {
-                this.filepath = (sample.path_1 ? sample.path_1 : sample.path_2)
-            }
-        }
+        this.run = sample.run
+        this.filepath = sample.filepath
+        this.fullreport = sample.fullreport
+        this.outputdir = sample.outputdir
+        this.bundleconfig = sample.bundleconfig
+        this.config = sample.config
         this.dirpath = path.dirname(this.filepath)
+        this.sampleReport = sample.reportPath
         this.paired = ( sample.path_1 && sample.path_2 && sample.platform == 'illumina' ? true : false)
         this.gpu = ''
+        this.reportPath = sample.reportPath
+        this.reportfiles_seen = []
+        this.overwrite   = sample.overwrite
         this.ws = null
         this.process = null
         sample.filepath = this.filepath
         this.sample = sample
-        this.subsample = sample.subsample
         this.recombine = null
         this.status = {
             running: false, 
-            error: null, 
+            error: null,    
             historical: false, 
-            success: null,
+            success: null, 
             logs: []
-        }
+        } 
+        this.listeners = new Map(); 
+ 
+        
+        this.initialize()
        
 
 
-    }
-    initialize(){
-        let sample = this.sample
-        let path_1 = sample.path_1 
-        let outpath  = this.outputdir
-        
-        let sampleReport = getReportName(path_1, outpath, this.platform == 'illumina')
-        let fullreport =path.join(outpath, 'full.report') 
-        this.fullreport = fullreport
-        this.sampleReport = sampleReport
-        this.generateCommandString()
     } 
+    initialize(){
+        this.generateKrakenCommand()
+    } 
+    
+
+   
+
     async stop(){
         if (this.process){
             try{
@@ -69,27 +71,45 @@ export  class Classifier {
     getName(){
         return this.sample.run ? this.sample.run : this.name
     }
+
     async start(){ 
-        const $this=this
+        const $this=this 
         return new Promise((resolve, reject)=>{
+            if ($this.status.cancelled){
+                logger.info(`Job was cancelled, exiting`)
+                // reject('cancelled')
+            }
             $this.check_and_classify().then((exists)=>{
+                $this.status.historical = true
                 if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
-                    $this.generateCommandString()
+                    $this.generateKrakenCommand()
+                    console.log($this.command)
                     logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
-                    $this.status.running = true 
-                    $this.status.error = null
+                    $this.status.running = true  
+                    $this.status.cancelled = false
+                    $this.status.error = ''
+                    $this.status.success = null
+                    $this.status.logs = []
                     let command = $this.command
-                    let classify = spawn('bash', ['-c', ` ${command}`]);
-                    $this.ws.emit( "status",{samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
+                    let classify = spawn(command.main, command.args );
+                    broadcastToAllActiveConnections( "status",{
+                        run: $this.run, 
+                        sample: $this.name,  
+                        index: $this.index, 
+                        'status' :  $this.status 
+                    })
                     classify.stdout.on('data', (data) => {
-                        $this.status.logs.push(`${data}`)
+                        $this.status.logs.push(`${data}`) 
                         $this.status.logs.slice(0,20)
                         logger.info(`${data} `);
-                    }); 
+                    });   
                 
                     classify.stderr.on('data', (data) => {
                         $this.status.logs.push(`${data}`)
                         $this.status.logs.slice(0,20)
+                        if (data){
+                            $this.status.error = `${$this.status.error}\n${data}`
+                        }
                         logger.error(`${data}`);
                     });
                     classify.on('error', function(error) {
@@ -99,22 +119,32 @@ export  class Classifier {
                         reject(error)
                     })  
                     classify.on('exit', (code) => {
-                        logger.info(`finished classification for: ${$this.filepath}, generated: ${this.fullreport} with code ${code}`);
-                        $this.status.success = code
+                        logger.info(`finished classification for: ${$this.filepath}, generated: ${$this.sampleReport} with code ${code}`);
+                        $this.status.success = code !== 0 ? false : true
                         $this.status.running = false
                         $this.status.historical = false
                         $this.process = null
-                        $this.ws.emit('status', {samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
-                        resolve( `${code}`)                
+                        broadcastToAllActiveConnections( "status",{
+                            run: $this.run, 
+                            sample: $this.name,  
+                            index: $this.index, 
+                            'status' :  $this.status 
+                        })
+                        resolve( `${code}`)                 
                     });
                     $this.process = classify
-                } else {
-                    $this.status.success = 0
+                } else { 
+                    $this.status.success = true
                     $this.status.running = false
                     $this.status.historical = true
                     logger.info(`${this.fullreport} exists already`)
                     $this.status.logs.push['Historically gathered report, pre-run already']
-                    $this.ws.emit("status", {samplename: $this.getName(), sample: $this.sample,  index: $this.index, 'status' :  $this.status })
+                    broadcastToAllActiveConnections( "status",{
+                        run: $this.run, 
+                        sample: $this.name,  
+                        index: $this.index, 
+                        'status' :  $this.status 
+                    })
                     resolve()
                 }
             }).catch((err)=>{
@@ -125,105 +155,89 @@ export  class Classifier {
     }   
     sendFullReportSample(){
         const $this = this
-        // logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
+        logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
         fs.readFile($this.fullreport,(err,data)=>{
             if (err){
                 logger.error(err)
-            } 
+            }  
         
         })
     }
+    generateKrakenCommand(){
     
-    generateCommandString(){
-        const $this = this
-        let report = this.fullreport
-        let command = `sleep 1; ls -lht ${this.filepath}; bash ${__dirname}/src/bundle.sh \\
-            -i "${$this.filepath}" \\
-            -o "${this.sampleReport}"  \\
-            -d "${$this.sample.database}" ${(this.recombine ? '-r' : '')} `
-
- 
-        if ($this.paired){ 
+        let command = `echo "Sleep job"; sleep 1; echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
+        
+        if (this.paired){ 
             command=`${command} \\
             -t paired `
         }
-         
-        let additionals = ""  
-        for(let [key, value] of Object.entries(this.config))
-        {
-            if (value && value == true && typeof value == 'boolean'){
-                additionals = `${additionals}  \\
-                --${key}` 
-            } else if (value && value !== true){
-                if (Array.isArray(value)){
-                    if (value.length >0){
-                        additionals = `${additionals}  \\
-                        --${key} ${value.join(",")}`
+        let additionals = ""   
+        if (this.config){
+            for(let [key, value] of Object.entries(this.config))
+            {   
+                if (key == "minimum-hit-groups" && value >=0){
+                    additionals = `${additionals}  \\
+                    --${key} ${value}`
+                }  else if (value && value == true && typeof value == 'boolean'){
+                    additionals = `${additionals}  \\
+                    --${key}`   
+                } else if (value && value !== true){
+                    if (Array.isArray(value)){
+                        if (value.length >0){
+                            additionals = `${additionals}  \\
+                            --${key} ${value.join(",")}`
+                        }
+                    } else {
+                        additionals = `${additionals}   --${key} ${value}`
                     }
-                } else {
-                    additionals = `${additionals}   --${key} ${value}`
-                }
-            } 
-        }
-
-
-        if ($this.runBundle){
-            for(let [key, value] of Object.entries($this.bundleconfig))
-            {
-                
-                if (value && value.arg && Array.isArray(value.value)){
-                    if (value.value && value.value.length >0){
-                            
-                        command = `${command} \\
-                        -${value.arg} ${value.value.join(",")}`
-                    }
-                } else if (value && value.arg && value.value) {
-                        command = `${command} \\
-                        -${value.arg} ${value.value}`    
-                }
+                } 
             }
 
         }
-         
-        let compressed = $this.config.compressed
-        if (compressed == 'TRUE' && !additionals.match(/--gzip-compressed/g)){
-            additionals = `${additionals} --gzip-compressed `
-        } 
         
-        if (additionals !== ''){
-            command = `${command} \\
-            -a "${additionals}"`
+        
+        command = `${command } ${additionals} ${this.filepath}`
+        
+        let kreportcombined = this.generateKReportCommand()
+        command = {
+            main: "bash",
+            args: ['-c', `${command} && ${kreportcombined}`]
         }
         this.command = command
+        return command
+
+    }
+    generateKReportCommand(){ 
+        let combinedfiles = this.reportfiles_seen.length > 0 ? `${this.reportfiles_seen.join(" ")} ${this.reportPath}` : this.reportPath
+        let command = `combine_kreports.py \\
+        --only-combined --no-headers \\
+        -o ${this.fullreport} -r ${combinedfiles} `
         return command 
     }
-    async check_and_classify(){
-        let exists = {
+    async check_and_classify(){ 
+        let exists = { 
             full: false, 
             sample: false
         }
-        try{
-            let fullreport = this.fullreport
-
-            
-            try{
-                exists.full = await fs.existsSync(fullreport)
-            } catch (err){
-                logger.error(`${err} error in getting full report name for sample: ${ sample.sample}`)
-            } finally {
-                try{
-                    exists.sample = await fs.existsSync(this.sampleReport)
-                } catch (err){
-                    logger.error(`${err} error in getting full report name for sample: ${sample}`)
-                } finally {
-                    return exists
-                }
-                
-            }
-        } catch (Err){
-            logger.error(Err)
-            return exists
+        let fullreport = this.fullreport
+        try {
+            const pattern = `${this.outputdir}/*.report`;
+            let files = await globFiles(pattern)
+            // Filter and display the files
+            const reportFiles = files.filter(file =>  {
+                if (file == fullreport){
+                    exists.full = true
+                }   
+                if (file == this.reportPath){  
+                    exists.sample = true  
+                }  
+                return file.endsWith('.report') && file !== fullreport  ;
+            });  
+            this.reportfiles_seen = reportFiles
+        } catch (err) {
+            logger.error(`Error reading directory for reports on classifier pre-check: ${err}`);
+        } finally {
+            return exists  
         }
     }
-    
 }

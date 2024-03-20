@@ -144,6 +144,7 @@
               </Datatable>
             </v-row>
             <v-row v-else-if="(tabItem.component !== 'Plates' && tabItem.components !== 'Datatable')">
+              
               <v-col  :sm="determineSize"  v-for="[ key, sample ] of Object.entries(sampleData)" :key="`${key}-sample`" >
                 <component 
                   :is="tabItem.component" 

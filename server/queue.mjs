@@ -16,7 +16,7 @@ export  class QueueClass {
 		return this._queue.shift();
 	}
 	prioritize(run, options) {
-		logger.info(`options ${options}`)
+		logger.info(`Options ${options}`)
 		return this._queue.unshift(run)
 	}
 
