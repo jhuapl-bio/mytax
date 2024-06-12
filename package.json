@@ -5,7 +5,7 @@
   "scripts": {
     "serve": "vue-cli-service serve --port 8080",
     "serveProduction": "export NODE_ENV=production && vue-cli-service serve --port 8080",
-    "serveBoth": "npm run serve & npm run serve",
+    "serveBoth": "npm run serve & npm run server",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "server": "export NODE_ENV=development && nodemon server/index.mjs --watch",
