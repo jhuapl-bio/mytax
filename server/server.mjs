@@ -159,7 +159,7 @@ export  class Orchestrator {
     }
     getDefaultSettings() {
         return {
-            database: defaultdatabase,
+            database: this.defaultdatabase,
             gpu: false,
             watchpath: this.defaultwatchpath,
             // ... other default settings
