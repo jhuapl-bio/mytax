@@ -42,6 +42,38 @@ export  class Orchestrator {
                 key: 'flukraken2',
                 fullpath: path.join(this.databasespath, "flukraken2")
             },
+            {
+                url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/marine_mammal_mitochondrion-refseq-20210629.tar.gz",
+                decompress: true,
+                final: 'MarineMitogenome20210629', 
+                nested: true,
+                key: 'MarineMitogenome20210629',
+                fullpath: path.join(this.databasespath, "MarineMitogenome20210629")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20240605.tar.gz",
+                decompress: true,
+                final: 'pluspf8', 
+                nested: true,
+                key: 'pluspf8',
+                fullpath: path.join(this.databasespath, "pluspf8")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
+                decompress: true,
+                final: 'Greengenes13.5', 
+                nested: true,
+                key: 'Greengenes13.5',
+                fullpath: path.join(this.databasespath, "Greengenes13.5")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
+                decompress: true,
+                final: 'Greengenes13.5', 
+                nested: true,
+                key: 'Greengenes13.5',
+                fullpath: path.join(this.databasespath, "Greengenes13.5")
+            },
             
             // Add other databases here
         ];
