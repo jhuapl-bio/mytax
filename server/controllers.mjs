@@ -95,15 +95,39 @@ async function listReportFiles(directoryPath) {
 }
 export function openPath(directoryPath) {
     return new Promise((resolve, reject)=>{
-        exec(`open ${directoryPath}`, (err, stdout, stderr) => {
-            if (err) {
-                logger.error('Error:', err);
-                reject(err);
+        // if is Mac or Darwin
+
+        let isDarwin = process.platform === "darwin";
+        if (isDarwin){
+            try{
+                exec(`open ${directoryPath}`, (err, stdout, stderr) => {
+                    if (err) {
+                        logger.error('Error:', err);
+                        reject(err);
+                    }
+                    logger.info('stdout:', stdout);
+                    logger.error('stderr:', stderr);
+                    resolve()
+                });
+            } catch {
+                logger.error("couldn't open on mac...")
             }
-            logger.info('stdout:', stdout);
-            logger.error('stderr:', stderr);
-            resolve()
-        });
+        }
+        else{
+            try{
+                exec(`xdg-open ${directoryPath}`, (err, stdout, stderr) => {
+                    if (err) {
+                        logger.error('Error:', err);
+                        reject(err);
+                    }
+                    logger.info('stdout:', stdout);
+                    logger.error('stderr:', stderr);
+                    resolve()
+                });
+            } catch {
+                logger.error("couldn't open on mac...")
+            }
+        }
     })
 }
 export async function writeRun(filepath, config){
