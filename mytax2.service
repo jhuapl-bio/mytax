@@ -1,0 +1,13 @@
+[Unit]
+Description=MyTax Service
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/home/your-username/Desktop/mytax
+ExecStart=/bin/bash -c 'npm run server & npm run serve'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
