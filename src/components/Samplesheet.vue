@@ -1486,9 +1486,9 @@
                 this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
             }
             console.log(this.editedItem)
-            // this.$emit("updateEntry", this.editedItem)
-            // this.dialog = null
-            // this.closeItem()
+            this.$emit("updateEntry", this.editedItem)
+            this.dialog = null
+            this.closeItem()
         },
     
     }
