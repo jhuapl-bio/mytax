@@ -1478,6 +1478,7 @@
                 this.editedItem.searchPatternBC = null
             }
             // this.editedItem.searchPatternBC = this.searchPatternBC
+            // console.log(this.editedItem)
             this.$emit("updateEntry", this.editedItem)
             this.dialog = null
             this.closeItem()
