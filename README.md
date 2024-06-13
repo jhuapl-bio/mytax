@@ -7,7 +7,13 @@ npm install
 
 ### Compiles and hot-reloads for development
 ```
-npm run serve
+npm run serveBoth
+```
+
+### Adding another CORS port for development use
+
+```
+CORS_ADDR=localhost:5645 npm run serveBoth
 ```
 
 ### Compiles and minifies for production
