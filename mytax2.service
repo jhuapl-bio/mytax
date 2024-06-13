@@ -4,9 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=your-username
-WorkingDirectory=/home/your-username/Desktop/mytax
-ExecStart=/bin/bash -c 'npm run server & npm run serve'
+User=minion
+WorkingDirectory=/home/minion/mytax
+ExecStart=/bin/bash -c '/home/minion/miniconda3/bin/activate && npm run serveBoth'
+Environment="PATH=/home/minion/miniconda3/bin:/usr/bin:/bin"
 Restart=on-failure
 
 [Install]
