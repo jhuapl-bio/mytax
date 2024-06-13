@@ -203,7 +203,9 @@ export  class Run {
         for (const [i, d] of files.entries()) {
             const sample = path.basename(d);
             let newinfo = { ...info }; // Make a copy of the info object
-            newinfo.path_1 = path.join(path.dirname(info.path_1), d);
+            // get abs path of d
+            newinfo.path_1 = d;
+            // newinfo.path_1 = path.join(path.dirname(info.path_1), d);
             newinfo.sample = sample;
     
             let index = $this.samplesheet.findIndex((item) => item.sample === sample);
@@ -243,7 +245,6 @@ export  class Run {
     
     async rerun(index, sample){
         try{
-            console.log(this.samples[sample].queueRecords.length)
             
             if (sample){
                 let s = this.samples[sample]

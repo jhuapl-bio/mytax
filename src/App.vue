@@ -420,8 +420,8 @@ export default {
             
             defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1','S2','S3', 'S4'],
             defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1','S2','S3', 'S4'],
-            depthRange: [0,30],
-            maxDepth: 30,
+            depthRange: [0,100],
+            maxDepth: 100,
             samplesheetdata: [],
             samplesheet: null,
             reportSavePath: null,

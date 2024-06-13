@@ -1478,6 +1478,13 @@
                 this.editedItem.searchPatternBC = null
             }
             // this.editedItem.searchPatternBC = this.searchPatternBC
+            // remove file:// from the front of the path_1 or path_2
+            if (this.editedItem.path_1 && this.editedItem.path_1.startsWith('file://')){
+                this.editedItem.path_1 = this.editedItem.path_1.replace('file://', '')
+            } 
+            if (this.editedItem.path_2 && this.editedItem.path_2.startsWith('file://')){
+                this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
+            }
             this.$emit("updateEntry", this.editedItem)
             this.dialog = null
             this.closeItem()

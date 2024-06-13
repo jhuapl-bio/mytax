@@ -1123,7 +1123,7 @@ export  class Orchestrator {
             if (index != -1){
                 let r = this.runs[index]
                 await r.updateSample(info, run, sample)
-                this.getRunInformation(run)
+                // this.getRunInformation(run)
                 // broadcastToAllActiveConnections( "runInformation",  returninfo);
             } 
         } catch (err){
