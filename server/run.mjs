@@ -42,7 +42,18 @@ export  class Run {
         return status
     }
     
-    deleteSample(sample){
+    async deleteSample(sample){
+        let s = this.samples[sample]
+        try{
+            // delete the sample from the run
+            logger.info(`Deleting sample reports info ${sample}`)
+            await s.deleteReports()
+            await s.cancel()
+            
+        } catch(err) {
+            logger.error(`Error in deleting sample ${sample}`)
+            logger.error(err)
+        }
         delete this.samples[sample]
         // get the samplesehet and console log is
         let index = this.samplesheet.findIndex((d)=>d.sample == sample)
@@ -232,6 +243,8 @@ export  class Run {
     
     async rerun(index, sample){
         try{
+            console.log(this.samples[sample].queueRecords.length)
+            
             if (sample){
                 let s = this.samples[sample]
                 

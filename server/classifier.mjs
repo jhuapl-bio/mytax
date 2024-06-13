@@ -165,7 +165,6 @@ export  class Classifier {
     }
     generateKrakenCommand(){
         let dirname = path.dirname(this.sampleReport)
-        console.log(this.sample.database,"------------")
         let command = `echo "Sleep job"; sleep 1; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
         
         if (this.paired){ 

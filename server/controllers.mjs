@@ -77,6 +77,17 @@ export function getReportName(path_1, outpath, illumina){
         throw err
     }
 }
+export function rmDir(directoryPath){
+    return new Promise((resolve, reject)=>{
+        fs.rm(directoryPath, { recursive: true }, (err)=>{
+            if (err){
+                reject(err)
+            } else {
+                resolve()
+            }
+        })
+    })
+}
 
 
 

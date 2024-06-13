@@ -142,11 +142,16 @@ export  class Orchestrator {
         }
         return this.userSettings.get(userId);
     }
-    openPath(directoryPath) {
-        if (directoryPath){
-            openPath(directoryPath)
-        } else {
-            openPath(this.savePath)
+    async openPath(directoryPath) {
+        try{
+            if (directoryPath){
+                await openPath(directoryPath)
+            } else {
+                await openPath(this.savePath)
+            }
+        } catch (err){
+            logger.error(err)
+            broadcastToAllActiveConnections("alert", { message: `Could not open ${directoryPath ? directoryPath : this.savePath}` })
         }
     }
     getDefaultSettings() {

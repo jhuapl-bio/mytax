@@ -1452,6 +1452,7 @@
             if (editedIndex > -1){
                 this.editedItem = Object.assign({}, this.samplesheet[editedIndex])
             }
+            this.toggleDemuxRun = false
             this.editedIndex = editedIndex
             this.dialog = true
         },

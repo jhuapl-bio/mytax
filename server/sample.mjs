@@ -1,7 +1,7 @@
 
 import path, { resolve } from 'path'
 import { Classifier} from './classifier.mjs'
-import { getReportName, rmFile, removeExtension, globFiles } from './controllers.mjs';
+import { getReportName, rmDir, rmFile, removeExtension, globFiles } from './controllers.mjs';
 import {logger} from './logger.js'
 import fs from "file-system"
 import chokidar from 'chokidar'
@@ -481,11 +481,52 @@ export  class Sample {
             return -1 
         }
     }
-    update(info, run, sample){
+    async deleteReports(){    
+        console.log("deleting!")
+        // remove the outputdir 
+        try{
+            await rmDir(this.outputdir)
+        } catch (err){
+            logger.error(`${err} error in deleting outputdir ${this.outputdir}`)
+        }
+        try{
+            this.cancel()
+            // this.cleanup()
+        } catch (err){
+            logger.error(`${err} error in cleaning up sample ${this.sample}`)
+        }
+      
+    }
+    async update(info, run, sample){
         // look at the config of info, and update the samplesheet entry for this sample
+        
+        if (info.path_1 != this.path_1){
+            // need to update the watcher
+            try{
+                this.path_1 = info.path_1
+                if (this.watcher){
+                    this.watcher.close().then(() => logger.info('closed watcher'));
+                    this.watcher._watched.clear()
+                    delete this.watcher
+                }
+                await this.cleanup()
+                this.queueList = []
+                this.queueRecords = []
+                this._files = []
+                this._reports = []
+                this.data = ''
+                await this.deleteReports()
+                await this.initialize()
+                // this.initialize() 
+            } catch (err){
+                logger.error(`${err} failure to update sample ${this.sample}`)
+            }
+                     
+        }
         for (let key in info){ 
             this[key] = info[key]
         }
+
         return
     } 
     cleanup(){
@@ -495,7 +536,20 @@ export  class Sample {
                 this.reportWatcher._watched.clear()
                 delete this.reportWatcher
             }
+            if (this.watcher){
+                this.watcher.close().then(() => logger.info('closed watcher'));
+                this.watcher._watched.clear()
+                delete this.watcher
+            }
+
             this.cancel()
+            // this.queueList = []
+            // this.queueRecords = []
+            // this._files = []
+            // this._reports = []
+            // this.data = ''
+
+
         } catch (err){
             logger.error(`${err} failure cleanup up sample ${this.sample}`)
         }
