@@ -199,7 +199,6 @@ export  class Run {
         const $this = this
         let searchPatternBC = info.searchPatternBC
         let pattern = path.join(info.path_1, searchPatternBC)
-        console.log(pattern)
         let files = await globFiles(`${pattern}`, {  nodir: false })
         for (const [i, d] of files.entries()) {
             const sample = path.basename(d);

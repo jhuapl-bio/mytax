@@ -1,11 +1,14 @@
 .DS_Store
-
+example-data
+!example-data/sample_metagenome.first.fastq
+!example-data/sample_metagenome.second.fastq
 databases/*
 taxonomy
 taxdump
 output
 node_modules
 example-data/classifications/*
+
 /dist
 tmp/*
 tmp.*
