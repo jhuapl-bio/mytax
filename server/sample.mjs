@@ -103,7 +103,7 @@ export  class Sample {
                     `${this.path_1}/*faa`,
                     `${this.path_1}/*fasta`
                 ]
-            } 
+            }  
 
         }
 
@@ -231,8 +231,6 @@ export  class Sample {
                 d.overwrite = true 
                 d.recombine = true 
                 d.paused = false 
-                console.log(d, "JOB")
-
                 this.defineQueueJob(d)
             }) 
             broadcastToAllActiveConnections("message",  {message: `Rerunning... ${this.sample} with index: ${index}`})
@@ -258,10 +256,18 @@ export  class Sample {
         // let index = this.getIndexJob(obj.filepath)
         const $this = this;
         try {
+            obj = this.updateparams(obj)
+            // obj.generateKrakenCommand()
             const controller = new AbortController();
             obj.controller = controller
             storage.queue.add(async ({signal}) => { 
                 $this.queueRecords[obj.index] = obj 
+                // Check that filepath exists, and if not then remove from queue
+                if (!fs.existsSync(obj.filepath)){
+                    logger.info(`File ${obj.filepath} does not exist, removing from queue`)
+                    $this.queueRecords = $this.queueRecords.filter((d)=>{return d.filepath != obj.filepath})
+                    return 
+                }
                 signal.addEventListener('abort', () => {
                     logger.info(`aborting job ${obj.filepath}-${id}`)
                     obj.stop() 
@@ -286,6 +292,11 @@ export  class Sample {
         }
         obj.jobnumber = id
         return 
+    }
+    updateparams(classifier){
+        classifier.sample.database = this.database
+        classifier.generateKrakenCommand()
+        return classifier
     }
     
     defineClassifier(filepath, priority, overwrite){

@@ -3,10 +3,20 @@ import fs from "file-system"
 import glob from "glob-all"
 import { exec } from 'child_process';
 import { logger } from './logger.js';
-export function removeExtension(filename, illumina) {
-    let filetrim = path.basename(filename.replace(/\.[^\/.]+/g, ''));
+export function removeExtension(filename, illumina, extraExtension) {
+    // let filetrim = path.basename(filename.replace(/\.[^\/.]+$/, ''));
+    let filetrim = path.basename(filename);
     if (illumina){
         filetrim = filetrim.replace(/_[\d]?$/g, "")
+    }
+    if (extraExtension){
+        extraExtension.map((ext)=>{
+            
+            if (filetrim.endsWith(ext)) {
+                filetrim = filetrim.slice(0, -ext.length);
+            }
+        })
+            
     }
     return filetrim
 }
@@ -55,6 +65,13 @@ export function getReportName(path_1, outpath, illumina){
         if (illumina){
             path_reports = path_reports.replace(/_[\d]?$/g, "")
         }
+        let exts = ['.fastq', '.fq', '.fq.gz', '.fastq.gz']
+        exts.map((extraExtension)=>{
+            if (extraExtension && path_reports.endsWith(extraExtension)) {
+                path_reports = path_reports.slice(0, -extraExtension.length);
+            }
+        })
+        
         return path.join(outpath, `${removeExtension(path_reports)}.report`)
     } catch (err){
         throw err

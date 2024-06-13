@@ -14,7 +14,7 @@ export class Downloader {
 
     async extractFile(filePath, targetDirectory) {
         return new Promise( async (resolve, reject) => {   
-            const tarGzRegex = /\.tar\.gz$/;
+            const tarGzRegex = /\.tar\.gz$|\.tgz$/;
             const gzRegex = /\.gz$/;
             const zipRegex = /\.zip$/;
             const tarRegex = /\.tar$/;

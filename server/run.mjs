@@ -2,15 +2,21 @@ import {logger} from './logger.js'
 import { Sample } from './sample.mjs'
 import fs from "file-system"
 import { broadcastToAllActiveConnections } from './messenger.mjs';
-import { writeRun, getKrakenConfigDefault } from './controllers.mjs';
+import { writeRun, globFiles, getKrakenConfigDefault } from './controllers.mjs';
 import path from "path"
+
 import { storage } from './storage.mjs';
 export  class Run { 
     constructor(configuration, queue, ws){
         this.run = configuration.run
         this.queue = queue
         this.ws = ws
-        this.samplesheet = configuration.samplesheet
+        this.samplesheet = configuration.samplesheet.map((d)=>{
+            d.searchPatternBC = null   
+            return d 
+        })
+        // remove dups for samoplesheet based on sample
+        this.samplesheet = this.samplesheet.filter((v,i,a)=>a.findIndex(t=>(t.sample === v.sample))===i)
         this.entries = []  
         this.config = {}
         this.samples = {}
@@ -35,6 +41,7 @@ export  class Run {
         
         return status
     }
+    
     deleteSample(sample){
         delete this.samples[sample]
         // get the samplesehet and console log is
@@ -102,6 +109,8 @@ export  class Run {
     async saveRunInformation(){
         try{
             // set a configuration with run name, smaplesheet, and the bundle config information in it as a json
+            // remove duplicate this.samplesheet entries
+            this.samplesheet = this.samplesheet.filter((v,i,a)=>a.findIndex(t=>(t.sample === v.sample))===i)
             let config = {
                 samplesheet: this.samplesheet,
                 run: this.run,
@@ -116,15 +125,20 @@ export  class Run {
             console.error(err)
         }
     }
-    defineSamples(){
+    async defineSamples(){
         // iterate through samplesheet and make new Sample for each entry
-        this.samplesheet.map(async (d)=>{
-            // set new smaple for each d
-            let sample = await this.addSample(d)
-        })
+        for (const [i, d] of this.samplesheet.entries()) {
+            try{
+                let sample = await this.addSample(d)
+            } catch (err){
+                logger.error(`${err} failure to initialize sample ${d.sample}`)
+            }
+        } 
+
 
     }
     async addSample(info){
+        const $this = this   
         let sample = info.sample
         let configuration = {
             ...info,
@@ -133,6 +147,7 @@ export  class Run {
             config: this.config,
         }
         try{
+            logger.info(`Creating sample ${sample}`)
             if (!this.samples[sample]){
                 this.samples[sample] =  new Sample(
                     configuration, 
@@ -141,11 +156,20 @@ export  class Run {
                 await this.samples[sample].initialize()
             } else {
                 logger.info(`${sample} exists, skipping initialization`)
-            }
+            }         
+           
         } catch(err){ 
             logger.error(`${err} failure to initialize sample ${sample}`)
+            
         }
-        return this.samples[sample]
+        let index = $this.samplesheet.findIndex((d)=>d.sample == sample)
+        if (index == -1){
+            $this.samplesheet.push(info)
+        } else {
+            $this.samplesheet[index] = info
+        }
+        await this.saveRunInformation()
+        return 
     }
     async sendSampleData(sample){
         let data = []
@@ -160,25 +184,49 @@ export  class Run {
             data.push(s.sendData())
         }
     }
-    async updateSample(info, run, sample){
-        let s = this.samples[sample]
-        if (s){
-            s.update(info)
-            // update samplesheet entry in the json path of this.filepath
-            let index = this.samplesheet.findIndex((d)=>d.sample == sample)
-            if (index > -1){
-                this.samplesheet[index] = info
+    async checkSubdirs(info){
+        const $this = this
+        let searchPatternBC = info.searchPatternBC
+        let pattern = path.join(info.path_1, searchPatternBC)
+        let files = await globFiles(`${pattern}`, {  nodir: false })
+        for (const [i, d] of files.entries()) {
+            const sample = path.basename(d);
+            let newinfo = { ...info }; // Make a copy of the info object
+            newinfo.path_1 = path.join(path.dirname(info.path_1), d);
+            newinfo.sample = sample;
+    
+            let index = $this.samplesheet.findIndex((item) => item.sample === sample);
+            if (index > -1) {
+                $this.samplesheet[index] = newinfo;
+            } else {
+                await $this.addSample(newinfo);
             }
-            // broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
-            await this.saveRunInformation()
             
+        }
+       
+    }
+    async updateSample(info, run, sample){
+        if (info.searchPatternBC){
+            logger.info("Checking subdirectories........................")
+            await this.checkSubdirs(info)
         } else {
-            logger.info(`Could not find run ${run} to update, adding instead`)
-            this.samplesheet.push(info)
-            let s = await this.addSample(info)
-            // Emit updated samplesheet to frontend
-            // broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
-            await this.saveRunInformation()
+            let s = this.samples[sample]
+            if (s){
+                logger.info(`Sample exists.......: ${sample}`)
+                s.update(info)
+                // update samplesheet entry in the json path of this.filepath
+                // if searchPatternBC then look through all subdirectories in the run directory
+                let index = this.samplesheet.findIndex((d)=>d.sample == sample)
+                if (index > -1){ 
+                    this.samplesheet[index] = info
+                }
+                await this.saveRunInformation()
+            } else {
+                logger.info(`Could not find run ${run} to update, adding instead`)
+                await this.addSample(info)
+                // Emit updated samplesheet to frontend
+                // broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
+            }
         }
     }
     

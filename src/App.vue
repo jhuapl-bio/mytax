@@ -197,6 +197,7 @@
               persistent-hint 
               single-line
               type="number"
+              step="0.005"
             ></v-text-field>
       
             <v-slider
@@ -321,6 +322,7 @@ export default {
       },
       selectedsamples(){
         let data = {}
+        
         this.selectedsamplesAll.filter((obj)=>{
           return !obj.hidden
         }).map((f)=>{
@@ -459,6 +461,7 @@ export default {
       },
       selectedRun(val){
         if (val){
+          this.selectedsamplesAll = []
           this.sendMessage({
             run: val,
             type: "getRunInformation", 
@@ -887,9 +890,11 @@ export default {
               }) 
              
               $this.socket.on('runInformation', async (e)=>{
+                $this.samplesheet = []
                 if (e.reportdata && e.data != ''){
                   // $this.resetRun()
-                  $this.samplesheet = e.samplesheet
+                  // $this.samplesheet = e.samplesheet
+                  $this.$set($this, 'samplesheet', e.samplesheet)
                   // get the queuelist for all samples
                  
                   
@@ -996,12 +1001,13 @@ export default {
         filter(){
           let dataFull = {}
           const $this = this;
-          this.selectedsamplesAll.map((obj)=>{
+          this.selectedsamplesAll = this.selectedsamplesAll.map((obj)=>{
             let sample = obj.sample
-            // let data = $this.filterData(_.cloneDeep(obj.data))
+            let data = $this.filterData(_.cloneDeep(obj.fullData))
             data = $this.parseData(data)
+            obj.data = data 
+            return obj
           })
-          // this.selectedData = dataFull
         },
         async barcode(sample){
           this.sendMessage({
@@ -1269,6 +1275,7 @@ export default {
             this.defaults = this.defaultsList
             let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
             if (index > -1){
+              this.$set(this.selectedsamplesAll[index], 'fullData', data)
               this.$set(this.selectedsamplesAll[index], 'data', data)
             }
             return data 

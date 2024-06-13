@@ -261,6 +261,7 @@ io.on('connection', (ws) => {
           logger.info(`Adding run ${msg.run}`) 
            
           storage.orchestrator.addRun(msg)
+          ws.emit("runs",  storage.orchestrator.runNames )
       } catch(err){
           logger.error(err)
       } 

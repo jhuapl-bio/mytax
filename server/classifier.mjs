@@ -164,18 +164,19 @@ export  class Classifier {
         })
     }
     generateKrakenCommand(){
-    
-        let command = `echo "Sleep job"; sleep 1; echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
+        let dirname = path.dirname(this.sampleReport)
+        console.log(this.sample.database,"------------")
+        let command = `echo "Sleep job"; sleep 1; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
         
         if (this.paired){ 
             command=`${command} \\
-            -t paired `
+            -t paired ` 
         }
         let additionals = ""   
         if (this.config){
             for(let [key, value] of Object.entries(this.config))
             {   
-                if (key == "minimum-hit-groups" && value >=0){
+                if (key == "minimum-hit-groups" && value >=0 && value != "" && value ){
                     additionals = `${additionals}  \\
                     --${key} ${value}`
                 }  else if (value && value == true && typeof value == 'boolean'){

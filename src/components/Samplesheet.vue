@@ -248,9 +248,14 @@
                             sm="6"
                             md="4"
                         >
+                            <v-switch
+                                v-model="toggleDemuxRun"
+                                :label="toggleDemuxRun ? 'Search for Barcodes' : 'Individual Sample Path'"
+                            >
+                            </v-switch>
                             <v-textarea
                             v-model="editedItem.sample"
-                            label="Sample Name"
+                            :label=" toggleDemuxRun ? 'Run Name' : 'Sample Name'"
                             :error-messages="sampleErrors"
 
                             >
@@ -302,6 +307,12 @@
                                 :label="toggleDatabases ? 'Use Standard Databases' : 'Use Custom Database. Provide PATH'"
                             >
                             </v-switch>
+                            <!-- Set input field for searchPatternBC -->
+                            <v-text-field
+                                v-if="toggleDatabases"
+                                v-model="searchPatternBC"
+                                :label="`Search Pattern for Barcode Files`"
+                            ></v-text-field>
                         </v-col>
                         <v-col
                             cols="12"
@@ -311,34 +322,35 @@
                             
                             <!-- add a toggle that switches betwee a textarea OR a dropdown -->
                             <v-select v-if="toggleDatabases" chips
-                                v-model="editedItem.database"
+                                v-model="editedItem.database" class="truncate-text"
                                 :items="databases" :error-messages="dbErrors"
                                 label="Database" item-text="key" item-value="fullpath" 
                                     persistent-hint  
                             >
-                                <template v-slot:selection="{item}">
-                                    <span v-if="item.downloading" >
-                                        <v-progress-circular :indeterminate="true" top
-                                            stream   
-                                            class="mr-2" 
-                                            size="14"  color="blue lighten-2"
-                                        >
-                                        </v-progress-circular>{{ item.key }}
-                                    </span>
-                                    <span v-else-if="item.size == 0">
-                                        <v-chip>
-                                            <v-icon color="orange lighten-1" class="mr-2">
-                                                mdi-alert-circle-outline
-                                            </v-icon>{{ item.key }}; Size is empty
-                                        </v-chip>
-                                    </span>
-                                    <span v-else >
-                                        <v-chip>
-                                            <v-icon color="green lighten-1">
-                                                mdi-check-circle-outline
-                                            </v-icon>{{ item.key }}
-                                        </v-chip>
-                                    </span>
+                                <template v-slot:selection="{ item }">
+                                    <v-tooltip bottom>
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <span v-bind="attrs" v-on="on" class="tooltip-content">
+                                        <span v-if="item.downloading">
+                                            <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
+                                            {{ item.key }}
+                                        </span>
+                                        <span v-else-if="item.size == 0">
+                                            <v-chip>
+                                            <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
+                                            {{ item.key }}; Size is empty
+                                            </v-chip>
+                                        </span>
+                                        <span v-else>
+                                            <v-chip>
+                                            <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
+                                            {{ item.key }}
+                                            </v-chip>
+                                        </span>
+                                        </span>
+                                    </template>
+                                    <span>{{ item.key }}</span>
+                                    </v-tooltip>
                                 </template>
                             </v-select>
                             <v-combobox   v-else
@@ -983,12 +995,14 @@
         this.itemsPerPage = number
       },
       
+      
     },
     
     computed: {
+        
         sampleErrors() {
             if (!this.editedItem.sample || this.editedItem.sample === '') {
-                return 'Sample Name is required';
+                return `${this.toggleDemuxRun ? 'Run Name' : 'Sample Name'} is required`
             }
             return [];
         },
@@ -1000,7 +1014,7 @@
         },
         pathErrors1() {
             if (!this.editedItem.path_1 || this.editedItem.path_1 === '') {
-                return 'Primary Seq file/dir Path is required';
+                return `${this.toggleDemuxRun ? 'Run Location of Barcodes' : 'Directory/Files'} required`
             }
             return [];
         },
@@ -1067,6 +1081,7 @@
           sortBy: 'name',
           itemsPerPageArray: [9, 15, 20 ],
           search: '',
+          searchPatternBC: 'barcode*',
           filter: {},
           sortDesc: false,
           dialogAdvanced: false,
@@ -1121,6 +1136,7 @@
           ],
           stagedData: [],
           toggleDatabases: true,
+          toggleDemuxRun: false, 
           selectedQueueJob: null,
           selectedQueueSample: null,
           recentDataFileadded: null,
@@ -1440,10 +1456,10 @@
             this.dialog = true
         },
         closeItem () {
-            this.dialog = false
+            this.dialog = null
             this.$nextTick(() => {
-            this.editedItem = Object.assign({}, this.defaultItem)
-            this.editedIndex = -1
+                // this.editedItem = Object.assign({}, this.defaultItem)
+                // this.editedIndex = -1
             })
         },
         closeDelete () {
@@ -1455,9 +1471,15 @@
             })
         },
         saveItem() {
-            
+            if (this.toggleDemuxRun){
+                this.editedItem.searchPatternBC = this.searchPatternBC
+            } else {
+                this.editedItem.searchPatternBC = null
+            }
+            // this.editedItem.searchPatternBC = this.searchPatternBC
             this.$emit("updateEntry", this.editedItem)
-            // this.closeItem()
+            this.dialog = null
+            this.closeItem()
         },
     
     }
@@ -1465,9 +1487,27 @@
     
   };
 </script>
-<style>
+<style scoped>
 code {
     white-space: pre-wrap;
+}
+.truncate-text .tooltip-content {
+  display: inline-block;
+    width: 950px; /* Adjust the width as necessary */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.v-tooltip__content {
+  max-width: 200px; /* Adjust the max-width for the tooltip content as needed */
+}
+
+/* Additional styles to customize the tooltip arrow */
+.v-tooltip--bottom .v-tooltip__content::before {
+  border-bottom-color: "blue"; /* Change the arrow color */
+  margin-left: 0; /* Adjust arrow position */
 }
 .v-card {
   display: flex !important;

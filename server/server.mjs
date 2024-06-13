@@ -45,34 +45,26 @@ export  class Orchestrator {
             {
                 url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/marine_mammal_mitochondrion-refseq-20210629.tar.gz",
                 decompress: true,
-                final: 'MarineMitogenome20210629', 
-                nested: true,
+                final: 'marine_mammal_mitochondrion-refseq-20210629', 
+                nested: true, 
                 key: 'MarineMitogenome20210629',
-                fullpath: path.join(this.databasespath, "MarineMitogenome20210629")
+                fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20210629")
             },
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20240605.tar.gz",
                 decompress: true,
-                final: 'pluspf8', 
+                final: 'k2_pluspfp_08gb_20240605', 
                 nested: true,
                 key: 'pluspf8',
-                fullpath: path.join(this.databasespath, "pluspf8")
+                fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20240605")
             },
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
                 decompress: true,
-                final: 'Greengenes13.5', 
+                final: '16S_Greengenes_k2db',  
                 nested: true,
                 key: 'Greengenes13.5',
-                fullpath: path.join(this.databasespath, "Greengenes13.5")
-            },
-            {
-                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
-                decompress: true,
-                final: 'Greengenes13.5', 
-                nested: true,
-                key: 'Greengenes13.5',
-                fullpath: path.join(this.databasespath, "Greengenes13.5")
+                fullpath: path.join(this.databasespath, "16S_Greengenes_k2db")
             },
             
             // Add other databases here
@@ -139,7 +131,7 @@ export  class Orchestrator {
         this.streamoutseen = null 
     } 
     
-    async loadUserSettings(userId) {
+    async loadUserSettings(userId) { 
         const filePath = path.join(this.userSavePath, `${userId}.json`);
         let exists = await fs.existsSync(filePath)
         if (exists) {
@@ -158,7 +150,7 @@ export  class Orchestrator {
         }
     }
     getDefaultSettings() {
-        return {
+        return { 
             database: this.defaultdatabase,
             gpu: false,
             watchpath: this.defaultwatchpath,
@@ -220,7 +212,6 @@ export  class Orchestrator {
                 let exists = await fs.existsSync(database.fullpath)
                 if (exists){
                     let size = await fs.statSync(path.join(database.fullpath, 'hash.k2d')).size
-                    console.log(exists, size)
                     if (size > 1000000000){
                         size = `${(size / 1000000000).toFixed(2)} GB`
                     } else if (size > 1000000){
@@ -257,7 +248,7 @@ export  class Orchestrator {
             const filePath = path.join(this.userSavePath, `${userId}.json`);
             await fs.writeFileSync(filePath, JSON.stringify(userSettings, null, 4));
         }
-    }
+    } 
 
     async sendMessageToUser(userId, message) {
         if (storage.activeConnections.has(userId)) {
@@ -408,7 +399,7 @@ export  class Orchestrator {
             let r = this.runs[index]
             let reportdata = []
             r.sendSampleData()
-            if (r.samples){
+            if (r.samples && Object.keys(r.samples).length > 0){
                 for (let [key, sample] of Object.entries(r.samples)){
                     let queueList =  sample.formatQueueInfo()
                     reportdata.push({
@@ -472,7 +463,7 @@ export  class Orchestrator {
             if (exists){
                 // glob all files in "*json in runlocation"
                 let files = await globFiles(`${runlocation}/*.json`, { cwd: runlocation, nodir: true })
-                files.forEach((file)=>{
+                files.forEach(async (file)=>{
                     let run = fs.readFileSync(file)
                     run = JSON.parse(run)
                     // add the runs to the array this.runs, get index if it exists and overwrite otherwise append to front
@@ -482,8 +473,9 @@ export  class Orchestrator {
                     if (index == -1){ 
                         if (run.run){
                             logger.info(`Have not seen run ${run.run}`)
-                            console.log(run.run, run.config)
+                            
                             let r = new Run(run, storage.queue, this.w)
+                            
                             r.filepath = file
                             // for keys in run.config overwrite r.config
                             if (run.config){
@@ -492,17 +484,18 @@ export  class Orchestrator {
                                 })
                             }
                             this.runs.unshift(r)
+                            // await r.defineSamples()
                         }
                     }  else { 
                         logger.info("Already seen run: %s", run.run)    
                     }
-                })
+                }) 
             } 
-            // send the runs information to the front end 
-            logger.info("Sending runs")
-            let runnames = this.runs.map((r)=>{
-                return r.run
-            })
+            // send the runs information to the front end  
+            logger.info("Sending runs_____________________________") 
+            // this.runs.forEach((r)=>{
+            //     console.log(r.run, Object.keys(r.samples), r.samplesheet)
+            // }) 
             // broadcastToAllActiveConnections( "runs",  runnames )
         } catch (err){  
             logger.error("Error in loading the runs!")
@@ -559,20 +552,23 @@ export  class Orchestrator {
                 samplesheet: configuration.samplesheet,
                 run: configuration.run,
                 report: configuration.report,
-                config: getKrakenConfigDefault(),            
+                config: getKrakenConfigDefault(),             
                 created:   new Date().toLocaleString('en', { timeZone: 'UTC' })
             }  
-            logger.info(`Adding run ${config.run}`)
+            let filepath = path.join(this.historyPath, `${configuration.run}.json`)
             let r = new Run(config, storage.queue, this.w)
-            r.filepath = file
+            r.filepath = filepath
             let index = this.runs.findIndex((r)=>{
-                return r.run == run
+                return r.run == configuration.run
             })
             if (index == -1){
+                logger.info("Adding run to list of runs...")
                 this.runs.unshift(r)
             }  else {
                 logger.info("Already seen run: %s", run)
             }
+            r.saveRunInformation()
+            
                
         } catch (err){ 
             logger.error("Error in setting run ")
@@ -693,7 +689,7 @@ export  class Orchestrator {
             try{
                 let barcoder = new Barcoder(sample, filepath)
                 resolve(barcoder)
-            } catch (err){
+            } catch (err){ 
                 logger.error(err)
                 reject()
             }
@@ -1118,11 +1114,12 @@ export  class Orchestrator {
         try{
             let index = this.runs.findIndex((r)=>{
                 return r.run == run
-            })
+            }) 
             if (index != -1){
                 let r = this.runs[index]
                 await r.updateSample(info, run, sample)
-                await this.getRunInformation(run)
+                this.getRunInformation(run)
+                // broadcastToAllActiveConnections( "runInformation",  returninfo);
             } 
         } catch (err){
             logger.error(`${err} failure to update run`)
