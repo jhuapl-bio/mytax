@@ -22,14 +22,23 @@ let server = http.createServer(app)
 let params = {}
 let portclient = 8080
 // if (process.env.NODE_ENV == 'development'){
+  let added_ports = ""
+  if (process.env.CORS_ADDR){
+    added_ports = process.env.CORS_ADDR
+    // add http:// if not start of added_ports
+    if (!added_ports.startsWith("http://")){
+      added_ports = `http://${added_ports}`
+    }
+  }
     params = {
         cors: {
-            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`,`http://localhost:${4555}`],
+            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `${added_ports}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`, `${added_ports}`, `http://localhost:${4555}`],
             methods: ["GET", "POST"],
             allowedHeaders: ["my-custom-header"],
             credentials: true
         }
     }
+    console.log(params,"<")
 // }
 
 let io = new Server(server, params);

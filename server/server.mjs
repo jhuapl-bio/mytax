@@ -1122,7 +1122,6 @@ export  class Orchestrator {
             }) 
             if (index != -1){
                 let r = this.runs[index]
-                console.log(info,"pppppppppppp")
                 await r.updateSample(info, run, sample)
                 // this.getRunInformation(run)
                 // broadcastToAllActiveConnections( "runInformation",  returninfo);

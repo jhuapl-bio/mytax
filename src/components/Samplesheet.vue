@@ -1485,7 +1485,6 @@
             if (this.editedItem.path_2 && this.editedItem.path_2.startsWith('file://')){
                 this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
             }
-            console.log(this.editedItem)
             this.$emit("updateEntry", this.editedItem)
             this.dialog = null
             this.closeItem()
