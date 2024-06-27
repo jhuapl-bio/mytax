@@ -44,13 +44,11 @@ export  class Run {
     
     async deleteSample(sample){
         let s = this.samples[sample]
-        try{
+        try{ 
             // delete the sample from the run
             logger.info(`Deleting sample reports info ${sample}`)
             await s.deleteReports()
             await this.cancelAll(sample)
-            
-            
         } catch(err) {
             logger.error(`Error in deleting sample ${sample}`)
             logger.error(err)

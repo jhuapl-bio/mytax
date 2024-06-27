@@ -470,29 +470,33 @@ export  class Orchestrator {
                 let files = await globFiles(`${runlocation}/*.json`, { cwd: runlocation, nodir: true })
                 files.forEach(async (file)=>{
                     let run = fs.readFileSync(file)
-                    run = JSON.parse(run)
-                    // add the runs to the array this.runs, get index if it exists and overwrite otherwise append to front
-                    let index = this.runs.findIndex((r)=>{
-                        return r.run == run.run
-                    })   
-                    if (index == -1){ 
-                        if (run.run){
-                            logger.info(`Have not seen run ${run.run}`)
-                            
-                            let r = new Run(run, storage.queue, this.w)
-                            
-                            r.filepath = file
-                            // for keys in run.config overwrite r.config
-                            if (run.config){
-                                Object.keys(run.config).forEach((key)=>{
-                                    r.config[key] = run.config[key]
-                                })
+                    try{
+                        run = JSON.parse(run)
+                        // add the runs to the array this.runs, get index if it exists and overwrite otherwise append to front
+                        let index = this.runs.findIndex((r)=>{
+                            return r.run == run.run
+                        })   
+                        if (index == -1){ 
+                            if (run.run){
+                                logger.info(`Have not seen run ${run.run}`)
+                                
+                                let r = new Run(run, storage.queue, this.w)
+                                
+                                r.filepath = file
+                                // for keys in run.config overwrite r.config
+                                if (run.config){
+                                    Object.keys(run.config).forEach((key)=>{
+                                        r.config[key] = run.config[key]
+                                    })
+                                }
+                                this.runs.unshift(r)
+                                // await r.defineSamples()
                             }
-                            this.runs.unshift(r)
-                            // await r.defineSamples()
-                        }
-                    }  else { 
-                        logger.info("Already seen run: %s", run.run)    
+                        }  else { 
+                            logger.info("Already seen run: %s", run.run)    
+                        } 
+                    } catch (err){
+                        logger.error(err)
                     }
                 }) 
             } 
