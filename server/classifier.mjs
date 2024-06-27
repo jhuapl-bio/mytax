@@ -21,7 +21,7 @@ export  class Classifier {
         this.dirpath = path.dirname(this.filepath)
         this.sampleReport = sample.reportPath
         this.database = sample.database
-        this.paired = ( sample.path_1 && sample.path_2 && sample.platform == 'illumina' ? true : false)
+        this.paired = ( sample.path_1 && sample.path_2 && sample.path_2 != sample.path_1 ? true : false)
         this.gpu = ''
         this.reportPath = sample.reportPath
         this.reportfiles_seen = []
@@ -60,6 +60,7 @@ export  class Classifier {
             database: this.database,
             sampleReport: this.sampleReport,
             filepath: this.filepath,
+            path_2: this.sample.path_2,
             index: this.index,
             run: this.run,
             sample: this.sample.sample,
@@ -183,9 +184,12 @@ export  class Classifier {
         let dirname = path.dirname(this.sampleReport)
         let command = `echo "Sleep job"; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
         this.database = this.sample.database
-        if (this.paired){ 
+        if (this.sample.path_2 && this.sample.path_2 != this.sample.path_1 && this.sample.path_2 != ""){ 
             command=`${command} \\
-            -t paired ` 
+            --paired ` 
+            this.paired = true 
+        } else {
+            this.paired = false
         }
         let additionals = ""   
         if (this.config){
@@ -211,8 +215,7 @@ export  class Classifier {
 
         }
         
-        
-        command = `${command } ${additionals} ${this.filepath}`
+        command = `${command } ${additionals} ${this.filepath} ${this.sample.path_2 ? this.sample.path_2 : ''}`
         
         let kreportcombined = this.generateKReportCommand()
         command = {

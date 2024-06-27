@@ -1487,6 +1487,9 @@
             if (this.editedItem.path_1 && this.editedItem.path_1.startsWith('file://')){
                 this.editedItem.path_1 = this.editedItem.path_1.replace('file://', '')
             } 
+            if (this.editedItem.path_2 && this.editedItem.path_2.startsWith('file://')){
+                this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
+            } 
             // if the db is a file, remove file:// from the front of the path
             if (this.editedItem.database && this.editedItem.database.startsWith('file://')){
                 this.editedItem.database = this.editedItem.database.replace('file://', '')

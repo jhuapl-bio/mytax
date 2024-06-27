@@ -669,7 +669,6 @@ export  class Orchestrator {
             // overwrite = true //CHANGE THIS LATER!
             let runClassify = await this.check_and_classify(sample.path_1, sample.path_2,  sample.sample, overwrite) 
             if (runClassify){
-                // logger.info(`report from ${sample.path_1} ${sample.path_2 ? sample.path_2 : '' } doesn't exists, classifying now`)
                 $this.checkAndAddFileToQueue(sample, sample.path_2 ? `${sample.path_1} ${sample.path_2}` : `${sample.path_1}`, runClassify)
             } else {
                 // logger.info(`skipping report making for ${sample.path_1} ${sample.path_2 ? sample.path_2 : '' }`)

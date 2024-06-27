@@ -83,6 +83,9 @@ export  class Sample {
         let format = "directory"
         // check if the this.path_1 is a file or a directory
         let watchpaths = [this.path_1]
+        // if (this.path_2 && watchpaths.indexOf(this.path_2) == -1){
+        //     watchpaths.push(this.path_2)
+        // } 
         try{
             let checkDir = await fs.lstatSync(this.path_1).isDirectory()
             format = checkDir ? 'directory' : 'file'
@@ -283,11 +286,11 @@ export  class Sample {
                 })
                 
                 await obj.start() 
-                try{
-                    obj.sendJobStatus()
-                } catch (err){
-                    logger.error(`${err} error in sending job`)
-                }
+                // try{
+                //     obj.sendJobStatus()
+                // } catch (err){
+                //     logger.error(`${err} error in sending job`)
+                // }
                 return 
             }, {signal: controller.signal, priority: obj.priority ? obj.priority : 0});
         } catch (error) {
@@ -310,6 +313,7 @@ export  class Sample {
             basename: removeExtension(filepath),
             fullreport: this.fullreport, 
             filepath: filepath,
+            path_2: this.path_2,
             bundleconfig: this.bundleconfiguration,
             config: this.config,
             platform: this.platform,
@@ -528,11 +532,11 @@ export  class Sample {
     }
     async update(info, run, sample){
         // look at the config of info, and update the samplesheet entry for this sample
-        
-        if (info.path_1 != this.path_1){
+        if (info.path_1 != this.path_1 || info.path_2 != this.path_2){
             // need to update the watcher
             try{
                 this.path_1 = info.path_1
+                this.path_2 = info.path_2
                 if (this.watcher){
                     this.watcher.close().then(() => logger.info('closed watcher'));
                     this.watcher._watched.clear()
