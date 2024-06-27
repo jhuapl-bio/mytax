@@ -13,10 +13,10 @@
       </template>
       Create and define a new run
     </v-tooltip>
-    <v-tooltip  bottom >
+    <v-tooltip  bottom v-if="selectedRun">
       <template v-slot:activator="{ on }">
-        <v-btn fab
-            dark  x-small @click="deleteRun"
+        <v-btn fab 
+            dark  x-small @click="deleteRun  "
             class="mx-2 warning"  v-on="on"
             >
             <v-icon  >mdi-recycle</v-icon>

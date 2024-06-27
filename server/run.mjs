@@ -48,7 +48,8 @@ export  class Run {
             // delete the sample from the run
             logger.info(`Deleting sample reports info ${sample}`)
             await s.deleteReports()
-            await s.cancel()
+            await this.cancelAll(sample)
+            
             
         } catch(err) {
             logger.error(`Error in deleting sample ${sample}`)
@@ -88,6 +89,7 @@ export  class Run {
     async cancel (index, sample){
         let s = this.samples[sample]
         if (s){
+            logger.info(`${sample}, cancel job request at index ${index}`)
             await s.cancel(index)
         } else {
             logger.error(`Sample ${sample} does not exist in the run`)
@@ -98,6 +100,7 @@ export  class Run {
             let s = this.samples[sample]
             try{
                 if (s){
+                    logger.info(`${sample}, cancelling all currently queued jobs. The operating one will complete as planned....`)
                     await s.cancel()
                 } else {
                     logger.error(`Sample ${sample} does not exist in the run`)
@@ -210,9 +213,22 @@ export  class Run {
     
             let index = $this.samplesheet.findIndex((item) => item.sample === sample);
             if (index > -1) {
+                logger.info(`Sample exists, overwriting..`)
                 $this.samplesheet[index] = newinfo;
+                // get sampel in this.samples 
+                if ($this.samples[sample]){
+                    try{
+                        $this.sendSampleData(sample)
+                    } catch(err) {
+                        logger.error(`${sample} could not send data to the user... ${err}`)
+                    }
+                }
+
             } else {
+                logger.info(`Sample does not exist, creating a new class..`)
                 await $this.addSample(newinfo);
+                $this.sendSampleData(sample)
+
             }
             
         }
@@ -222,6 +238,8 @@ export  class Run {
         if (info.searchPatternBC){
             logger.info("Checking subdirectories........................")
             await this.checkSubdirs(info)
+            console.log("done!")
+            broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
         } else {
             let s = this.samples[sample]
             if (s){
@@ -238,7 +256,7 @@ export  class Run {
                 logger.info(`Could not find run ${run} to update, adding instead`)
                 await this.addSample(info)
                 // Emit updated samplesheet to frontend
-                // broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
+                broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
             }
         }
     }

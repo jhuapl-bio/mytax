@@ -107,7 +107,7 @@
                 <template v-slot:activator="{ on }">
                   <v-btn v-on="on"  icon
                     @click="sendMessage({type: 'openPath' })"
-                    class="mr-10">
+                    class="mr-10 mb-2">
                     <v-icon color="black"  >mdi-home</v-icon>
                   </v-btn>
                 </template>
@@ -126,6 +126,8 @@
               :bundleconfig="bundleconfig"
               :seen="samplekeys"
               :current="current"
+              v-if="selectedRun"
+              :socket="socket"
               :queueList="queueList"
               @sendNewWatch="sendNewWatch"
               @importData="importData"
@@ -151,6 +153,9 @@
               :selectedsamplesAll="selectedsamplesAll"
             >
           </Samplesheet>
+          <v-alert class="py-0 my-0"
+          type="info" v-else
+          ><hr>No Run selected. Please create one with the "+" button first<hr></v-alert>
           
           
           <div class="mx-4" 
@@ -835,6 +840,8 @@ export default {
                   this.selectedRun = e[0]
                 } else if (e.indexOf(this.selectedRun) < 0 && e.length > 0){
                   this.selectedRun = e[0]
+                } else if (e.length == 0){
+                  this.selectedRun = null
                 }
               })
               $this.socket.on("reportSavePath", (e)=>{
@@ -855,11 +862,9 @@ export default {
                 let index = e.index 
                 let status = e.status
                 if (this.queueList[sample] && this.queueList[sample].length > index){
-                  this.$set(this.queueList[sample][index], 'status', status)
+                  console.log(status,"<<<<<<")
+                  this.$set($this.queueList[sample][index], 'status', status)
                 } 
-                // else if (this.queueList[sample] && index >= this.queueList[sample].length){
-                //   this.queueList[sample][index] = {status: status}
-                // }
                 $this.updateSampleStatus(sample)
               })
               

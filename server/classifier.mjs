@@ -53,9 +53,9 @@ export  class Classifier {
    
 
     async stop(){
+        logger.info(`Attempting to stop process: ${this.name}`)
         if (this.process){
             try{
-                logger.info(`Attempting to stop process: ${this.name}`)
                 this.process.kill();
                 this.status.running = false
                 this.status.error=`Canceled job`
@@ -77,80 +77,83 @@ export  class Classifier {
         return new Promise((resolve, reject)=>{
             if ($this.status.cancelled){
                 logger.info(`Job was cancelled, exiting`)
-                // reject('cancelled')
+                resolve('cancelled')
             }
-            $this.check_and_classify().then((exists)=>{
-                $this.status.historical = true
-                if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
-                    $this.generateKrakenCommand()
-                    console.log($this.command)
-                    logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
-                    $this.status.running = true  
-                    $this.status.cancelled = false
-                    $this.status.error = ''
-                    $this.status.success = null
-                    $this.status.logs = []
-                    let command = $this.command
-                    let classify = spawn(command.main, command.args );
-                    broadcastToAllActiveConnections( "status",{
-                        run: $this.run, 
-                        sample: $this.name,  
-                        index: $this.index, 
-                        'status' :  $this.status 
-                    })
-                    classify.stdout.on('data', (data) => {
-                        $this.status.logs.push(`${data}`) 
-                        $this.status.logs.slice(0,20)
-                        logger.info(`${data} `);
-                    });   
-                
-                    classify.stderr.on('data', (data) => {
-                        $this.status.logs.push(`${data}`)
-                        $this.status.logs.slice(0,20)
-                        if (data){
-                            $this.status.error = `${$this.status.error}\n${data}`
-                        }
-                        logger.error(`${data}`);
-                    });
-                    classify.on('error', function(error) {
-                        logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
-                        $this.status.error = err
-                        $this.status.running = false
-                        reject(error)
-                    })  
-                    classify.on('exit', (code) => {
-                        logger.info(`finished classification for: ${$this.filepath}, generated: ${$this.sampleReport} with code ${code}`);
-                        $this.status.success = code !== 0 ? false : true
-                        $this.status.running = false
-                        $this.status.historical = false
-                        $this.process = null
+            else {
+                logger.info("No cancel status, continuing to run job")
+                $this.check_and_classify().then((exists)=>{
+                    $this.status.historical = true
+                    if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
+                        $this.generateKrakenCommand()
+                        console.log($this.command)
+                        logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
+                        $this.status.running = true  
+                        $this.status.cancelled = false
+                        $this.status.error = ''
+                        $this.status.success = null
+                        $this.status.logs = []
+                        let command = $this.command
+                        let classify = spawn(command.main, command.args );
                         broadcastToAllActiveConnections( "status",{
                             run: $this.run, 
                             sample: $this.name,  
                             index: $this.index, 
                             'status' :  $this.status 
                         })
-                        resolve( `${code}`)                 
-                    });
-                    $this.process = classify
-                } else { 
-                    $this.status.success = true
-                    $this.status.running = false
-                    $this.status.historical = true
-                    logger.info(`${this.fullreport} exists already`)
-                    $this.status.logs.push['Historically gathered report, pre-run already']
-                    broadcastToAllActiveConnections( "status",{
-                        run: $this.run, 
-                        sample: $this.name,  
-                        index: $this.index, 
-                        'status' :  $this.status 
-                    })
-                    resolve()
-                }
-            }).catch((err)=>{
-                logger.info(`${err} Error in starting classification job for sample ${$this.name}`)
-                reject(err)
-            })
+                        classify.stdout.on('data', (data) => {
+                            $this.status.logs.push(`${data}`) 
+                            $this.status.logs.slice(0,20)
+                            logger.info(`${data} `);
+                        });   
+                    
+                        classify.stderr.on('data', (data) => {
+                            $this.status.logs.push(`${data}`)
+                            $this.status.logs.slice(0,20)
+                            if (data){
+                                $this.status.error = `${$this.status.error}\n${data}`
+                            }
+                            logger.error(`${data}`);
+                        });
+                        classify.on('error', function(error) {
+                            logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
+                            $this.status.error = err
+                            $this.status.running = false
+                            reject(error)
+                        })  
+                        classify.on('exit', (code) => {
+                            logger.info(`finished classification for: ${$this.filepath}, generated: ${$this.sampleReport} with code ${code}`);
+                            $this.status.success = code !== 0 ? false : true
+                            $this.status.running = false
+                            $this.status.historical = false
+                            $this.process = null
+                            broadcastToAllActiveConnections( "status",{
+                                run: $this.run, 
+                                sample: $this.name,  
+                                index: $this.index, 
+                                'status' :  $this.status 
+                            })
+                            resolve( `${code}`)                 
+                        });
+                        $this.process = classify
+                    } else { 
+                        $this.status.success = true
+                        $this.status.running = false
+                        $this.status.historical = true
+                        logger.info(`${this.fullreport} exists already`)
+                        $this.status.logs.push['Historically gathered report, pre-run already']
+                        broadcastToAllActiveConnections( "status",{
+                            run: $this.run, 
+                            sample: $this.name,  
+                            index: $this.index, 
+                            'status' :  $this.status 
+                        })
+                        resolve()
+                    }
+                }).catch((err)=>{
+                    logger.info(`${err} Error in starting classification job for sample ${$this.name}`)
+                    reject(err)
+                })
+            }
         })
     }   
     sendFullReportSample(){

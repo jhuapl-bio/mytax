@@ -291,6 +291,8 @@ io.on('connection', (ws) => {
         logger.info(`Deleting run ${msg.run}`) 
         
         await storage.orchestrator.deleteRun(msg.run)
+        ws.emit("runs",  storage.orchestrator.runNames  ); 
+
     } catch(err){
         logger.error(err)
     } 

@@ -215,7 +215,7 @@ export  class Sample {
         logger.info(`${index ? index : ''} Rerunning sample`)
         if (this.queueRecords.length > index && index >= 0){
             let job = this.queueRecords[index]
-            
+            job.status.cancelled = false
             job.gpu = this.gpu
             job.overwrite = true 
             job.recombine = true
@@ -229,6 +229,7 @@ export  class Sample {
             this.queueRecords.map((d)=>{
                 d.gpu = this.gpu
                 d.overwrite = true 
+                d.status.cancelled = false
                 d.recombine = true 
                 d.paused = false 
                 this.defineQueueJob(d)
@@ -444,9 +445,10 @@ export  class Sample {
  
             if (this.queueList.length > 0) { 
                 this.fullstop = true
-                this.queueList.forEach((f, i)=>{
+                this.queueList.map((f, i)=>{
                     try{
-                        let job = $this.queueList[i].job
+                        // let job = $this.queueList[i].job
+                        let job = f.job
                         logger.info(`${job.name} stopping job for full sample #: ${job.jobnumber}`)
                         job.status.cancelled = true
                         job.stop()

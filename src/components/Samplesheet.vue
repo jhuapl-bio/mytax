@@ -51,7 +51,7 @@
                     </v-list-item>
                     </template>
                 </v-text-field>
-                <div >
+                <div>
                     <v-data-table
                         :headers="headers"
                         :items="selectedsamplesAll"
@@ -141,10 +141,12 @@
                     </v-data-table> 
                 </div>
                 <span>Jobs in Queue: {{ queueLength }}</span>
+                <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
                 <v-file-input
-                    :hint="'Add or Drag/Drop Another Kraken2 Report File'"
+                    :hint="'These are generated from your own kraken2 runs and not directly imported from mytax2'"
                     persistent-hint @input="addData" v-model="recentDataFileadded"
                     prepend-icon=""
+                    label="Place or Drop Individual Kraken2 Reports here"
                 >
                 </v-file-input>
             </div>
@@ -1025,6 +1027,7 @@
                 return Math.ceil(this.selectedSample.length / this.itemsPerPage)
         },
         queueSample(){
+            
             return this.queueList[this.selectedQueueSample]
         },
         
@@ -1390,6 +1393,7 @@
              
         },
         cancelJob(index, sample){
+            
             this.$emit("sendMessage", {type: "cancel",  run: this.selectedRun,  index:index, sample: sample   });
         },
         forceRestart(){
@@ -1454,6 +1458,7 @@
             }
             this.toggleDemuxRun = false
             this.editedIndex = editedIndex
+            // this.editedItem = Object.assign({}, this.editedItem)
             this.dialog = true
         },
         closeItem () {
