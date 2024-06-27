@@ -20,6 +20,7 @@ export  class Classifier {
         this.config = sample.config
         this.dirpath = path.dirname(this.filepath)
         this.sampleReport = sample.reportPath
+        this.database = sample.database
         this.paired = ( sample.path_1 && sample.path_2 && sample.platform == 'illumina' ? true : false)
         this.gpu = ''
         this.reportPath = sample.reportPath
@@ -45,6 +46,32 @@ export  class Classifier {
 
 
     } 
+    formatcommandstring(){
+        let command = this.command
+        let formatted = `${command.main} ${command.args.join(" ")}`
+        return formatted
+    }
+    sendJobStatus(){
+        let info = {
+            command: this.formatcommandstring(),
+            fullreport: this.fullreport,
+            outputdir: this.outputdir,
+            reportPath: this.reportPath,
+            database: this.database,
+            sampleReport: this.sampleReport,
+            filepath: this.filepath,
+            index: this.index,
+            run: this.run,
+            sample: this.sample.sample,
+        }
+        broadcastToAllActiveConnections( "status", {
+            run: this.run, 
+            sample: this.name,  
+            index: this.index, 
+            'status' :  this.status ,
+            config: info
+        })
+    }
     initialize(){
         this.generateKrakenCommand()
     } 
@@ -85,7 +112,6 @@ export  class Classifier {
                     $this.status.historical = true
                     if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
                         $this.generateKrakenCommand()
-                        console.log($this.command)
                         logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
                         $this.status.running = true  
                         $this.status.cancelled = false
@@ -94,12 +120,7 @@ export  class Classifier {
                         $this.status.logs = []
                         let command = $this.command
                         let classify = spawn(command.main, command.args );
-                        broadcastToAllActiveConnections( "status",{
-                            run: $this.run, 
-                            sample: $this.name,  
-                            index: $this.index, 
-                            'status' :  $this.status 
-                        })
+                        $this.sendJobStatus()
                         classify.stdout.on('data', (data) => {
                             $this.status.logs.push(`${data}`) 
                             $this.status.logs.slice(0,20)
@@ -126,12 +147,8 @@ export  class Classifier {
                             $this.status.running = false
                             $this.status.historical = false
                             $this.process = null
-                            broadcastToAllActiveConnections( "status",{
-                                run: $this.run, 
-                                sample: $this.name,  
-                                index: $this.index, 
-                                'status' :  $this.status 
-                            })
+                            $this.sendJobStatus()
+
                             resolve( `${code}`)                 
                         });
                         $this.process = classify
@@ -141,12 +158,8 @@ export  class Classifier {
                         $this.status.historical = true
                         logger.info(`${this.fullreport} exists already`)
                         $this.status.logs.push['Historically gathered report, pre-run already']
-                        broadcastToAllActiveConnections( "status",{
-                            run: $this.run, 
-                            sample: $this.name,  
-                            index: $this.index, 
-                            'status' :  $this.status 
-                        })
+                        $this.sendJobStatus()
+                        
                         resolve()
                     }
                 }).catch((err)=>{
@@ -168,8 +181,8 @@ export  class Classifier {
     }
     generateKrakenCommand(){
         let dirname = path.dirname(this.sampleReport)
-        let command = `echo "Sleep job"; sleep 1; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
-        
+        let command = `echo "Sleep job"; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
+        this.database = this.sample.database
         if (this.paired){ 
             command=`${command} \\
             -t paired ` 

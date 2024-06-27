@@ -651,7 +651,6 @@
         </v-dialog> 
         
         <v-dialog v-model="dialogJobs">
-            
             <v-data-iterator  class="grey lighten-3"
                 :items="queueSample"
                 :items-per-page.sync="itemsPerPage"
@@ -913,7 +912,8 @@
         'queueList', 
         'anyRunning', 
         'queueLength', 
-        'pausedServer'
+        'pausedServer',
+        "statussent"
     ],
     components: {
         VueJsonToCsv,
@@ -930,6 +930,9 @@
     watch: {
       dialog (val) {
         val || this.closeItem()
+      },
+      dialogJobs(val){
+        !val ? this.selectedQueueSample = null : ''
       },
       selectedsamplesAll: {
         deep: true, 
@@ -955,7 +958,6 @@
       queueList: {
         deep: true, 
         handler(val){
-            console.log(val,"<")
         }
       },
       stagedData (val){
@@ -1027,8 +1029,7 @@
                 return Math.ceil(this.selectedSample.length / this.itemsPerPage)
         },
         queueSample(){
-            
-            return this.queueList[this.selectedQueueSample]
+            return this.selectedQueueSample ? this.queueList[this.selectedQueueSample] : []
         },
         
         icon () {
@@ -1276,7 +1277,6 @@
             Object.keys(this.config).forEach((key)=>{
                 config[key] = this.config[key].value
             })
-            console.log(config)
             this.$emit("updateConfig", (type == 'bundle' ? this.stagedBundleConfig : config ), type)
         },
         pasteLine(arr){
@@ -1397,7 +1397,6 @@
             this.$emit("sendMessage", {type: "cancel",  run: this.selectedRun,  index:index, sample: sample   });
         },
         forceRestart(){
-            console.log("forcerestart")
             this.$emit("sendMessage", {
                 type: "rerun", 
                 run: this.selectedRun,
@@ -1431,6 +1430,7 @@
             console.log('Dialog closed')
         },
         deleteRow(sample){
+            console.log(sample, "deleted!")
             // this.$swal({
             //     title: 'Are you sure?',
             //     text: 'You won\'t be able to revert this!',

@@ -275,15 +275,19 @@ export  class Sample {
                 });  
                 // logger.info(`Added Queue job: ${obj.filepath}-${id}`)                
                 
-                broadcastToAllActiveConnections("queueSample", { samplename: $this.sample, queue: $this.formatQueueInfo()})
+                // broadcastToAllActiveConnections("queueSample", { samplename: $this.sample, queue: $this.formatQueueInfo()})
+                logger.info("broadcasting to all active connections QUEUJOB")
+                broadcastToAllActiveConnections("queueJob", { 
+                    samplename: $this.sample, 
+                    queue: $this.formatQueueInfo(obj.index)
+                })
                 
                 await obj.start() 
-                broadcastToAllActiveConnections( "status",{
-                    run: $this.run, 
-                    sample: $this.sample,  
-                    index: obj.index, 
-                    'status' : obj.status  
-                })
+                try{
+                    obj.sendJobStatus()
+                } catch (err){
+                    logger.error(`${err} error in sending job`)
+                }
                 return 
             }, {signal: controller.signal, priority: obj.priority ? obj.priority : 0});
         } catch (error) {
@@ -309,6 +313,7 @@ export  class Sample {
             bundleconfig: this.bundleconfiguration,
             config: this.config,
             platform: this.platform,
+            run: this.run,
             format: this.format,
             filepath: filepath,
             overwrite: overwrite, 
@@ -341,14 +346,13 @@ export  class Sample {
     getStatus(send){
         let status = {
             running: false, 
-            historical: false,
+            historical: false, 
             success: true,
             logs: [],
             error: [],
             cancelled: false
         }
         // iterate thrugh this.queueList if any success is false then set success to false, if any historical set to true, append logs, if an cancel set to true etc
-
         status.running = this.queueList.some((d)=>{
             return d.info.status.running
         })
@@ -371,13 +375,13 @@ export  class Sample {
             const $this = this
             // iterate through all queueList jobs, check if they are running, if they are then update the status and emit status
             this.queueList.map((d)=>{
-                let info = d.info.status
-                broadcastToAllActiveConnections( "status",{
-                    run: $this.run, 
-                    sample: $this.sample,  
-                    index: info.index, 
-                    'status' : d.job.status 
-                })
+                let info =  d.info
+                try{
+                    d.job.sendJobStatus()
+                } catch (err){
+                    logger.error(`${err} error in sending job`)
+                }
+               
             })
         }
         return status
@@ -398,6 +402,7 @@ export  class Sample {
         msg.filepath = obj.filepath
         msg.sampleReport = obj.sampleReport
         msg.fullreport = this.fullreport
+        msg.database = obj.database
         msg.sample = this.sample 
         msg.run = this.run
         if (obj.index){
@@ -413,18 +418,41 @@ export  class Sample {
         this.queueList.push({info: msg, job: obj})
         return msg 
     }
-    formatQueueInfo(){
-        let info = []
-        this.queueList.map((d)=>{
-            let config = {
-                ...d.info,
-                ...d.job.sample 
+    formatQueueInfo(index ){
+        if (!index){
+            try{
+                let info = []
+                this.queueList.map((d)=>{
+                    let config = {
+                        ...d.info,
+                        ...d.job.sample 
+                    }
+                    config.command = config.command.args[1]
+                    config.status = d.job.status
+                    info.push(config)
+                })
+                return info
+            } catch (err){
+                logger.error(`${err} error in getting jobs for sample ${this.sample}`)
+                return null
             }
-            config.command = config.command.args[1]
-            config.status = d.job.status
-            info.push(config)
-        })
-        return info
+        } else {
+            try{
+                // get job at index 
+                let d = this.queueList[index]
+                let config = {
+                    ...d.info,
+                    ...d.job.sample 
+                }
+                config.command = config.command.args[1]
+                config.status = d.job.status
+                let info = config
+            } catch (err){
+                logger.error(`${err} error in getting job at index ${index} for sample ${this.sample}`)
+                return null
+            }
+        }
+        
     }
     cancel(index){ 
         const $this = this
@@ -467,7 +495,6 @@ export  class Sample {
                 run: this.run, 
                 samplename: this.sample, 
                 "data" : this.data,
-                queue: this.formatQueueInfo(),
                 status: this.getStatus() 
             }) 
             return this.data
@@ -528,9 +555,16 @@ export  class Sample {
         for (let key in info){ 
             this[key] = info[key]
         }
+        this.updateQueueRecords()
 
         return
     } 
+    updateQueueRecords(){
+        this.queueRecords = this.queueRecords.map((d)=>{
+            this.updateparams(d)
+            return d
+        })
+    }
     cleanup(){
         try{ 
             if (this.reportWatcher){

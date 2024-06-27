@@ -52,15 +52,24 @@ export  class Run {
         } catch(err) {
             logger.error(`Error in deleting sample ${sample}`)
             logger.error(err)
-        }
-        delete this.samples[sample]
-        // get the samplesehet and console log is
-        let index = this.samplesheet.findIndex((d)=>d.sample == sample)
-        if (index > -1){
-            this.samplesheet.splice(index, 1)
-        }
-        // write the new samplesheet
-        this.saveRunInformation()
+        } 
+        try{
+            delete this.samples[sample]
+            // get the samplesehet and console log is
+            let index = this.samplesheet.findIndex((d)=>d.sample == sample)
+            if (index > -1){
+                this.samplesheet.splice(index, 1)
+            }
+            // write the new samplesheet
+            this.saveRunInformation()
+        } catch (err){
+            logger.error(`Error in deleting sample ${sample}`)
+            logger.error(err)
+        } finally{
+            // send emit that sample deleted
+            logger.info(`Sending deleted sample status to frontend ${sample}`)
+            broadcastToAllActiveConnections('deletedSample', { samplename: sample })
+        } 
     }
     async updateRun(info){
         try{
@@ -236,7 +245,6 @@ export  class Run {
         if (info.searchPatternBC){
             logger.info("Checking subdirectories........................")
             await this.checkSubdirs(info)
-            console.log("done!")
             broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
         } else {
             let s = this.samples[sample]
@@ -254,8 +262,8 @@ export  class Run {
                 logger.info(`Could not find run ${run} to update, adding instead`)
                 await this.addSample(info)
                 // Emit updated samplesheet to frontend
-                broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
-            }
+            } 
+            broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
         }
     }
     

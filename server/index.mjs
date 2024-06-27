@@ -38,7 +38,6 @@ let portclient = 8080
             credentials: true
         }
     }
-    console.log(params,"<")
 // }
 
 let io = new Server(server, params);
@@ -104,7 +103,6 @@ io.on('connection', (ws) => {
     try{
       if (msg.run && msg.sample){
         let status = await storage.orchestrator.getEntriesStatus(msg.run, msg.sample)
-        ws.emit("status", { "message": status });
       } else {
         let statuses = storage.orchestrator.getEntriesStatus()
       }
@@ -223,7 +221,6 @@ io.on('connection', (ws) => {
     }
   })
   ws.on('rerun', (msg) => {  
-    console.log("msg", msg)
     logger.info(`${msg.index}: ${msg.sample}, ${msg.run} rerunning....`)
     storage.orchestrator.rerun(msg.index, msg.sample, msg.run)
   })

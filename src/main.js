@@ -6,11 +6,12 @@ import 'sweetalert2/dist/sweetalert2.min.css';
 import 'material-design-icons-iconfont/dist/material-design-icons.css'
 
 import JsonExcel from "vue-json-excel";
- 
+import VueJsonToCsv from 'vue-json-to-csv'
+
+
 Vue.component("downloadExcel", JsonExcel);
 Vue.config.productionTip = false
 Vue.use(VueSweetalert2);
-import VueJsonToCsv from 'vue-json-to-csv'
 Vue.use(VueJsonToCsv);
 new Vue({
   vuetify,

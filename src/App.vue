@@ -121,6 +121,7 @@
           <Samplesheet
               :samplesheet="samplesheet"
               :queueLength="queueLength"
+              :queueList="queueList"
               :databases="databases"
               :selectedsamples="selectedsamples"
               :bundleconfig="bundleconfig"
@@ -128,7 +129,6 @@
               :current="current"
               v-if="selectedRun"
               :socket="socket"
-              :queueList="queueList"
               @sendNewWatch="sendNewWatch"
               @importData="importData"
               :pathOptions1="pathOptions1"
@@ -151,6 +151,7 @@
               :status="status"
               :selectedRun="selectedRun"
               :selectedsamplesAll="selectedsamplesAll"
+              :statussent="statussent"
             >
           </Samplesheet>
           <v-alert class="py-0 my-0"
@@ -302,7 +303,7 @@ import RunStats from "@/components/RunStats"
 import AddRun from "@/components/AddRun"
 import _ from 'lodash'
 import { io } from "socket.io-client";
-
+ 
 
 export default {
     name: 'App',
@@ -319,7 +320,7 @@ export default {
         } catch (err){
           console.error(err)
         }
-      }
+      } 
     },
     computed: {
       direction() {
@@ -396,7 +397,6 @@ export default {
             sampleStatus: {},
             databases: [],
             database: {},
-            queueList: {},
             pathOptions: [],
             pathOptions1: [],
             pathOptions2: [],
@@ -442,6 +442,8 @@ export default {
             filepath: "sample_metagenome.second.report",
             tab: 0, 
             gpu: false,
+            statussent: null, 
+            queueList: {},
             tabs: [
                 {
                   name: 'Run Stats',
@@ -525,6 +527,7 @@ export default {
         this.setEvents();
         
         this.connect()
+
       
 
     },
@@ -608,9 +611,10 @@ export default {
           );
         } catch (err){
           console.error(err)
-        } finally {
-          this.deletesample(sample)
-        }
+        } 
+        // finally {
+        //   this.deletesample(sample)
+        // }
       },
       saveRun(){
         this.sendMessage({
@@ -771,7 +775,6 @@ export default {
           this.socket.on("databaseStatus", (e)=>{
             // match the e.status.key with this.database.key and if match then set this.database.size to e.status.size
             let index = this.databases.findIndex(x => x.key === e.status.key)
-            console.log(e.status)
             if (index > -1){
               
               this.$set(this.databases, index, e.status)
@@ -833,6 +836,7 @@ export default {
               $this.sendMessage({
                 type: "getStatus"       
               })
+              
               $this.socket.on("runs", (e)=>{
                 $this.runs = e;
                 // get index of this.selectedRun and if in runs then set to that index otherwise set to first run
@@ -849,6 +853,14 @@ export default {
                 // this.$refs.addRun.resetSavePath();
                 
               })
+              $this.socket.on("deletedSample", (e)=>{
+                try{
+                  console.log("Deleted Sample", e.samplename)
+                  $this.deletesample(e.samplename)
+                } catch (err){
+                  console.error(err, sample, "Error in deleting sample")
+                }
+              })
               $this.socket.on("message", (e)=>{
               })
               $this.socket.on("queueDrop", (e)=>{
@@ -859,12 +871,19 @@ export default {
                 // assume this is the entire set of sample queue records
                 // find queuelist sample and index and update status
                 let sample = e.sample
-                let index = e.index 
+                let index = e.index > 0 ? e.index : 0
                 let status = e.status
-                if (this.queueList[sample] && this.queueList[sample].length > index){
-                  console.log(status,"<<<<<<")
-                  this.$set($this.queueList[sample][index], 'status', status)
-                } 
+                let config = e.config 
+                if (!this.queueList[sample]){
+                  this.$set(this.queueList, sample, [])
+                }
+                if (!this.queueList[sample][index]){
+                  this.$set(this.queueList[sample], index, {})
+                }
+                this.$set($this.queueList[sample][index], 'status',  status)
+                for (let key in config){
+                  this.$set($this.queueList[sample][index], key, config[key])
+                }
                 $this.updateSampleStatus(sample)
               })
               
@@ -880,19 +899,21 @@ export default {
               $this.socket.on("sendPaths2", (e)=>{
                 this.pathOptions2 = e.data
               })
-              $this.socket.on("queueSample", (e)=>{
+              $this.socket.on("queueJob", (e)=>{
                 // assume this is the entire set of sample queue records
-                console.log(e)
-                this.queueList[e.samplename] = e.queue
+                // this.queueList[e.samplename] = e.queue
               })
               $this.socket.on("sampledata", async (e)=>{
                 try{
-                    $this.queueList[e.samplename] = e.queue
+                    // $this.queueList[e.samplename] = e.queue
                     await this.importData(e.data, e.samplename)
                 } catch (err){
                   console.error(err)
                 }
               }) 
+              $this.socket.on("samplesheet", (e)=>{
+                $this.samplesheet = e.samplesheet
+              })
              
               $this.socket.on('runInformation', async (e)=>{
                 $this.samplesheet = []
@@ -1187,16 +1208,13 @@ export default {
           // check if object with sample attribute equals the sample , get index
           let indx = this.selectedsamplesAll.findIndex(x => x.sample === sample );
           // check if thisqueueList has sample if not then add it 
-          if (!this.queueList[sample]){
-            this.queueList[sample] = []
-          } else {
-            this.sendMessage({
-              type: "getStatus", 
-              sample: sample,
-              run: this.selectedRun,
-              "message" : `Get Queue for ${sample} `
-            });
-          }
+          
+          this.sendMessage({
+            type: "getStatus", 
+            sample: sample,
+            run: this.selectedRun,
+            "message" : `Get Queue and Status/Info for ${sample} `
+          });
           if (indx == -1){
             let s = {
               sample: sample,
