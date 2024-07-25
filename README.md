@@ -1,11 +1,32 @@
 # Mytax2 - Realtime reporting
 
+
+
 ## Project setup
+
+### Create your Conda env first 
+
+```
+conda env create -f environment.yml
+```
+
+:warning: Make sure if you're on a Mac arm64 processor that you specify you want amd64 like:
+
+```
+CONDA_SUBDIR=osx-64 conda env create -f environment.yml
+```
+
+### Create npm packages in the repo.
+
 ```
 npm install
 ```
 
+## Running the software
+
+
 ### Compiles and hot-reloads for development
+
 ```
 npm run serveBoth
 ```
