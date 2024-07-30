@@ -28,6 +28,7 @@ export  class Classifier {
         this.overwrite   = sample.overwrite
         this.ws = null
         this.process = null
+        this.qc = sample.qc
         sample.filepath = this.filepath
         this.sample = sample
         this.recombine = null
@@ -46,35 +47,9 @@ export  class Classifier {
 
 
     } 
-    formatcommandstring(){
-        let command = this.command
-        let formatted = `${command.main} ${command.args.join(" ")}`
-        return formatted
-    }
-    sendJobStatus(){
-        let info = {
-            command: this.formatcommandstring(),
-            fullreport: this.fullreport,
-            outputdir: this.outputdir,
-            reportPath: this.reportPath,
-            database: this.database,
-            sampleReport: this.sampleReport,
-            filepath: this.filepath,
-            path_2: this.sample.path_2,
-            index: this.index,
-            run: this.run,
-            sample: this.sample.sample,
-        }
-        broadcastToAllActiveConnections( "status", {
-            run: this.run, 
-            sample: this.name,  
-            index: this.index, 
-            'status' :  this.status ,
-            config: info
-        })
-    }
+    
     initialize(){
-        this.generateKrakenCommand()
+        this.generateCommand()
     } 
     
 
@@ -99,69 +74,29 @@ export  class Classifier {
     getName(){
         return this.sample.run ? this.sample.run : this.name
     }
-
     async start(){ 
         const $this=this 
         return new Promise((resolve, reject)=>{
             if ($this.status.cancelled){
-                logger.info(`Job was cancelled, exiting`)
-                resolve('cancelled')
+                logger.info(`Fastp Job was cancelled, exiting`)
+                resolve(null)
             }
             else {
                 logger.info("No cancel status, continuing to run job")
                 $this.check_and_classify().then((exists)=>{
                     $this.status.historical = true
                     if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
-                        $this.generateKrakenCommand()
+                        $this.generateCommand()
+                        console.log(this.command)
                         logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
-                        $this.status.running = true  
-                        $this.status.cancelled = false
-                        $this.status.error = ''
-                        $this.status.success = null
-                        $this.status.logs = []
                         let command = $this.command
                         let classify = spawn(command.main, command.args );
-                        $this.sendJobStatus()
-                        classify.stdout.on('data', (data) => {
-                            $this.status.logs.push(`${data}`) 
-                            $this.status.logs.slice(0,20)
-                            logger.info(`${data} `);
-                        });   
-                    
-                        classify.stderr.on('data', (data) => {
-                            $this.status.logs.push(`${data}`)
-                            $this.status.logs.slice(0,20)
-                            if (data){
-                                $this.status.error = `${$this.status.error}\n${data}`
-                            }
-                            logger.error(`${data}`);
-                        });
-                        classify.on('error', function(error) {
-                            logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
-                            $this.status.error = err
-                            $this.status.running = false
-                            reject(error)
-                        })  
-                        classify.on('exit', (code) => {
-                            logger.info(`finished classification for: ${$this.filepath}, generated: ${$this.sampleReport} with code ${code}`);
-                            $this.status.success = code !== 0 ? false : true
-                            $this.status.running = false
-                            $this.status.historical = false
-                            $this.process = null
-                            $this.sendJobStatus()
-
-                            resolve( `${code}`)                 
-                        });
                         $this.process = classify
+                        resolve(classify)
                     } else { 
-                        $this.status.success = true
-                        $this.status.running = false
-                        $this.status.historical = true
-                        logger.info(`${this.fullreport} exists already`)
-                        $this.status.logs.push['Historically gathered report, pre-run already']
-                        $this.sendJobStatus()
                         
-                        resolve()
+                        logger.info(`${this.fullreport} exists already`)
+                        resolve(null)
                     }
                 }).catch((err)=>{
                     logger.info(`${err} Error in starting classification job for sample ${$this.name}`)
@@ -180,9 +115,21 @@ export  class Classifier {
         
         })
     }
-    generateKrakenCommand(){
+    generateQCCommand(filesshow){
+        let commandqc=` \\ 
+        fastp  \\
+            -i ${filesshow}  \\
+            -o ${this.outputdir}/output.fastq  \\
+            --json ${this.outputdir}/qc.json  \\
+            --html ${this.outputdir}/qc.html`
+        return commandqc
+    }
+    generateCommand(){
         let dirname = path.dirname(this.sampleReport)
-        let command = `echo "Sleep job"; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
+        let command = ` \\
+        kraken2 --db '${this.sample.database}'  \\
+            --report "${this.sampleReport}"  \\
+            --out ${this.sampleReport}.out`
         this.database = this.sample.database
         if (this.sample.path_2 && this.sample.path_2 != this.sample.path_1 && this.sample.path_2 != ""){ 
             command=`${command} \\
@@ -214,13 +161,21 @@ export  class Classifier {
             }
 
         }
+        let filesshow = `${this.filepath} ${this.sample.path_2 ? this.sample.path_2 : ''}`
+        let upstreadmcommands = ""
+        let downstreamscommands = ""
+        // if (this.qc){
+        //     upstreadmcommands = `${upstreadmcommands} ${this.generateQCCommand(filesshow)};`
+        //     downstreamscommands = `rm ${this.outputdir}/output.fastq ${this.outputdir}/qc.json ${this.outputdir}/qc.html`
+        //     filesshow = ` ${this.outputdir}/output.fastq `
+        // } 
         
-        command = `${command } ${additionals} ${this.filepath} ${this.sample.path_2 ? this.sample.path_2 : ''}`
-        
+        command = `${command } ${additionals} ${filesshow} `
+        this.overwrite = true
         let kreportcombined = this.generateKReportCommand()
         command = {
-            main: "bash",
-            args: ['-c', `${command} && ${kreportcombined}`]
+            main: "bash", 
+            args: ['-c', `mkdir -p ${dirname}; ${upstreadmcommands} ${command} && ${kreportcombined}; ${downstreamscommands}`]
         }
         this.command = command
         return command

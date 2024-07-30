@@ -46,7 +46,8 @@
           app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
         >    
           <v-row class="mt-10 ml-2">
-              <v-select  
+            
+              <!-- <v-select  
                 v-model="database" 
                 :items="databases" 
                 label="Database" 
@@ -80,10 +81,10 @@
                     >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
                     </v-icon>
                 </template>
-              </v-select>
-              <v-btn class="mr-10" @click="canceldownload" v-if="database.downloading" icon>
+              </v-select> -->
+              <!-- <v-btn class="mr-10" @click="canceldownload" v-if="database.downloading" icon>
                 <v-icon>mdi-cancel</v-icon>
-              </v-btn>
+              </v-btn> -->
               
               <v-select
                 :items="runs"
@@ -247,7 +248,13 @@
             
             </v-select>
           </div>
+          <v-row class="mt-10 ml-2">
+            <Analysis 
+              :commandOptions="commandOptions"
+            > </Analysis>
+          </v-row>
           </v-navigation-drawer>
+          
         </div> 
       <v-main class="pb-0">
         <v-alert
@@ -303,13 +310,14 @@ import RunStats from "@/components/RunStats"
 import AddRun from "@/components/AddRun"
 import _ from 'lodash'
 import { io } from "socket.io-client";
- 
+import  Analysis  from "@/components/Analysis";
 
 export default {
     name: 'App',
     components: {
       Plates, 
       Samplesheet,
+      Analysis,
       AddRun,
       RunStats,
     },
@@ -395,8 +403,8 @@ export default {
             db_option: "file",
             selectedData: {},
             sampleStatus: {},
+            commandOptions : [],
             databases: [],
-            database: {},
             pathOptions: [],
             pathOptions1: [],
             pathOptions2: [],
@@ -570,20 +578,8 @@ export default {
           
         }  
       },
-      canceldownload(){
-        this.sendMessage({
-            type: "canceldownload", 
-            database: this.database.key,
-            "message" : `Cancel Database Download ${this.database} `
-        });
-      },
-      downloaddb(){
-        this.sendMessage({
-            type: "downloaddb", 
-            database: this.database.key,
-            "message" : `Download Database ${this.database} `
-        });
-      },
+      
+      
       updateEntry(n, sample){
         try{
           this.sendMessage({
@@ -763,8 +759,20 @@ export default {
           type: "getRuns"          
         }) 
         this.sendMessage({
+          
+          type: "getCommandOptions"
+        })
+        this.sendMessage({
           type: "getDbs"          
         }) 
+          this.socket.on("commandStatus", (e)=>{
+            let index = this.commandOptions.findIndex(x => x.name === e.name)
+            if (index > -1){
+              this.$set(this.commandOptions, index, e)
+            } else {
+              this.commandOptions.push(e)
+            }
+          })
           this.socket.on("alert", (e)=>{
             // user swal alert for error
             this.$swal({
@@ -779,27 +787,28 @@ export default {
               
               this.$set(this.databases, index, e.status)
               // if this.database.key == e.status.key then set this.database.size to e.status.size
-              if (this.database.key == e.status.key){
-                this.$set(this.database, 'size', e.status.size)
-                this.$set(this.database, 'downloading', e.status.downloading)
-                this.$set(this.database, 'error', e.status.error)
-              } 
+              // if (this.database.key == e.status.key){
+              //   this.$set(this.database, 'size', e.status.size)
+              //   this.$set(this.database, 'downloading', e.status.downloading)
+              //   this.$set(this.database, 'error', e.status.error)
+              // } 
             }
 
           })
           this.socket.on("databases", (e)=>{
             this.$set(this, 'databases', Object.values(e))
-            if (this.databases.length > 0 && this.database.key == null){
-              this.database = this.databases[0]
-            }
+            // if (this.databases.length > 0 && this.database.key == null){
+            //   this.database = this.databases[0]
+            // }
             // find index where this.database.key  == key of this.databases and set this.database.size to size of that index
-            let index = this.databases.findIndex(x => x.key === this.database.key)
-            if (index > -1){
-              this.$set(this.database, 'size', this.databases[index].size)
-              this.$set(this.database, 'downloading', this.databases[index].downloading)
-              this.$set(this.database, 'error', this.databases[index].error)
-            }
+            // let index = this.databases.findIndex(x => x.key === this.database.key)
+            // if (index > -1){
+            //   this.$set(this.database, 'size', this.databases[index].size)
+            //   this.$set(this.database, 'downloading', this.databases[index].downloading)
+            //   this.$set(this.database, 'error', this.databases[index].error)
+            // }
           })
+          
           this.socket.on('disconnect', function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
           });
@@ -1065,7 +1074,7 @@ export default {
                   run: this.runName,
                   overwrite: restart,
                   sample: sample,
-                  "message" : `Begin restart directory ${this.watchdir}, classify with ${this.database} `
+                  "message" : `Begin restart directory ${this.watchdir}, classify `
               }
             );
           } else {
@@ -1074,7 +1083,7 @@ export default {
                     samplesheet: this.samplesheetdata,
                     run: this.runName, 
                     overwrite: restart,
-                    "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+                    "message" : `Begin watching directory ${this.watchdir}, classify `
                 }
             );
           }
@@ -1087,7 +1096,7 @@ export default {
                   samplesheet: this.samplesheetdata,
                   overwrite: false,
                   run: this.runName, 
-                  "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
+                  "message" : `Begin watching directory ${this.watchdir}, classify `
               }
           );
         },

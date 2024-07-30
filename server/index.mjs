@@ -113,6 +113,9 @@ io.on('connection', (ws) => {
       logger.error(err)
     }
   })
+  ws.on("getCommandOptions", async (msg) => { 
+    storage.orchestrator.getCommandOptions()
+  })
   ws.emit("sendQueueStatus",  storage.orchestrator.getQueueStatus() );
   ws.on('downloaddb', (msg) => {
     try {

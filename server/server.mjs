@@ -15,11 +15,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { parse } from "csv-parse"
 import  { spawn } from 'child_process';
+import {Anlayses} from './analysis.mjs'
 export  class Orchestrator { 
     constructor(){         
         this.sessions = {}
         this.queueList = []
         this.userSettings = new Map()
+        this.analyses = new Anlayses()
         this.homepath = os.homedir(); 
         this.savePath = path.join(this.homepath, ".config", "mytax2")
         this.userSavePath = path.join(this.homepath, ".config", "mytax2", "users")
@@ -123,6 +125,7 @@ export  class Orchestrator {
         this.seenfile = null 
         this.enableQueue()
         this.checkdatabases()
+        this.getCommandOptions()
         try{
             this.loadruns({})
         } catch (err){
@@ -141,6 +144,13 @@ export  class Orchestrator {
             this.userSettings.set(userId, this.getDefaultSettings());
         }
         return this.userSettings.get(userId);
+    }
+    async getCommandOptions(){
+        try{
+            this.analyses.checkCommands()            
+        } catch (err){ 
+            logger.error(err)
+        }
     }
     async openPath(directoryPath) {
         try{

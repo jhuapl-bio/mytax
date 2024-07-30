@@ -318,17 +318,32 @@
                         </v-col>
                         <v-col
                             cols="12"
-                            sm="6"
-                            md="4"
+                            sm="12"
+                            md="12"
                         >
                             
                             <!-- add a toggle that switches betwee a textarea OR a dropdown -->
-                            <v-select v-if="toggleDatabases" chips
-                                v-model="editedItem.database" class="truncate-text"
-                                :items="databases" :error-messages="dbErrors"
+                            <v-btn class="mr-10" @click="canceldownload" v-if="selectedDefaultDb && selectedDefaultDb.downloading" icon>
+                                <v-icon>mdi-cancel</v-icon>
+                            </v-btn>
+                            <v-select v-if="toggleDatabases"  chips
+                                v-model="selectedDefaultDb"   class="truncate-text"
+                                :items="databases" :error-messages="dbErrors" :hint="`${selectedDefaultDb.size}`"
                                 label="Database" item-text="key" item-value="fullpath" 
-                                    persistent-hint  
+                                    persistent-hint  return-object
                             >
+                                <template v-slot:prepend>
+                                    <v-tooltip bottom>
+                                    <template v-slot:activator="{ on }">
+                                        <v-btn @click="downloaddb" v-on="on" icon>
+                                        <v-icon>mdi-download</v-icon>
+                                        </v-btn>
+                                    </template> 
+                                    Download Database to home directory
+                                    
+                                    
+                                </v-tooltip>
+                                </template>                                
                                 <template v-slot:selection="{ item }">
                                     <v-tooltip bottom>
                                     <template v-slot:activator="{ on, attrs }">
@@ -352,8 +367,10 @@
                                         </span>
                                     </template>
                                     <span>{{ item.key }}</span>
+                                    
                                     </v-tooltip>
                                 </template>
+                                
                             </v-select>
                             <v-combobox   v-else
                                 v-model="editedItem.database"
@@ -364,6 +381,41 @@
                                 :error-messages="dbErrors"
                                 @keyup="handleInputPathDb"
                             ></v-combobox>
+                            <!-- <v-select  
+                            v-model="database" 
+                            :items="databases" 
+                            label="Database" 
+                            item-key="url"
+                            item-value="key"
+                            return-object
+                            item-text="final"
+                            :hint="`${database.size}`"
+                            persistent-hint class="mx-3 flex " >
+                            <template v-slot:prepend>
+                            <v-tooltip bottom>
+                            <template v-slot:activator="{ on }">
+                                <v-btn @click="downloaddb" v-on="on" icon>
+                                <v-icon>mdi-download</v-icon>
+                                </v-btn>
+                            </template> 
+                            Download Database to home directory
+                            </v-tooltip>
+                            </template>
+                            <template v-slot:selection="{ item }">
+                            {{ item.key }} <v-spacer vertical></v-spacer>
+                                <v-progress-circular :indeterminate="true" top
+                                stream   
+                                class="mr-2" 
+                                size="14"  color="blue lighten-2"
+                                v-if="item.downloading" >
+                                </v-progress-circular>
+                                <v-icon v-else
+                                :color="item.size != 0 ? 'green' : 'orange lighten-1' "
+                                large
+                                >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
+                                </v-icon>
+                            </template>
+                        </v-select> -->
                            
                         </v-col>
                         </v-row>
@@ -898,6 +950,7 @@
         "status",
         "databases", 
         "samplesheet", 
+        "socket",
         "pathOptions1",
         "pathOptions2",
         "pathOptionsDb",
@@ -931,6 +984,31 @@
       dialog (val) {
         val || this.closeItem()
       },
+      databases(val){
+        // get key of datbaases == selectedDefaultDb
+        let index = this.databases.findIndex((f)=>{
+            return this.selectedDefaultDb && f.fullpath == this.selectedDefaultDb.fullpath
+        })
+        if (index > -1){
+            let e = this.databases[index]
+            this.$set(this.selectedDefaultDb, 'size', e.size)
+            this.$set(this.selectedDefaultDb, 'downloading', e.downloading)
+            this.$set(this.selectedDefaultDb, 'error', e.error)
+        }
+      },
+      "editedItem.database":{
+        deep: true,
+        handler(val){
+            // get index where val == key of databases
+            let index = this.databases.findIndex((f)=>{
+                return f.fullpath == val
+            })
+            if (index != -1 ){
+                this.selectedDefaultDb = this.databases[index]
+            }
+            
+        }
+      },
       dialogJobs(val){
         !val ? this.selectedQueueSample = null : ''
       },
@@ -948,6 +1026,7 @@
             this.paused = val
         }
       },
+      
     
       bundleconfig (val){
         this.stagedBundleConfig = val
@@ -1010,6 +1089,7 @@
             }
             return [];
         },
+       
         dbErrors() {
             if (!this.editedItem.database || this.editedItem.database === '') {
                 return 'Database Name/Path is required';
@@ -1139,6 +1219,7 @@
             { text: 'Delete', value: 'delete', sortable: false },
           ],
           stagedData: [],
+          database: {},
           toggleDatabases: true,
           toggleDemuxRun: false, 
           selectedQueueJob: null,
@@ -1169,6 +1250,7 @@
           selectedSampleIndex: null,
           dataSamples: [],
           editedIndex: -1,
+          selectedDefaultDb: {},
           dialog: false,
           dialogDelete: false,
           snackText: '',
@@ -1271,6 +1353,31 @@
     },
  
     methods: {
+        downloaddb(){
+            // get index where database == entry.fullpath of this.databases
+            
+            if (this.selectedDefaultDb){
+                let databasekey = this.selectedDefaultDb.key
+                this.$emit("sendMessage", {
+                    type: "downloaddb", 
+                    database: databasekey,
+                    "message" : `Download Database ${databasekey} `
+                });
+            }
+            
+           
+        },
+        canceldownload(){
+            if (this.selectedDefaultDb){
+                let databasekey = this.selectedDefaultDb.key
+                this.$emit("sendMessage", {
+                    type: "canceldownload", 
+                    database: databasekey,
+                    "message" : `Cancel Database Download ${databasekey} `
+                });
+            }
+            
+        },
         updateConfig(type){
             // extract all values from config and send to server as key: value
             let config = {}
@@ -1375,6 +1482,10 @@
         },
         
         start(index, sample ){
+            // Delete the queue entry list for the sample
+            if (sample in this.queueList){
+                this.queueList[sample] = []
+            }
             this.$emit("sendMessage", {
                 type: "rerun", 
                 run: this.selectedRun,

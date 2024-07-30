@@ -1,6 +1,6 @@
 
 import path, { resolve } from 'path'
-import { Classifier} from './classifier.mjs'
+import { Job} from './job.mjs'
 import { getReportName, rmDir, rmFile, removeExtension, globFiles } from './controllers.mjs';
 import {logger} from './logger.js'
 import fs from "file-system"
@@ -12,6 +12,7 @@ import { mkdirp } from 'mkdirp'
 import { pathEqual } from 'path-equal'
 import { storage } from './storage.mjs'
 import { broadcastToAllActiveConnections } from './messenger.mjs';
+
 export  class Sample { 
 
     constructor(info, queue){
@@ -196,11 +197,11 @@ export  class Sample {
                 logger.info(`Seenfile ${filepath}, overwrite force: ${overwrite}`)
                 sampleo = this.queueRecords[indexFilepath]
                 sampleo.overwrite = overwrite
-                $this.defineClassifier(filepath, priority ? priority : 0, overwrite)
+                $this.defineJob(filepath, priority ? priority : 0, overwrite)
                 return 
             } else {
                 logger.info(`Never seen this file process before ${filepath}, creating a new job, paused? : ${this.paused  ? 'true' : 'false'}`)
-                $this.defineClassifier(filepath, priority ? priority : 0, overwrite)
+                $this.defineJob(filepath, priority ? priority : 0, overwrite)
             }
         } else {
             logger.info(`Paused: ${this.paused}, skipping ${filepath}. Please rerun if you want to get info again from this.`)
@@ -261,19 +262,19 @@ export  class Sample {
         const $this = this;
         try {
             obj = this.updateparams(obj)
-            // obj.generateKrakenCommand()
             const controller = new AbortController();
             obj.controller = controller
             storage.queue.add(async ({signal}) => { 
+                logger.info("Added!!")
                 $this.queueRecords[obj.index] = obj 
                 // Check that filepath exists, and if not then remove from queue
-                if (!fs.existsSync(obj.filepath)){
-                    logger.info(`File ${obj.filepath} does not exist, removing from queue`)
-                    $this.queueRecords = $this.queueRecords.filter((d)=>{return d.filepath != obj.filepath})
+                if (!fs.existsSync(obj.config.filepath)){
+                    logger.info(`File ${obj.config.filepath} does not exist, removing from queue`)
+                    $this.queueRecords = $this.queueRecords.filter((d)=>{return d.config.filepath != obj.config.filepath})
                     return 
                 }
                 signal.addEventListener('abort', () => {
-                    logger.info(`aborting job ${obj.filepath}-${id}`)
+                    logger.info(`aborting job ${obj.config.filepath}-${id}`)
                     obj.stop() 
                 });  
                 // logger.info(`Added Queue job: ${obj.filepath}-${id}`)                
@@ -283,14 +284,9 @@ export  class Sample {
                 broadcastToAllActiveConnections("queueJob", { 
                     samplename: $this.sample, 
                     queue: $this.formatQueueInfo(obj.index)
-                })
-                
+                }) 
                 await obj.start() 
-                // try{
-                //     obj.sendJobStatus()
-                // } catch (err){
-                //     logger.error(`${err} error in sending job`)
-                // }
+               
                 return 
             }, {signal: controller.signal, priority: obj.priority ? obj.priority : 0});
         } catch (error) {
@@ -301,13 +297,13 @@ export  class Sample {
         obj.jobnumber = id
         return 
     }
-    updateparams(classifier){
-        classifier.sample.database = this.database
-        classifier.generateKrakenCommand()
-        return classifier
+    updateparams(job){
+        job.target.sample.database = this.database
+        job.target.generateCommand()
+        return job
     }
     
-    defineClassifier(filepath, priority, overwrite){
+    defineJob(filepath, priority, overwrite){
         let sampleObj = {
             sample: this.sample,
             basename: removeExtension(filepath),
@@ -329,14 +325,14 @@ export  class Sample {
             priority: ( priority ? priority : 0)
 
         }
-        let classifier = new Classifier(sampleObj)
+        let classifier = new Job(sampleObj, "classifier", this.ws )
         classifier.ws = this.ws 
         let msg;  
 
         msg = this.defineQueueMessage(classifier)
         classifier.index = msg.index
         this.updateStatusQueueList(classifier) 
-        logger.info(`CALLED DEFINE QUEUE JOB IN DEFINECLASSIFIER`)
+        logger.info(`CALLED DEFINE QUEUE JOB IN Define JOB`)
         this.defineQueueJob(classifier )
         return classifier
     }
@@ -383,7 +379,7 @@ export  class Sample {
                 try{
                     d.job.sendJobStatus()
                 } catch (err){
-                    logger.error(`${err} error in sending job`)
+                    logger.error(`${err} error in sending job to client`)
                 }
                
             })
@@ -429,7 +425,8 @@ export  class Sample {
                 this.queueList.map((d)=>{
                     let config = {
                         ...d.info,
-                        ...d.job.sample 
+                        ...d.job.sample,
+                        ...d.job.target
                     }
                     config.command = config.command.args[1]
                     config.status = d.job.status
@@ -448,7 +445,7 @@ export  class Sample {
                     ...d.info,
                     ...d.job.sample 
                 }
-                config.command = config.command.args[1]
+                config.command = config.command.args.splice[1]
                 config.status = d.job.status
                 let info = config
             } catch (err){

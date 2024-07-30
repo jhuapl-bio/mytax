@@ -5,7 +5,6 @@ import { broadcastToAllActiveConnections } from './messenger.mjs';
 import { writeRun, globFiles, getKrakenConfigDefault } from './controllers.mjs';
 import path from "path"
 
-import { storage } from './storage.mjs';
 export  class Run { 
     constructor(configuration, queue, ws){
         this.run = configuration.run
@@ -15,6 +14,7 @@ export  class Run {
             d.searchPatternBC = null   
             return d 
         })
+        
         // remove dups for samoplesheet based on sample
         this.samplesheet = this.samplesheet.filter((v,i,a)=>a.findIndex(t=>(t.sample === v.sample))===i)
         this.entries = []  
