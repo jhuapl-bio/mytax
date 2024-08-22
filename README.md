@@ -1,15 +1,6 @@
 # Mytax2 - Realtime reporting
 
 
-<<<<<<< HEAD
-## Create Conda Environment
-```
-conda env create -f environment.yml
-```
-
-=======
->>>>>>> run_level
-
 ## Project setup
 
 ### Create your Conda env first 
