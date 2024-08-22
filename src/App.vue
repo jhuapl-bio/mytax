@@ -1,36 +1,19 @@
 <template>
-  <v-app  >
+  <v-app  style="padding-bottom: 0px;">
       <v-app-bar
         app
         color="light"
-        dark absolute
+        dark absolute class=""
         dense
       >
         
         <v-toolbar-title>Real Time Nanopore Report Analysis</v-toolbar-title>
         <v-spacer>
         </v-spacer>
-        <span style="margin-right: 10px" v-if="!samplesheetdata || samplesheetdata.length <= 0 ">No Data Loaded</span>
-        <v-checkbox 
-          v-model="runBundle" style="text-align:center" @click="runBundleUpdate($event)"  
-        >   
-          <template v-slot:label>
-              <v-tooltip bottom>
-                <template v-slot:activator="{ on }">
-                  <div v-on="on">
-                    <v-icon>
-                      mdi-card-plus
-                    </v-icon>
-                    Enable Name Mapping
-                  </div>
-                </template>
-                If you have a names.dmp file (pre-loaded as well), map additional names to taxids such as common name
-              </v-tooltip>
-          </template>
-        </v-checkbox>
+        <span style="margin-right: 10px" v-if="!selectedsamples || selectedsamplesAll.length <= 0 ">No Data Loaded</span>
         <v-spacer></v-spacer>
         <v-checkbox 
-            v-model="gpu" style="text-align:center"   
+            v-model="gpu" style="text-align:center"    class="mt-6"
         >   
           <template v-slot:label>
               <v-tooltip bottom>
@@ -48,140 +31,179 @@
         </v-checkbox>
         
         <v-spacer></v-spacer>
-        <!-- <v-btn btn-and-icon  color="blue "  @mouseover="navigation.shown=true" @click="navigation.shown = true" > -->
+        <v-btn   color="blue "  @click="sendMessage({type: 'message', message: 'Message' })">Send message </v-btn>
+
           <v-progress-circular
               v-if="anyRunning "
               :indeterminate="true" top
               stream   class="mr-2" size="14"
               color="white"
-          ></v-progress-circular>
-          <!-- <span  v-if="!samplesheetdata || samplesheetdata.length <= 0 " class="pulse"></span>
-          <v-icon v-else class="ml-2">mdi-export</v-icon>
-          
-        </v-btn> -->
-        
+          ></v-progress-circular>        
       </v-app-bar> 
       <div class="pt-6 "> 
         
         <v-navigation-drawer permanent class="pt-6"
           app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
-          
-        >   
+        >    
+          <v-row class="mt-10 ml-2">
+              <v-select  
+                v-model="database" 
+                :items="databases" 
+                label="Database" 
+                item-key="url"
+                item-value="key"
+                return-object
+                item-text="final"
+                :hint="`${database.size}`"
+                persistent-hint class="mx-3 flex " >
+                <template v-slot:prepend>
+                  <v-tooltip bottom>
+                  <template v-slot:activator="{ on }">
+                    <v-btn @click="downloaddb" v-on="on" icon>
+                      <v-icon>mdi-download</v-icon>
+                    </v-btn>
+                  </template> 
+                  Download Database to home directory
+                  </v-tooltip>
+                </template>
+                <template v-slot:selection="{ item }">
+                  {{ item.key }} <v-spacer vertical></v-spacer>
+                    <v-progress-circular :indeterminate="true" top
+                      stream   
+                      class="mr-2" 
+                      size="14"  color="blue lighten-2"
+                      v-if="item.downloading" >
+                    </v-progress-circular>
+                    <v-icon v-else
+                      :color="item.size != 0 ? 'green' : 'orange lighten-1' "
+                      large
+                    >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
+                    </v-icon>
+                </template>
+              </v-select>
+              <v-btn class="mr-10" @click="canceldownload" v-if="database.downloading" icon>
+                <v-icon>mdi-cancel</v-icon>
+              </v-btn>
+              
+              <v-select
+                :items="runs"
+                v-model="selectedRun"
+                v-if="runs && runs.length > 0"
+                label="Available Runs"
+                hint="Select a run of number of samples"
+                persistent-hint
+                class="mx-3 flex "
+              >
+              </v-select>
+              <AddRun ref="addRun" 
+                @sendMessage="sendMessage"
+                :selectedRun="selectedRun"
+                :samples="selectedsamplesAll"
+                :pathOptions="pathOptions"
+                :reportSavePath="reportSavePath"
+              >
+              </AddRun> 
+              <v-tooltip bottom>
+                <template v-slot:activator="{ on }">
+                  <v-btn v-on="on"  icon
+                    @click="sendMessage({type: 'openPath' })"
+                    class="mr-10 mb-2">
+                    <v-icon color="black"  >mdi-home</v-icon>
+                  </v-btn>
+                </template>
+                Open Base Path to default database(s), reports, information
+              </v-tooltip>
+             
+          </v-row>
             
+
+          <!-- Button click to save run information, sned to backend as a method -->
           <Samplesheet
-              :samplesheet="samplesheetdata"
+              :samplesheet="samplesheet"
               :queueLength="queueLength"
+              :queueList="queueList"
+              :databases="databases"
+              :selectedsamples="selectedsamples"
               :bundleconfig="bundleconfig"
               :seen="samplekeys"
               :current="current"
-              :queueList="status"
+              v-if="selectedRun"
+              :socket="socket"
               @sendNewWatch="sendNewWatch"
+              @importData="importData"
+              :pathOptions1="pathOptions1"
+              :pathOptions2="pathOptions2"
+              :pathOptionsDb="pathOptionsDb"
+              @updateSampleStatus="updateSampleStatus"
               @sendMessage="sendMessage"
-              @cancel="cancel"
               @updateData="updateData"
+              @updateEntry="updateEntry"
+              @deleteEntry="deleteEntry"
               @barcode="barcode"
+              @sampleStatus="sampleStatus"
               @rerun="rerun"
               :anyRunning="anyRunning"
               @pausedChange="pausedChange"
               :pausedServer="pausedServer"
               :logs="logs"
               @updateConfig="updateConfig"
-              @deleteRow="deleteRow"
               :samplesheetName="samplesheet"
+              :status="status"
+              :selectedRun="selectedRun"
+              :selectedsamplesAll="selectedsamplesAll"
+              :statussent="statussent"
             >
           </Samplesheet>
-          <div id="file"   @drop.prevent="addDropFileData" @dragover.prevent style="overflow-y: auto"  >
-            <v-file-input
-                :hint="'Add Another Kraken2 Report File'"
-                persistent-hint @input="addData" v-model="recentDataFileadded"
-                counter show-size overlap
-            >
-            </v-file-input>
-          </div>
-          <div class="mx-4">
-            
-            <v-autocomplete class="mt-3"
-              v-model="selectedsamples"
-              :items="selectedsamplesAll"
-              chips outlined
-              label="Samples"
-              multiple
-            >
-            
-            <template v-slot:prepend-item>
-              <v-list-item
-                ripple
-                @mousedown.prevent
-                @click="toggleSamples"
-              >
-                <v-list-item-action>
-                  <v-icon :color="selectedsamples.length > 0 ? 'indigo darken-4' : ''">
-                    {{ icon  }}
-                  </v-icon>
-                </v-list-item-action>
-                <v-list-item-content>
-                  <v-list-item-title>
-                    Select All
-                  </v-list-item-title>
-                </v-list-item-content>
-              </v-list-item>
-              <v-divider class=""></v-divider>
-            </template>
-            <template v-slot:selection="{ attr, on, item, selected }">
-              <v-chip
-                v-bind="attr" small
-                :input-value="selected"
-                color="blue-grey"
-                class="white--text "
-                v-on="on"
-              >
-                <v-progress-circular
-                    indeterminate v-if="( current && current[item])"
-                    color="white" small size="15"
-                ></v-progress-circular>
-                <v-icon
-                    small v-else 
-                    :color="samplekeys && samplekeys.indexOf(item) > -1 ? 'white': 'white'"
-                >
-                  {{ !status[item] || status[item] && status[item].success != -1  ? 'mdi-check-circle' : 'mdi-exclamation'}}
-                </v-icon>
-                <span class="ml-2" v-text="item"></span>
-                <v-icon
-                    small v-if="manuals[item]" @click="deleteRow(item)"
-                    :color="`white`"
-                >
-                  mdi-cancel
-                </v-icon>
-                
-              </v-chip>
-            </template>
-              
-            
-            </v-autocomplete>
+          <v-alert class="py-0 my-0"
+          type="info" v-else
+          ><hr>No Run selected. Please create one with the "+" button first<hr></v-alert>
+          
+          
+          <div class="mx-4" 
+          style="overflow-y: auto; ">
             
             <v-spacer class="py-0"></v-spacer>
             
-            <v-text-field
-              hint="Max Depth of Tax Tree"
-              v-model="maxDepth"
-              persistent-hint 
-              single-line
-              type="number"
-            ></v-text-field>
-            <v-text-field
-              hint="Min Depth of Tax Tree"
-              v-model="minDepth"
-              persistent-hint 
-              single-line
-              type="number"
-            ></v-text-field>
+            <v-range-slider
+              v-model="depthRange"
+              :max="maxDepth"
+              :min="0"
+              label="Depth Range"
+              :step="1"
+              hide-details
+              class="align-center"
+            >
+              <template v-slot:prepend>
+                <v-text-field
+                  v-model="depthRange[0]"
+                  hide-details
+                  single-line
+                  type="number"
+                  variant="outlined"
+                  density="compact"
+                  style="width: 70px"
+                ></v-text-field>
+              </template>
+              <template v-slot:append>
+                <v-text-field
+                  v-model="depthRange[1]"
+                  hide-details
+                  single-line
+                  type="number"
+                  variant="outlined"
+                  style="width: 70px"
+                  density="compact"
+                ></v-text-field>
+              </template>
+            </v-range-slider>
             <v-spacer class="py-4"></v-spacer>
             <v-text-field
-              hint="Min Percent in Sample"
+              hint="Min Abu in Sample"
               v-model="minPercent"
               persistent-hint 
               single-line
               type="number"
+              step="0.005"
             ></v-text-field>
       
             <v-slider
@@ -191,13 +213,15 @@
               :max="1"
             ></v-slider>
             <v-spacer class="py-4"></v-spacer>
+            
             <v-select
               label="Tax Rank Codes"
               v-model="defaults" multiple
               :items="defaultsList"
               item-text="value"
               @change="filter"
-              item-value="value"
+              item-value="value" 
+              menu-props="auto"
               persistent-hint 
               
               >
@@ -225,11 +249,11 @@
           </div>
           </v-navigation-drawer>
         </div> 
-      <v-main >
+      <v-main class="pb-0">
         <v-alert
           type="error" v-if="connectedStatus != 'Connected'"
         >{{  connectedStatus }}</v-alert>
-        <v-row class="ml-4">
+        <v-row class="ml-4 pb-0">
           
           <v-col
               sm="12"
@@ -237,7 +261,6 @@
               class="overflow-y-auto  my-0"
           >
              
-          
               <v-tabs-items v-model="tab"
               >
 
@@ -245,14 +268,14 @@
                   align-with-title v-for="(tabItem, key) in tabs" 
                   :key="`${key}-item`"
               >   
-                  <v-container class="my-3">
+                  <v-container class="my-0">
                       <component
                           :is="tabItem.component"
-                          :sampleData="selectedData"
                           :bundleconfig="bundleconfig"
+                          :sampleData="selectedsamples"
                           :namesData="uniquenametypes"
                           :fullsize="fullsize"
-                          :selectedsamples="selectedsamples"
+                          :selectedsamples="Object.keys(selectedData)"
                           :socket="socket"
                       >
                       </component>
@@ -277,16 +300,17 @@ import Plates from "@/components/Plates"
 import * as d3 from 'd3'
 import Samplesheet from "@/components/Samplesheet"
 import RunStats from "@/components/RunStats"
+import AddRun from "@/components/AddRun"
 import _ from 'lodash'
-import path from "path"
 import { io } from "socket.io-client";
-
+ 
 
 export default {
     name: 'App',
     components: {
       Plates, 
       Samplesheet,
+      AddRun,
       RunStats,
     },
     beforeDestroy(){ 
@@ -296,32 +320,43 @@ export default {
         } catch (err){
           console.error(err)
         }
-      }
+      } 
     },
     computed: {
       direction() {
             return this.navigation.shown === false ? "Open" : "Closed";
       },
-      samplekeys(){
-        return Object.keys(this.fullData)
+      selectedsamples(){
+        let data = {}
+        
+        this.selectedsamplesAll.filter((obj)=>{
+          return !obj.hidden
+        }).map((f)=>{
+          data[f.sample] = f.data
+        })
+        return data 
       },
       icon () {
         if (this.selectedAllSamples) return 'mdi-checkbox-marked'
         if (this.selectedSomeSamples) return 'mdi-minus-box'
         return 'mdi-checkbox-blank-outline'
       },
-      selectedAllRanks () {
-        return this.defaultsList.length === this.defaults.length
+      
+      filteredItems() {
+        if (!this.search) {
+          return this.selectedsamplesAll;
+        }
+        const searchTerm = this.search.toLowerCase();
+        return this.selectedsamplesAll.filter(item => {
+          // Assuming 'item' has a property to filter on. Replace 'name' with the relevant property
+          return item.name.toLowerCase().includes(searchTerm);
+        });
       },
-      selectedSomeRanks () {
-        return this.defaults.length > 0 && !this.selectedAllRanks
+      samplekeys(){
+        return Object.keys(this.fullData)
       },
-      selectedAllSamples () {
-        return this.samplekeys.length === this.selectedsamples.length
-      },
-      selectedSomeSamples () {
-        return this.selectedsamples.length > 0 && !this.selectedAllSamples
-      },
+      
+      
       
     },
     
@@ -330,7 +365,6 @@ export default {
           search: '',
             queueLength: 0,
             manuals: {},
-            recentDataFileadded: null,
             socket: {},
             socketReport: {},
             navigation: {
@@ -338,9 +372,10 @@ export default {
                 width: 550,
                 borderSize: 3
             },
+            runs: [], 
+            selectedRun: null,
             anyRunning: false,
             pausedServer: false,
-            selectedsamples: [],
             selectedsamplesAll: [],
             status: {},
             uniquenametypes: {
@@ -359,33 +394,42 @@ export default {
             database_file: null,
             db_option: "file",
             selectedData: {},
+            sampleStatus: {},
+            databases: [],
+            database: {},
+            pathOptions: [],
+            pathOptions1: [],
+            pathOptions2: [],
+            pathOptionsDb: [],
             db_options: [
               "file",
               "path"
             ],
-            stagedData: {},
+            search: '',
             paused: false,
             dialog: false,
             connectedStatus: 'Not connected!',
             message: 'No message yet!',
             inputdata: null,
-            sampledata: {},
             samples: [],
             selectedsample: null,
             fullData: [],
             type: "single",
-            database:null,
             watchdir:null,
             playbackdata: null,
             bundleconfig: null,
             runBundle: true,
             interval: null,
             nodeCountMax: 0,
-            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F','S1','S2','S3', 'S4'],
-            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F','S1','S2','S3', 'S4'],
-            maxDepth: 30,
+            selectAll: false,
+            
+            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1','S2','S3', 'S4'],
+            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1','S2','S3', 'S4'],
+            depthRange: [0,100],
+            maxDepth: 100,
             samplesheetdata: [],
             samplesheet: null,
+            reportSavePath: null,
             minDepth: 0,
             minPercent: 0.005, 
             jsondata: null, 
@@ -398,6 +442,8 @@ export default {
             filepath: "sample_metagenome.second.report",
             tab: 0, 
             gpu: false,
+            statussent: null, 
+            queueList: {},
             tabs: [
                 {
                   name: 'Run Stats',
@@ -420,22 +466,33 @@ export default {
           console.error(err)
         }
       },
-      selectedsamples(val){
-        let data = {}
-        let unique_names = []
-        val.map((sample)=>{
-          
-
-          
-
-        
-          return data[sample] = this.sampledata[sample]
-        
-        
-        })
-        
-        this.selectedData = data
+      selectedRun(val){
+        if (val){
+          this.selectedsamplesAll = []
+          this.sendMessage({
+            run: val,
+            type: "getRunInformation", 
+          })
+        }
       },
+      // selectedsamples:{
+      //   deep: true, 
+      //   handler(val){
+      //     let data = {}
+      //     let unique_names = []
+      //     val.filter((obj)=>{
+      //       return !obj.hidden
+      //     }).map((obj)=>{
+      //       let sample = obj.sample
+      //       unique_names.push(sample)
+      //       let d = obj.data
+      //       if (d){
+      //         data[sample] = d
+      //       }
+      //     })
+      //     return data 
+      //   }
+      // },
       async names_file_input(newVal){
         let reader = new FileReader(); // no arguments
         const $this = this;
@@ -446,92 +503,139 @@ export default {
           $this.mapData(data)
         }
       },
-      maxDepth(){
+      depthRange(){
         this.filter()
       },
-      
       paused(newValue){
         this.sendMessage({type: "pause", pause: newValue  });
       },
-      minDepth(){
-        this.filter()
-      },
-      defaults(){
-        this.minDepth = 0
-        this.maxDepth = 20
-        this.minPercent=0
-        this.filter()     
-      },
+      
+      // defaults(){
+      //   this.minPercent=0
+      //   this.filter()     
+      // },
       minPercent(){
         this.filter()
       },
       
     },
+    
     async mounted() {
         // Calculate the URL for the websocket. If you have a fixed URL, then you can remove all this and simply put in
         // ws://your-url-here.com or wss:// for secure websockets.
         this.setBorderWidth();
         this.setEvents();
-        this.importNames(this.names_file)
-        try{
-          console.log(`${process.env.BASE_URL}/data/Samplesheet.csv`)
-          let samplesheet = `${process.env.BASE_URL}/data/Samplesheet.csv`.replace("//",'/')
-          let data = await d3.csv(`${samplesheet}`)
-          data = data.filter((f)=>{
-            f.demux = (f.demux == "true" || f.demux == "TRUE" || f.demux == "True" ? true : false )
-            // f.compressed = (f.compressed == "true" || f.compressed == "TRUE" || f.compressed == "True" ? true : false )
-            return f.sample && f.sample != ''
-          }) 
-          this.samplesheet = samplesheet
-          this.samplesheetdata = data
-          if (this.samplesheetdata.length == 0){
-              this.navigation.shown=true
-          }
-        } catch (err){
-          console.error(err,"<<<")
-        }
-        // this.connectReport()
+        
         this.connect()
+
       
 
     },
     methods: {
-      deleteRow(sample){
-        this.$delete(this.selectedData, sample)
-        this.manuals[sample] = null
-        let index = this.selectedsamplesAll.findIndex(x => x === sample);
-        if (index >= 0){
-          this.selectedsamplesAll.splice(index, 1)
-          this.selectedsamples.splice(index, 1)
-        }
-        if (this.topLevelSampleNames[sample]){
-          this.topLevelSampleNames[sample].map((d)=>{
-            this.$delete(this.selectedData,d )
-            let index = this.selectedsamples.findIndex(x => x === d);
-            if (index >= 0){
-              this.selectedsamples.splice(index, 1)
-              this.selectedsamplesAll.splice(index, 1)
-            }
+      generateUserId() {
+        return `user_${Math.random().toString(36)}`;
+      },
+      updateSampleStatus(sample, status){
+        // iterate through queueList and find sample. Set success if all are success, set historical if all historical, set running if any running etc also do logs and error. Update selectedsamplesAll with new status
+        let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
+        
+        if (index > -1){
+          if (!status){
+
+            let status = this.selectedsamplesAll[index].status
+            let queue = this.queueList[sample]
             
-          })
-        }
-      },
-      addDropFileData(e) {
-        this.addData(e.dataTransfer.files[0])
-      },
-      addDropFile(e) { 
-        this.names_file_input = e.dataTransfer.files[0]; 
-      },
-      addData(val){
-          const $this  = this
-          let reader = new FileReader();  
-          reader.addEventListener("load", parseFile, false);
-          reader.readAsText(val);
-          let name  = path.parse(val.name).name
-          async function parseFile(){
-            await $this.importData(reader.result, null, name, true)
+            let error = queue.map((f)=>{return f.status.error})
+            let running = queue.some((f)=>{return f.status.running})  
+            let paused = queue.some((f)=>{return f.status.paused})
+            let success = queue.every((f)=>{return f.status.success})
+            let historical = queue.every((f)=>{return f.status.historical})
+            let waiting = queue.some((f)=>{return f.status.waiting})
+            let logs = queue.map((f)=>{return f.status.logs})
+
+            status = {
+              running: running,
+              paused: paused,
+              success: success,
+              historical: historical,
+              waiting: waiting,
+              error: error,
+              logs: logs
+            }
+
+            this.$set(this.selectedsamplesAll[index], 'status', status)
+          } else {
+            this.$set(this.selectedsamplesAll[index], 'status', status)
           }
+          
+        }  
       },
+      canceldownload(){
+        this.sendMessage({
+            type: "canceldownload", 
+            database: this.database.key,
+            "message" : `Cancel Database Download ${this.database} `
+        });
+      },
+      downloaddb(){
+        this.sendMessage({
+            type: "downloaddb", 
+            database: this.database.key,
+            "message" : `Download Database ${this.database} `
+        });
+      },
+      updateEntry(n, sample){
+        try{
+          this.sendMessage({
+                type: "updateEntry", 
+                sample: n['sample'],
+                info: n,
+                run: this.selectedRun,
+                "message" : `Update Entry ${sample} `
+            }
+          ); 
+
+        } catch (err){
+          console.error(err)
+        } 
+       
+      },
+      deleteEntry(sample){
+        try{
+          this.sendMessage({
+                type: "deleteEntry", 
+                sample: sample,
+                run: this.selectedRun,
+                "message" : `Delete Entry ${sample} `
+            }
+          );
+        } catch (err){
+          console.error(err)
+        } 
+        // finally {
+        //   this.deletesample(sample)
+        // }
+      },
+      saveRun(){
+        this.sendMessage({
+              type: "saveRun", 
+              "message" : `Save Run ${this.runName} `
+          }
+        );
+      },
+      deletesample(sample){
+        this.$delete(this.selectedData, sample)
+        let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
+        if (index > -1){
+          this.$delete(this.selectedsamplesAll, index)
+          
+        }
+        
+      },
+     
+      
+      
+      
       setBorderWidth() {
           let i = this.$refs.information_panel_drawer.$el.querySelector(
               ".v-navigation-drawer__border"
@@ -581,6 +685,20 @@ export default {
         pausedChange(val){
           this.paused = val
         },
+        addSamplesheetEntry(){
+          let samplesheet = this.samplesheetdata
+          if (samplesheet && Array.isArray(samplesheet)){
+            samplesheet.map((entry)=>{
+              let index = this.samplesheetdata.findIndex(x => x.sample === entry.sample)
+              if (index > -1){
+                this.$set(this.samplesheetdata, index, entry)
+              } else {
+                this.$set(this.samplesheetdata, this.samplesheetdata.length, entry)
+              }
+            })
+          }
+            
+        },
         async connectReport(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:')
           const port = ':7688';
@@ -608,8 +726,13 @@ export default {
             $this.socketReport.close();
           };
           this.socketReport.onmessage = (event) => {
-            // console.log(event,"<<<<<<<<<<")
           }
+        },
+        async resetRun(){
+          this.topLevelSampleNames = {}
+          this.samplesheetdata = []
+          this.selectedsamplesAll = []
+          this.selectedData = {}
         },
         async connect(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'https:' : 'http:')
@@ -619,20 +742,71 @@ export default {
           const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port
           // this.defaults = this.defaultsList
           // Define socket and attach it to our data object
+          // set user id for local storage
+          const userId = localStorage.getItem('userId') || this.generateUserId();
+          console.log(`userId: ${userId}`)
+          localStorage.setItem('userId', userId);
+
+
           this.socket = io(echoSocketUrl, {
-            withCredentials: true,
-            extraHeaders: {
-              "my-custom-header": "abcd"
-            }
+            query: { userId }
           });
           const $this  = this
-          // $this.socket = await new WebSocket(echoSocketUrl);
+          // this.initiate()
+        
+        
+        this.sendMessage({
+          type: "getReportPath"          
+        })
+        
+        this.sendMessage({
+          type: "getRuns"          
+        }) 
+        this.sendMessage({
+          type: "getDbs"          
+        }) 
+          this.socket.on("alert", (e)=>{
+            // user swal alert for error
+            this.$swal({
+              text: e.message,
+              button: "OK",
+            });
+          })
+          this.socket.on("databaseStatus", (e)=>{
+            // match the e.status.key with this.database.key and if match then set this.database.size to e.status.size
+            let index = this.databases.findIndex(x => x.key === e.status.key)
+            if (index > -1){
+              
+              this.$set(this.databases, index, e.status)
+              // if this.database.key == e.status.key then set this.database.size to e.status.size
+              if (this.database.key == e.status.key){
+                this.$set(this.database, 'size', e.status.size)
+                this.$set(this.database, 'downloading', e.status.downloading)
+                this.$set(this.database, 'error', e.status.error)
+              } 
+            }
+
+          })
+          this.socket.on("databases", (e)=>{
+            this.$set(this, 'databases', Object.values(e))
+            if (this.databases.length > 0 && this.database.key == null){
+              this.database = this.databases[0]
+            }
+            // find index where this.database.key  == key of this.databases and set this.database.size to size of that index
+            let index = this.databases.findIndex(x => x.key === this.database.key)
+            if (index > -1){
+              this.$set(this.database, 'size', this.databases[index].size)
+              this.$set(this.database, 'downloading', this.databases[index].downloading)
+              this.$set(this.database, 'error', this.databases[index].error)
+            }
+          })
           this.socket.on('disconnect', function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
-            // setTimeout(function() {
-            //   $this.connect();
-            // }, 2000);
           });
+          this.socket.on('userSettings', function(e) {
+            $this.gpu = e.gpu
+          });
+
 
           this.socket.on('error', function(err) {
             console.error('Socket encountered error: ', err.message, 'Closing socket');
@@ -642,38 +816,120 @@ export default {
           this.socket.on("connect_error", (err) => {
             console.error('Socket encountered error: ', err, 'Closing socket');
           });
+          this.socket.on("connect_timeout", (err) => {
+            console.error('Socket encountered error: ', err, 'Closing socket');
+          });
+          this.socket.on("sendQueueStatus", (e)=>{
+            this.paused = e.isPaused
+            // this.queueLength = e.length
+          })
           $this.socket.on('connect', () => {
               console.log('Websocket connected.');
               $this.connectedStatus = 'Connected';
-              $this.socket.emit("message", {type: "message"})
+              
+              if ($this.selectedRun){
+                $this.sendMessage({
+                  run: $this.selectedRun,
+                  type: "getRunInformation", 
+                })
+              } 
+              $this.sendMessage({
+                type: "getStatus"       
+              })
+              
+              $this.socket.on("runs", (e)=>{
+                $this.runs = e;
+                // get index of this.selectedRun and if in runs then set to that index otherwise set to first run
+                if (!this.selectedRun){
+                  this.selectedRun = e[0]
+                } else if (e.indexOf(this.selectedRun) < 0 && e.length > 0){
+                  this.selectedRun = e[0]
+                } else if (e.length == 0){
+                  this.selectedRun = null
+                }
+              })
+              $this.socket.on("reportSavePath", (e)=>{
+                this.reportSavePath = e.data
+                // this.$refs.addRun.resetSavePath();
+                
+              })
+              $this.socket.on("deletedSample", (e)=>{
+                try{
+                  console.log("Deleted Sample", e.samplename)
+                  $this.deletesample(e.samplename)
+                } catch (err){
+                  console.error(err, sample, "Error in deleting sample")
+                }
+              })
               $this.socket.on("message", (e)=>{
               })
-              $this.socket.on("add",(e)=>{
-                this.samplesheetdata.push(e.data)
-              })
-              $this.socket.on('recentQueue', (e)=>{
-                if (!this.status[e.data.name]){
-                  this.status[e.data.name] = []
-                } 
-                
-                if (e.data.index >=0){
-                  this.$set(this.status[e.data.name], e.data.index, e.data)
-                } else {
-                  this.$set(this.status[e.data.name], this.status[e.data.name].length > 0 ? this.status[e.data.name].length-1:0, e.data)
-                }
-              
+              $this.socket.on("queueDrop", (e)=>{
+                // assume this is the entire set of sample queue records
+                this.queueList = e.data
               }) 
-              $this.socket.on('status', (e)=>{
-                if (!this.status[e.samplename]){
-                  this.status[e.samplename] = []
-                } 
-                if (!this.status[e.samplename][e.index]){
-                  this.status[e.samplename][e.index] = {}
+              $this.socket.on("status", (e)=>{
+                // assume this is the entire set of sample queue records
+                // find queuelist sample and index and update status
+                let sample = e.sample
+                let index = e.index > 0 ? e.index : 0
+                let status = e.status
+                let config = e.config 
+                if (!this.queueList[sample]){
+                  this.$set(this.queueList, sample, [])
                 }
-                this.$set(this.status[e.samplename][e.index], 'status', e.status)
-                this.$set(this.status[e.samplename][e.index], 'sample', e.sample)
-                this.$set(this.current, e.samplename, e.status.running)   
+                if (!this.queueList[sample][index]){
+                  this.$set(this.queueList[sample], index, {})
+                }
+                this.$set($this.queueList[sample][index], 'status',  status)
+                for (let key in config){
+                  this.$set($this.queueList[sample][index], key, config[key])
+                }
+                $this.updateSampleStatus(sample)
               })
+              
+              $this.socket.on("sendPaths", (e)=>{
+                this.pathOptions = e.data 
+              })
+              $this.socket.on("sendPaths1", (e)=>{
+                this.pathOptions1 = e.data
+              })
+              $this.socket.on("sendPathsDb", (e)=>{
+                this.pathOptionsDb = e.data
+              })
+              $this.socket.on("sendPaths2", (e)=>{
+                this.pathOptions2 = e.data
+              })
+              $this.socket.on("queueJob", (e)=>{
+                // assume this is the entire set of sample queue records
+                // this.queueList[e.samplename] = e.queue
+              })
+              $this.socket.on("sampledata", async (e)=>{
+                try{
+                    // $this.queueList[e.samplename] = e.queue
+                    await this.importData(e.data, e.samplename)
+                } catch (err){
+                  console.error(err)
+                }
+              }) 
+              $this.socket.on("samplesheet", (e)=>{
+                $this.samplesheet = e.samplesheet
+              })
+             
+              $this.socket.on('runInformation', async (e)=>{
+                $this.samplesheet = []
+                if (e.reportdata && e.data != ''){
+                  // $this.resetRun()
+                  // $this.samplesheet = e.samplesheet
+                  $this.$set($this, 'samplesheet', e.samplesheet)
+                  // get the queuelist for all samples
+                 
+                  
+                }
+              })
+             
+
+              
+             
               $this.socket.on("basepathserver",(e)=>{
                 this.basepathserver = e.data;
               })
@@ -692,25 +948,18 @@ export default {
               $this.socket.on('logs', (e)=>{
                 this.logs.push(e.data)
                 const lasts = this.logs.slice(-100);
-                this.logs = lasts 
+                this.logs = lasts  
               } )
               $this.socket.on("data", (e)=>{
-                ( async ()=>{
-                  await this.importData(e.data, null, e.samplename)
-                  
-                  if (!this.topLevelSampleNames[e.topLevelSampleNames]){
-                    this.topLevelSampleNames[e.topLevelSampleNames] = []
+                if (e.run == $this.selectedRun ){
+                  ( async ()=>{   
+                    await $this.importData(e.data, e.samplename) 
                   }
-                  let index = this.topLevelSampleNames[e.topLevelSampleNames].indexOf(e.samplename)
-                  if (index < 0 ){
-                    this.topLevelSampleNames[e.topLevelSampleNames].push(e.samplename)
-                  }
-                })().catch((Err)=>{
-                  console.error(Err)
-                })
+                  )();
+                }
               })
               $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
-              $this.socket.emit("start", { samplesheet: $this.samplesheetdata, overwrite: false });
+             
           })
 
          
@@ -768,28 +1017,23 @@ export default {
             this.sendMessage({
                   type: "updateConfig", 
                   config: data,
-                   "message" : `Config Updated for data, select restart run  next please `
+                  run: this.selectedRun,
+                  "message" : `Config Updated for data, select restart run  next please `
                 }
             );
-          } else if (val =='bundle'){
-            this.sendMessage({
-                  type: "updateBundleconfig", 
-                  config: data,
-                    "message" : `Bundle Config Updated for data, select restart run  next please `
-                }
-            );
-          }
+          } 
 
         },
         filter(){
           let dataFull = {}
           const $this = this;
-          this.selectedsamples.map((sample)=>{
-            let data = $this.filterData(_.cloneDeep($this.fullData[sample]))
+          this.selectedsamplesAll = this.selectedsamplesAll.map((obj)=>{
+            let sample = obj.sample
+            let data = $this.filterData(_.cloneDeep(obj.fullData))
             data = $this.parseData(data)
-            dataFull[sample] = data
+            obj.data = data 
+            return obj
           })
-          this.selectedData = dataFull
         },
         async barcode(sample){
           this.sendMessage({
@@ -800,12 +1044,14 @@ export default {
             }
           );
         },
-        async rerun(index, sample){
+        async rerun(index, sample, run){
           this.sendMessage({
                 type: "rerun", 
+                run: run,
                 overwrite: true,
                 sample: sample,
                 index: index,
+                full: index > -1 ? false : true,
                 "message" : `Begin rerun of ${sample}, job # ${index}`
             }
           );
@@ -813,11 +1059,10 @@ export default {
         async sendNewWatch(params){
           let restart = params.overwrite
           let sample = params.sample
-          this.sampledata = {}
-          this.stagedData = {}
           if (sample){ 
             this.sendMessage({
                   type: "restart", 
+                  run: this.runName,
                   overwrite: restart,
                   sample: sample,
                   "message" : `Begin restart directory ${this.watchdir}, classify with ${this.database} `
@@ -827,6 +1072,7 @@ export default {
             this.sendMessage({
                   type: "start", 
                     samplesheet: this.samplesheetdata,
+                    run: this.runName, 
                     overwrite: restart,
                     "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
                 }
@@ -834,22 +1080,13 @@ export default {
           }
           
         },
-        cancel(data){
-          console.log(data,"<<<")
-          this.sendMessage({
-                  type: "cancel", 
-                  index: data.index,
-                  sample: data.sample,
-                  "message" : `Cancel Index Job: ${data.index} for sample: ${data.sample}`
-              }
-          );
-        },
         updateData(data){
           this.samplesheetdata = data
           this.sendMessage({
                   type: "start", 
                   samplesheet: this.samplesheetdata,
                   overwrite: false,
+                  run: this.runName, 
                   "message" : `Begin watching directory ${this.watchdir}, classify with ${this.database} `
               }
           );
@@ -858,15 +1095,7 @@ export default {
           this.value = Array.from(e.dataTransfer.files);
           this.database_file = this.value[0].path
         },
-        toggleSamples () {
-          this.$nextTick(() => {
-            if (this.selectedAllSamples) {
-              this.$set(this, 'selectedsamples', [])
-            } else {
-              this.selectedsamples = this.samplekeys.slice()
-            }
-          })
-        },
+        
         toggle () {
           this.$nextTick(() => {
             if (this.selectedAllRanks) {
@@ -903,6 +1132,7 @@ export default {
             
             if (this.socket.readyState !== this.socket.OPEN) {
                 try {
+                    
                     await this.waitForOpenConnection()
                     this.socket.emit(message.type, message)
                 } catch (err) { console.error(err) }
@@ -954,10 +1184,7 @@ export default {
         filterData(d){
           let data = _.cloneDeep(d)
           data = data.filter((f)=>{
-            
-            let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.maxDepth && f.depth >= this.minDepth && this.minPercent <= f.value/100 )
-            
-            
+            let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.depthRange[1] && f.depth >= this.depthRange[0] && this.minPercent <= f.value/100 )
             return  v
           })
           return data
@@ -977,18 +1204,34 @@ export default {
             console.error(Err)
           }
         },
-        async importData(information, type, sample, manual){
-          let text;
-          if (type == 'file'){
-            text = await d3.text(information)
-          } else {
-            text = information
-          }
-          let indexSamples = this.selectedsamplesAll.indexOf(sample)
-          if(indexSamples == -1){
-            this.selectedsamplesAll.push(sample)
-            this.selectedsamples.push(sample)
-          }
+        addSample(sample, config){
+          // check if object with sample attribute equals the sample , get index
+          let indx = this.selectedsamplesAll.findIndex(x => x.sample === sample );
+          // check if thisqueueList has sample if not then add it 
+          
+          this.sendMessage({
+            type: "getStatus", 
+            sample: sample,
+            run: this.selectedRun,
+            "message" : `Get Queue and Status/Info for ${sample} `
+          });
+          if (indx == -1){
+            let s = {
+              sample: sample,
+              hidden: false,
+              data: null, 
+              status: {},
+            }
+            this.selectedsamplesAll.push(s)
+            indx = this.selectedsamplesAll.length-1
+          } 
+          this.selectedsamplesAll[indx].config = config ? config : {}
+          return 
+
+        },
+        async importData(information, sample){
+          this.addSample( sample )
+          let text = information
           let fullsize = 0
           const $this = this
           let uniques  = {}
@@ -1002,7 +1245,8 @@ export default {
               source: null,
               depth: 0
           }
-          let data = d3.tsvParseRows(text, (d)=>{
+
+          let data = data != "" ? d3.tsvParseRows(text, (d)=>{
             d[0] = d[0].trim()
             d[5]  = d[5] ? d[5] : "Unknown"
             d[5] = d[5].replace(/\t/, '')
@@ -1039,35 +1283,27 @@ export default {
             
             uniques[d[3]] = 1
             return data
-          })
-       
-          this.fullsize[sample] = fullsize
-          data.unshift(base)
-          this.fullData[sample] = data
-          data = this.filterData(data)
-          data = this.parseData(data)
-          Object.keys(uniques).forEach((f)=>{
-            if (this.defaultsList.indexOf(f)==-1){
-              this.defaultsList.push(f)
+          }) : null
+          if (data && data.length > 0){
+            // this.fullsize[sample] = fullsize
+            data.unshift(base)
+            // this.fullData[sample] = data
+            data = this.filterData(data)
+            data = this.parseData(data)
+            Object.keys(uniques).forEach((f)=>{
+              if (this.defaultsList.indexOf(f)==-1){
+                this.defaultsList.push(f)
+              }
+            })
+            this.defaults = this.defaultsList
+            let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
+            if (index > -1){
+              this.$set(this.selectedsamplesAll[index], 'fullData', data)
+              this.$set(this.selectedsamplesAll[index], 'data', data)
             }
-          })
-          this.stagedData[sample] = data
-          if (!this.paused){
-            
-            this.sampledata[sample] = data
-            
-            let index = this.selectedsamples.indexOf(sample)
-            if ( index > -1){
-              this.selectedData[sample] = data
-            } else  if (index == -1 && this.selectedData[sample]){
-              delete this.selectedData[sample]
-            }
-        
-          } 
-          if (manual){
-            this.manuals[sample] = 1
+            return data 
           }
-          return data 
+          
           
           
           
@@ -1095,6 +1331,9 @@ th, td {
 }
 .container {
   max-width: 100000px
+}
+.v-main{
+  padding-bottom: 0px !important;
 }
 .pulse {
   display: block;

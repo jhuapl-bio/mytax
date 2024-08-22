@@ -7,7 +7,6 @@ export  class QueueClass {
 	}
 
 	enqueue(run, options) {
-		console.log("runenqueu", run, options)
 		run.kill()
 		this._queue.push(run);
 	}
@@ -17,8 +16,7 @@ export  class QueueClass {
 		return this._queue.shift();
 	}
 	prioritize(run, options) {
-		logger.info(`options ${options}`)
-		console.log(run)
+		logger.info(`Options ${options}`)
 		return this._queue.unshift(run)
 	}
 

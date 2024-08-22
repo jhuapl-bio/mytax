@@ -1,0 +1,14 @@
+[Unit]
+Description=MyTax Service
+After=network.target
+
+[Service]
+Type=simple
+User=minion
+WorkingDirectory=/home/minion/mytax
+ExecStart=/bin/bash -c '/home/minion/miniconda3/bin/activate && npm run serveBoth'
+Environment="PATH=/home/minion/miniconda3/bin:/usr/bin:/bin"
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

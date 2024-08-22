@@ -31,8 +31,8 @@
         
         <div :id="`legend_text-${samplenameparsed}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
           <h5>Legend</h5>
-          <h6>Total Reads {{readCount}}</h6>
-          <h6>at Rank Code: {{selectedAttribute}}</h6>
+          <h6>Total Reads at Rank {{readCount}}</h6>
+          <h6>at Level Code: {{selectedAttribute}}</h6>
           <span :id="`legend_text_label-${samplenameparsed}`" style="text-align:center; "/>
           <div v-if="selectedAttribute =='Deviation'" class="alert alert-info">
             <span>Color is Relative to +/- Max Abundance at a Given Rank</span>

@@ -1,32 +1,38 @@
 name: Build and push Docker image upon release
-
 on:
-  release:
-    types: [build]  
+  push:
+    branches:
+      - build
 jobs:
   push_to_registry:
     name: Build and push Docker image upon release
     runs-on: ubuntu-latest
     steps:
+      - 
+        name: Checkout repository
+        uses: actions/checkout@v2
       -
         name: Set up QEMU
         uses: docker/setup-qemu-action@v2
+      - name: get-npm-version
+        id: package-version
+        uses: martinbeentjes/npm-get-version-action@v1.3.1
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      -
-        name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Push to Docker Hub
-        uses: docker/build-push-action@v1
+      - name: Log in to Docker Hub
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: ${{ secrets.DOCKERHUB_REPOSITORY }}
+      - 
+        name: Build and Push to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
           tag_with_ref: true
           tag_with_sha: true
+          context: .
+          push: true
+          file: "./Dockerfile"
           platforms: linux/amd64,linux/arm64
-          tags: latest
+          tags: jhuaplbio/basestack_mytax2:${{ steps.package-version.outputs.current-version}}

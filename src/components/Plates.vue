@@ -377,17 +377,17 @@
           .call(y_axis);
           
           y.selectAll('text') // select all the text elements 
-          .style("font-size", '1px')
-          .each(getSizeY)
-          .style("font-size", function(d) {  return sizes[d] + "px"; });
+          .style("font-size", '12px')
+          // .each(getSizeY)
+          // .style("font-size", function(d) {  return sizes[d] + "px"; });
           
-          function getSizeY(d) {
-            var bbox = this.getBBox(),
-              cbbox = $this.margin.left + ($this.margin.left/2),
-              scale = Math.min(cbbox/bbox.width/1.2, $this.boxWidth);
-            sizes[d] = scale
-            return d
-          }
+          // function getSizeY(d) {
+          //   var bbox = this.getBBox(),
+          //     cbbox = $this.margin.left + ($this.margin.left/2),
+          //     scale = Math.min(cbbox/bbox.width/1.2, $this.boxWidth);
+          //   sizes[d] = scale
+          //   return d
+          // }
           function getSizeX(d) {
             
             var bbox = this.getBBox(),

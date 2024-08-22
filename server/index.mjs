@@ -3,15 +3,15 @@ import path from 'path'
 import {logger} from './logger.js'
 import http from 'http'
 import { fileURLToPath } from 'url'
-
+import { searchPath, openPath } from './controllers.mjs'
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import express from 'express'
 import {Orchestrator} from "./server.mjs"
 import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
-
-
+import { storage } from './storage.mjs';
+import  { broadcastToAllActiveConnections } from './messenger.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 
@@ -22,10 +22,17 @@ let server = http.createServer(app)
 let params = {}
 let portclient = 8080
 // if (process.env.NODE_ENV == 'development'){
-  console.log(process.env.NODE_ENV,"<<")
+  let added_ports = ""
+  if (process.env.CORS_ADDR){
+    added_ports = process.env.CORS_ADDR
+    // add http:// if not start of added_ports
+    if (!added_ports.startsWith("http://")){
+      added_ports = `http://${added_ports}`
+    }
+  }
     params = {
         cors: {
-            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`,`http://localhost:${4555}`],
+            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `${added_ports}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`, `${added_ports}`, `http://localhost:${4555}`],
             methods: ["GET", "POST"],
             allowedHeaders: ["my-custom-header"],
             credentials: true
@@ -44,39 +51,103 @@ app.get('/ws', (req, res) => {
     res.status(200).send("Welcome to Mytax Version 2");
 });
 
+
+logger.info(`Orchestrator creation...`)
+storage.orchestrator = new Orchestrator(); 
+
+
 io.on('connection', (ws) => {
-  console.log('a user connected');
-  if (storage.orchestrator){
-        try{
-            logger.info(`Orchestrator exists already, skipping creation`)
-            storage.orchestrator.cleanup()
-            storage.orchestrator = null
-            delete storage.orchestrator
-        } catch(err){
-            logger.error(`${err} error in closing existing websocket`)
-        }
-    } else {
-        logger.info(`Orchestrator doesnt exist already, creating....`)
+  const userId = ws.handshake.query.userId;
+  // Store the connection
+  
+  // If there's an existing connection for this user, close it
+  if (storage.activeConnections.has(userId)) {
+    try {
+      const existingSocket = storage.activeConnections.get(userId);
+      logger.info(`User connection exists, disconnecting ${userId}`)
+      existingSocket.disconnect();
+    } catch (err) {
+      logger.error(`Error disconnecting existing socket: ${err}`);
     }
-  storage.orchestrator = new Orchestrator(ws);
-  ws.on('create', function(room) {
-    ws.join(room);
-  });
-//   ws.on('message', (msg) => {
-//     console.log('message: ', msg);
-//     ws.emit("message", { "message" : "hello" });
-//   });
-  ws.on('gpu', (msg) => {
-    console.log('gpu: ', msg);
+  }
+  // Store the new connection
+  storage.activeConnections.set(userId, ws);
+  logger.info(`A user connected! ID: ${userId}`);
+
+  // Send a message to the client with the imported uer settings from storage.orchestrator
+  async function sendUserSettings() {
     try{
-        storage.orchestrator.setGpu(msg.gpu)
-        logger.info(`Barcoding: GPU ${msg.gpu ? 'Enabled' : 'Disabled'} `) 
+      storage.orchestrator.loadUserSettings(userId).then((data)=>{
+        ws.emit("userSettings",  data  );
+      })
+    }
+    catch(err){
+      logger.error(err)
+      logger.error("Couldn't import user settings. Please check the logs for more information.")
+    }
+  } 
+  sendUserSettings()
+  ws.emit( "databases",  storage.orchestrator.databases )
+  // get all of the queueSamples information for a given run
+  ws.on("message", (msg) => {
+    logger.info(`Message received: ${msg.message}`);
+    broadcastToAllActiveConnections("message", { "message": msg.message });
+  })
+
+  ws.emit("message", { "message": "Connection established with server" });
+  ws.on('disconnect', () => {
+    storage.activeConnections.delete(userId); 
+    logger.info(`User disconnected! ID: ${userId}`);
+  });
+  ws.on("getStatus", async (msg) => {
+    try{
+      if (msg.run && msg.sample){
+        let status = await storage.orchestrator.getEntriesStatus(msg.run, msg.sample)
+      } else {
+        let statuses = storage.orchestrator.getEntriesStatus()
+      }
+      
+      
+      
     } catch(err){
-        logger.error(err)
-    } 
+      logger.error(err)
+    }
+  })
+  ws.emit("sendQueueStatus",  storage.orchestrator.getQueueStatus() );
+  ws.on('downloaddb', (msg) => {
+    try {
+      storage.orchestrator.downloadfile(msg.database);
+    } catch (err) {
+      logger.error(err); 
+    }
+  });
+  ws.on('canceldownload', (msg) => {
+    try {
+      storage.orchestrator.cancelDownload(msg.database);
+    } catch (err) {
+      console.error(err); 
+    }
+  });
+
+  ws.on("getDbs", async () => {
+    try{
+      ws.emit("databases",  storage.orchestrator.databases );
+    }
+    catch(err){
+      logger.error(err)
+    }
+  })
+  ws.on('gpu', (msg) => {
+    try {
+      const userId = ws.handshake.query.userId;
+      storage.orchestrator.updateUserSettings(userId, { gpu: msg.gpu });
+      logger.info(`Barcoding: GPU ${msg.gpu ? 'Enabled' : 'Disabled'}`); 
+    } catch (err) {
+        logger.error(err);
+    }
   });
   ws.on('config', (msg) => {
-    console.log('config: ', msg);
+    
     ws.emit("config", { "message" : storage.orchestrator.config });
   });
   ws.on('getbundleconfig', (msg) => {
@@ -86,36 +157,146 @@ io.on('connection', (ws) => {
     storage.orchestrator.setConfig(msg.config, 'bundle')
   });
   ws.on('updateConfig', (msg) => {
-    storage.orchestrator.setConfig(msg.config, 'config')
+    storage.orchestrator.setConfig(msg.config, msg.run)
   });
   ws.on('cancel', (msg) => {
-    logger.info(`${msg.index}: ${msg.sample}, canceling....`)
-    storage.orchestrator.cancel(msg.index, msg.sample)
+    logger.info(`${msg.index}: ${msg.sample}-${msg.run}, canceling....`)
+    storage.orchestrator.cancel(msg.index, msg.sample, msg.run)
   })
-  ws.on('rerun', (msg) => { 
-    logger.info(`${msg.index}: ${msg.sample}, rerunning....`)
-    storage.orchestrator.rerun(msg.index, msg.sample)
-  })
-  ws.on('restart', (msg) => {
-    try{ 
-        logger.info(`Starting restart of a sample ${msg.sample}, ${msg.overwrite}`) 
-        storage.orchestrator.setSampleSingle(msg.sample, msg.overwrite)
+  ws.on("getReportPath", async () => { 
+    try{
+      ws.emit("reportSavePath", { data: process.env.reports });
     } catch(err){
         logger.error(err)
-    }  
+    } 
   })
-  ws.on('start', (msg) => {
-        try{
-            let i=0
-            logger.info(`Starting run from samplesheet ${JSON.stringify(msg)}`) 
-            storage.orchestrator.setSamples(msg)
-        } catch(err){
-            logger.error(err)
-        } 
+  ws.on("searchPath", async (msg) => { 
+    try{
+        let path_1 = await searchPath(msg.value)
+        ws.emit("sendPaths", { data: path_1 });
+    } catch(err){
+        logger.error(err)
+    } 
   })
+  ws.on("searchPath1", async (msg) => { 
+    try{
+        let path_1 = await searchPath(msg.value, true)
+        ws.emit("sendPaths1", { data: path_1 });
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on("searchPath2", async (msg) => { 
+    try{
+        let path_1 = await searchPath(msg.value, true)
+        ws.emit("sendPaths2", { data: path_1 });
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on("searchPathDb", async (msg) => { 
+    try{
+        let path_1 = await searchPath(msg.value, false)
+        ws.emit("sendPathsDb", { data: path_1 });
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on("openPath", async (msg) => {
+    try{
+      storage.orchestrator.openPath(msg.path)
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on("updateEntry", async (msg) => {
+    try{
+        let sample = msg.sample
+        let run = msg.run
+        let info = msg.info
+        logger.info(`Updating entry ${sample} from run ${run}`)
+        await storage.orchestrator.updateRun(info, run, sample)
+    } catch(err){
+        logger.error(err)
+    }
+  })
+  ws.on('rerun', (msg) => {  
+    logger.info(`${msg.index}: ${msg.sample}, ${msg.run} rerunning....`)
+    storage.orchestrator.rerun(msg.index, msg.sample, msg.run)
+  })
+ 
+  ws.on('getRuns', (msg) => {
+    try{
+        let i=0 
+        ws.emit("runs",  storage.orchestrator.runNames  ); 
+    } catch(err){ 
+      console.log(err) 
+      logger.error(err)  
+    }   
+  })
+  ws.on('getRunInformation', (msg) => {
+    try{
+        let i=0 
+        logger.info(`Getting Run information ${msg.run}` ) 
+        storage.orchestrator.getRunInformation(msg.run)
+    } catch(err){ 
+        logger.error(err)
+    } 
+  })
+  ws.on('load', (msg) => {
+    try{
+        let i=0
+        logger.info(`Loading Run(s)`) 
+        storage.orchestrator.loadruns(msg)
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on('saveRun', (msg) => {
+    try{
+        let i=0
+        logger.info(`Saving Run ${msg.run}`) 
+        storage.orchestrator.saveRunInformation(msg)
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  ws.on('addRun', (msg) => {
+      try{
+          let i=0
+          logger.info(`Adding run ${msg.run}`) 
+           
+          storage.orchestrator.addRun(msg)
+          ws.emit("runs",  storage.orchestrator.runNames )
+      } catch(err){
+          logger.error(err)
+      } 
+  })
+  ws.on("deleteEntry", async (msg) => {
+    try{
+        let sample = msg.sample
+        let run = msg.run
+        logger.info(`Deleting entry ${sample} from run ${run}`)
+        await storage.orchestrator.deleteEntry(run, sample)
+    } catch(err){
+        logger.error(err)
+    }
+  })
+  ws.on('deleteRun', async (msg) => {
+    try{
+        let i=0
+        logger.info(`Deleting run ${msg.run}`) 
+        
+        await storage.orchestrator.deleteRun(msg.run)
+        ws.emit("runs",  storage.orchestrator.runNames  ); 
+
+    } catch(err){
+        logger.error(err)
+    } 
+  })
+  
   ws.on('flush', () => {
     try{
-        logger.info(`Flushing queue`)
         storage.orchestrator.flush()
         ws.emit("flushed");
     } catch(err){
@@ -144,166 +325,3 @@ io.on('connection', (ws) => {
 server.listen(port, () => {
   console.log(`listening on ${port}`);
 });
-// Get the route / 
-
-
-let storage = {}
-
-// function create_Report_WS(port){
-//     const $this = this
-//     // if (this.reportWS   && this.reportWS.readyState === this.reportWS.OPEN){
-//     //     this.reportWs.close() 
-//     // }
-//     let reportWs = new WebSocketServer({ 
-//         port: port,
-//         perMessageDeflate: { 
-//         zlibDeflateOptions: {
-//             // See zlib defaults.
-//             chunkSize: 1024,
-//             memLevel: 7, 
-//             level: 3
-//         },
-//         zlibInflateOptions: {
-//             chunkSize: 10 * 1024
-//         },
-//         // Other options settable:
-//         clientNoContextTakeover: true, // Defaults to negotiated value.
-//         serverNoContextTakeover: true, // Defaults to negotiated value.
-//         serverMaxWindowBits: 10, // Defaults to negotiated value.
-//         // Below options specified as default values.
-//         concurrencyLimit: 1000, // Limits zlib concurrency for perf.
-//         threshold: 1024 // Size (in bytes) below which messages
-//         // should not be compressed if context takeover is disabled.
-//         }
-//     });
-//     reportWs.on('close', (ws) => { 
-//         // Get the /ws websocket route
-//         console.log("close  report ws")
-//     })
-//     reportWs.on('connection', (ws) => { 
-//         // Get the /ws websocket route
-//         console.log("connected to report ws")
-//         // this.reportWs = ws 
-//         storage.orchestrator.wsReport = ws
-//     })
-// } 
-// create_Report_WS(portReport) 
-// create_WS(port)
-// function create_WS(port){
-//     let ws = new WebSocketServer({
-//         port: port,
-//         perMessageDeflate: {
-//         zlibDeflateOptions: {
-//             // See zlib defaults.
-//             chunkSize: 1024,
-//             memLevel: 7,
-//             level: 3
-//         },
-//         zlibInflateOptions: {
-//             chunkSize: 10 * 1024
-//         },
-//         // Other options settable:
-//         clientNoContextTakeover: true, // Defaults to negotiated value.
-//         serverNoContextTakeover: true, // Defaults to negotiated value.
-//         serverMaxWindowBits: 10, // Defaults to negotiated value.
-//         // Below options specified as default values.
-//         concurrencyLimit: 1000, // Limits zlib concurrency for perf.
-//         threshold: 1024 // Size (in bytes) below which messages
-//         // should not be compressed if context takeover is disabled.
-//         }
-//     });
-//     ws.on('connection', (ws) => {
-        
-//         // Get the /ws websocket route
-//         if (storage.orchestrator){
-//             try{
-//                 logger.info(`Orchestrator exists already, skipping creation`)
-//                 storage.orchestrator.cleanup()
-//                 storage.orchestrator = null
-//                 delete storage.orchestrator
-//             } catch(err){
-//                 logger.error(`${err} error in closing existing websocket`)
-//             }
-//         } else {
-//             logger.info(`Orchestrator doesnt exist already, creating....`)
-//         }
-        
-//         storage.orchestrator = new Orchestrator(ws);
-//         storage.orchestrator.ws = ws  
-//         ws.send(JSON.stringify({ type: "basepathserver", data: __dirname }));
-//         ws.send(JSON.stringify({ type: "getbundleconfig", data: storage.orchestrator.bundleconfig }));
-//         storage.orchestrator.ws.on('message', async function(command) {
-//             // Let's put our message in JSON.stringify, and send it to the user who just sent the message
-//             // logger.info(`${command}`)
-//             command=JSON.parse(command) 
-//             if (command['type'] == 'message'){
-//                 ws.send(JSON.stringify({ "message" : "hello" }));
-//             } else if (command.type == 'config'){
-//                 ws.send(JSON.stringify({ type: "config", "message" : storage.orchestrator.config }));
-//             } else if (command.type == 'getbundleconfig'){
-//                 ws.send(JSON.stringify({ type: "getbundleconfig", "message" : storage.orchestrator.bundleconfig }));
-//             } else if (command.type == 'runbundle'){
-//                 storage.orchestrator.runBundle = command.config
-//             } else if (command.type == 'updateBundleconfig'){
-//                 storage.orchestrator.setConfig(command.config, 'bundle')
-//             } else if (command.type == 'updateConfig'){
-//                 storage.orchestrator.setConfig(command.config, 'config')
-//             } else if (command.type == 'cancel'){ 
-//                 logger.info(`${command.index}: ${command.sample}, canceling....`)
-//                 storage.orchestrator.cancel(command.index, command.sample)
-//             } else if (command.type == 'rerun'){
-//                 logger.info(`${command.index}: ${command.sample}, rerunning....`)
-//                 storage.orchestrator.rerun(command.index, command.sample)
-//             } else if (command.type == 'extractTaxid'){ 
-//                 storage.orchestrator.extractTaxid(command.taxid).then((f)=>{
-//                     ws.send(JSON.stringify({ type: "reads", "message" : f }));
-//                 })
-//             } else if (command.type == 'start'){ 
-//                 try{
-//                     let i=0
-//                     logger.info(`Starting run from samplesheet `) 
-//                     storage.orchestrator.setSamples(command)
-//                 } catch(err){
-//                     logger.error(err)
-//                 } 
-//             } else if (command.type == 'flush'){
-//                 try{
-//                     logger.info(`Flushing queue`)
-//                     storage.orchestrator.flush()
-//                     ws.send(JSON.stringify({ type: "flushed" }));
-//                 } catch(err){
-//                     logger.error(err)
-//                 } 
-//             } else if (command.type == 'gpu'){
-//                 try{
-//                     let i=0
-//                     storage.orchestrator.setGpu(command.gpu)
-//                     logger.info(`Barcoding: GPU ${command.gpu ? 'Enabled' : 'Disabled'} `) 
-//                 } catch(err){
-//                     logger.error(err)
-//                 } 
-//             } else if (command.type == 'restart'){
-//                 try{ 
-//                     let i=0
-//                     logger.info(`Starting restart of a sample ${command.sample}, ${command.overwrite}`) 
-//                     storage.orchestrator.setSampleSingle(command.sample, command.overwrite)
-                
-//                 } catch(err){
-//                     logger.error(err)
-//                 }  
-//             } else if (command.type == 'pause'){
-//                 try{ 
-//                     let i=0
-//                     logger.info(`Pausing Run(s) value: ${command.pause}`) 
-//                     if (command.pause){
-//                         storage.orchestrator.pause()
-//                     } else {
-//                         storage.orchestrator.resume()
-//                     }
-//                 } catch(err){
-//                     logger.error(err)
-//                 }  
-//             }
-//         });        
-//     })
-// }

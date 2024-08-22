@@ -1,24 +1,48 @@
 # Mytax2 - Realtime reporting
 
 
+<<<<<<< HEAD
 ## Create Conda Environment
 ```
 conda env create -f environment.yml
 ```
 
+=======
+>>>>>>> run_level
 
 ## Project setup
+
+### Create your Conda env first 
+
+```
+conda env create -f environment.yml
+```
+
+:warning: Make sure if you're on a Mac arm64 processor that you specify you want amd64 like:
+
+```
+CONDA_SUBDIR=osx-64 conda env create -f environment.yml
+```
+
+### Create npm packages in the repo.
+
 ```
 npm install
 ```
 
-## Starting Development
+## Running the software
 
-Run the below 2 commands:
 
-### Compiles and hot-reloads for development on frontent
+### Compiles and hot-reloads for development
+
 ```
-npm run serve
+npm run serveBoth
+```
+
+### Adding another CORS port for development use
+
+```
+CORS_ADDR=192.168.55.1:7689 npm run serveBoth
 ```
 
 ### Compiles and hot-reloads for development on server
@@ -40,24 +64,21 @@ npm run lint
 ### Customize configuration
 See [Configuration Reference](https://cli.vuejs.org/config/).
 
+To add any data, first you must make a run
 
+1. Select "Add Run" and give it a name
+2. Then, select the blue and white cross icon on the left-hand side to add a sample. There can be multiple samples were run.
+3. Drag + Drop or select a fastq file (or .gz version) into the middle input. You can also input a directory of fastq files. If you want to analyze an entire run of barcodes, you should toggle the switch, which will match any directory in the specified input directory and make 1 sample per match. Alter the pattern matching in the appropriate field.
+4. OPTIONAL. IF using paired-end reads, add the R2 file into the top-left input field
+5. Select "Add" and the software will automatically start analyzing with Kraken2 and generating the Sunburst plots in realtime. 
 
-## Samplesheet input
+### Debugging
 
-You will need to create a samplesheet with information about the samples you would like to analyse before running the pipeline. Use this parameter to specify its location. It has to be a comma-separated file with 3 columns, and a header row as shown in the examples below. By default, it will always look in the `/data/Samplesheet.csv` file for your desired deployment method. For example, in `dev` mode it will be `public/data/Samplesheet.csv`, for production (like in a Docker container running `nginx` like what is described below) it is in `<path_to_dist>/data/Samplesheet.csv`. If you want to check if it is accesible, you can access it at the localhost and port with the path like `localhost:8080/data/Samplesheet.csv` (this is the default dev port)
+Depending on how you are deploying the tool, you can either run:
 
-The Samplesheet should look like (example below) this
-
-```console
-sample,path_1,path_2,format,platform,database,compressed
-NB11,<path_to_directory>/NB11,,directory,oxford,<path_to_database_directory>/flukraken2,
-NB03,<path_to_directory>/NB03,,directory,oxford,<path_to_database_directory>/flukraken2,
-ERR6913101,<path_to_directory>/ERR6913101_1.fastq.gz,<path_to_directory>/ERR6913101_2.fastq.gz,file,illumina,<path_to_database_directory>/flukraken2,
-ERR6913102,<path_to_directory>/ERR6913102_1.fastq.gz,<path_to_directory>/ERR6913102_2.fastq.gz,file,illumina,<path_to_database_directory>/flukraken2,
-flu_bc01,<path_to_directory>/flu_BC01.fastq,,file,oxford,<path_to_database_directory>/flukraken2,
-sample,<path_to_directory>/sample_metagenome.fastq,,file,oxford,<path_to_database_directory>/flukraken2,
-test,test2.fastq,,file,illumina,<path_to_database_directory>/flukraken2,
-```
+1. `sudo service mytax2 status` to check the service information
+2. Check the command-line logs if hosting/serving in development mode with `npm run serveBoth` or `npm run server`
+3. `docker container logs $container_name` if using Docker to deploy
 
 
 
@@ -66,17 +87,12 @@ test,test2.fastq,,file,illumina,<path_to_database_directory>/flukraken2,
 | `sample`   | Custom sample name. This entry will be identical for multiple sequencing libraries/runs from the same sample. Spaces in sample names are automatically converted to underscores (`_`). |
 | `path_1`  | Full path to FastQ file for Illumina short reads 1 OR OXFORD reads. File has to be gzipped and have the extension ".fastq.gz" or ".fq.gz".                                             |
 | `path_2`  | Full path to FastQ file for Illumina short reads 2. File has to be gzipped and have the extension ".fastq.gz" or ".fq.gz".                                                             |
-| `format`  | TRUE/FALSE, is the row attributed to a demultiplexed barcode folder of 1 or more fastq files or is it a single file that is .gz?                                                       |
-| `platform` | Platform used, [ILLUMINA, OXFORD]                                                            |
-| `compressed`     | TRUE/FALSE, is your set of files compressed or not as `.gz` format column                                                                                       |
-| `pattern` | Pattern to match items (regex) for barcoded runs                                              |
-| `kits` | List of guppy barcode kits for barcode runs. Such as `EXP-NBD103` and   `SQK-LWB001`                                          |
+| `format`  | TRUE/FALSE switch toggle, is the row attributed to a demultiplexed barcode folder of 1 or more fastq files or is it a single file that is .gz?. If toggled on, the entry will auto-detect anything matching the regex-based pattern and make 1 sample per pattern match in that directory. For example, barcode01,02,03, etc.     |
+| `pattern` | Pattern to match items (regex) for barcoded runs, Optional                                            |
 
 An [example samplesheet](../examples/Samplesheet.csv) has been provided with the pipeline alongside some demo data.
 
 ## Creating a Docker image using the pre-built code.
-
-
 
 
 ```

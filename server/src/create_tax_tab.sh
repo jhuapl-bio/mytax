@@ -83,7 +83,7 @@ gawk -F "\t" '
             mapping[$3][$1] = $5
             chmap[$1] = $3
         } else {
-            if ($7 == "scientific name"){
+            if ($7 == "scientific name" ){
                 names[$1] = $3
             }
         }
@@ -99,15 +99,13 @@ gawk -F "\t" '
                         lasttaxid = chmap[lasttaxid]
                         d+=1
                     } else {
-                        print child parent "is 0"
                         lasttaxid = 0
                     }
                 }
-                # print child"\t"d"\t"parent"\t"mapping[parent][child]"\t"names[child]
+                print child"\t"d"\t"parent"\t"mapping[parent][child]"\t"names[child]
                 i+=1
             }
         }
     }
 
-' $input/nodes.dmp $input/names.dmp  
-#  > $output
+' $input/nodes.dmp $input/names.dmp   > $output

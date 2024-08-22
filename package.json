@@ -1,10 +1,11 @@
 {
   "name": "mytax",
-  "version": "0.1.0",
+  "version": "v2.2.6",
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve --port 8080",
     "serveProduction": "export NODE_ENV=production && vue-cli-service serve --port 8080",
+    "serveBoth": "npm run serve & npm run server",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
     "server": "export NODE_ENV=development && nodemon server/index.mjs --watch",
@@ -38,10 +39,12 @@
     "sass-loader": "^10.0.0",
     "socket.io": "^4.6.1",
     "socket.io-client": "^4.6.1",
+    "tar": "^6.2.0",
+    "unzipper": "^0.10.14",
     "vue": "^2.6.14",
     "vue-json-excel": "^0.3.0",
     "vue-json-to-csv": "^1.1.8",
-    "vue-sweetalert2": "^5.0.2",
+    "vue-sweetalert2": "^5.0.5",
     "vuetify": "^2.6.0",
     "winston": "^3.6.0",
     "ws": "^8.12.0"
