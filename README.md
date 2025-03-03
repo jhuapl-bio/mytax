@@ -15,6 +15,12 @@ conda env create -f environment.yml
 CONDA_SUBDIR=osx-64 conda env create -f environment.yml
 ```
 
+## Activate the environment
+
+```
+conda activate mytax2
+```
+
 ### Create npm packages in the repo.
 
 ```
@@ -34,12 +40,6 @@ conda activate mytax2; npm run serveBoth
 
 ```
 CORS_ADDR=192.168.55.1:7689 npm run serveBoth
-```
-
-## Activate the environment
-
-```
-conda activate mytax2
 ```
 
 ### Compiles and hot-reloads for development on server
