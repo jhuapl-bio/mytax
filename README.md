@@ -27,7 +27,7 @@ npm install
 ### Compiles and hot-reloads for development
 
 ```
-npm run serveBoth
+conda activate mytax2; npm run serveBoth
 ```
 
 ### Adding another CORS port for development use
