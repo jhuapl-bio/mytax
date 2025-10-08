@@ -21,7 +21,7 @@
 
 
 <template>     
-    <div class="mx-4 my-6"  id="file"   @drop.prevent="addDropFileData" @dragover.prevent 
+    <div class="mx-4 my-6"  id="file" @drop.prevent="addDropFileData" @dragover.prevent   
         style="overflow-y: auto; ">
         <div class="" style=" box-shadow: 2px 2px 20px rgba(0,0,0,0.2);">
                 <v-text-field
@@ -142,16 +142,20 @@
                 </div>
                 <span>Jobs in Queue: {{ queueLength }}</span>
                 <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
+                <div >
                 <v-file-input
                     :hint="'These are generated from your own kraken2 runs and not directly imported from mytax2'"
-                    persistent-hint @input="addData" v-model="recentDataFileadded"
+                    persistent-hint 
+                    v-model="recentDataFileadded"
                     prepend-icon=""
+                    @change="onFileSelected"
                     label="Place or Drop Individual Kraken2 Reports here"
                 >
                 </v-file-input>
+                </div>
             </div>
         <v-toolbar extended>
-            <v-tooltip  bottom >
+            <v-tooltip  bottom v-if="!offlineMode" >
                 <template v-slot:activator="{ on }">
                 <v-btn
                     color="black lighten-2"
@@ -166,7 +170,7 @@
                 View Logging
             </v-tooltip>
             
-            <v-tooltip  bottom >
+            <v-tooltip  bottom v-if="!offlineMode">
                 <template v-slot:activator="{ on }">
                     <v-btn  v-on="on" fab class="mx-2" color="info"  x-small @click="forceRestart()">
                         <v-icon>mdi-restart</v-icon>
@@ -174,7 +178,7 @@
                 </template>
                 Restart All Jobs
             </v-tooltip>
-            <v-tooltip bottom  >
+            <v-tooltip bottom  v-if="!offlineMode">
                 <template v-slot:activator="{ on }">
                     <v-btn color="primary "
                         dark  v-on="on" x-small fab
@@ -185,7 +189,7 @@
                 </template>
                 Stop All Jobs
             </v-tooltip>
-            <v-tooltip   bottom v-if="!paused" :key="`${paused}-pausedbutton`">
+            <v-tooltip   bottom v-if="!offlineMode && !paused" :key="`${paused}-pausedbutton`">
                 <template v-slot:activator="{ on }">
                     <v-badge 
                         color="green lighten-2"  overlap 
@@ -202,7 +206,7 @@
                 </template>
                 Pause Queued Jobs
             </v-tooltip>
-            <v-tooltip v-if="paused" >
+            <v-tooltip v-if="paused && !offlineMode" >
                 <template v-slot:activator="{ on }">
                     <v-btn color="secondary "
                         dark  fab x-small
@@ -386,7 +390,7 @@
             </v-dialog>
             
             <v-dialog
-                v-model="dialogAdvanced"
+                v-model="dialogAdvanced" max-width="500px" v-if="!offlineMode"
             >
                 <template v-slot:activator="{ on, attrs }">
                     <v-btn
@@ -913,7 +917,8 @@
         'anyRunning', 
         'queueLength', 
         'pausedServer',
-        "statussent"
+        "statussent",
+        "offlineMode"
     ],
     components: {
         VueJsonToCsv,
@@ -1003,7 +1008,22 @@
     },
     
     computed: {
-        
+        headers() {
+            if (this.offlineMode) {
+                return [
+                    { text: 'Sample Name', value: 'sample' },
+                    { text: 'Actions', value: 'action', sortable: false }, // purely local hide/show
+                ];
+            }
+            return [
+                { text: 'Sample Name', value: 'sample' },
+                { text: 'Status', value: 'status' },
+                { text: 'Actions', value: 'action', sortable: false },
+                { text: 'Jobs', value: 'jobs', sortable: false },
+                { text: 'Edit', value: 'edit', sortable: false },
+                { text: 'Delete', value: 'delete', sortable: false },
+            ];
+        },
         sampleErrors() {
             if (!this.editedItem.sample || this.editedItem.sample === '') {
                 return `${this.toggleDemuxRun ? 'Run Name' : 'Sample Name'} is required`
@@ -1320,10 +1340,26 @@
             this.selectAll = !this.selectAll;
         },
         addDropFileData(e) {
-            this.addData(e.dataTransfer.files[0])
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                console.log("Dropped file:", file.name);
+                this.addData(file);
+            }
         },
         addDropFile(e) { 
             this.names_file_input = e.dataTransfer.files[0]; 
+        },
+        onFileSelected(file) {
+            const $this  = this
+            if (!file) return;
+            let reader = new FileReader();  
+            reader.addEventListener("load", parseFile, false);
+            reader.readAsText(file);
+            let samplename  = path.parse(file.name).name
+            
+            async function parseFile(){
+                $this.$emit("importData", reader.result, samplename)
+            }
         },
         addData(val){
             const $this  = this
@@ -1332,9 +1368,7 @@
             reader.readAsText(val);
             let samplename  = path.parse(val.name).name
             async function parseFile(){
-                $this.$emit("importData", reader.result, null, samplename, true)
-                // await $this.$emit("updateSampleStatus", samplename, {running: false, preload: true, success: true, hidden: false, error: null })
-
+                $this.$emit("importData", reader.result, samplename)
             }
         },
         toggleSamples () {
@@ -1375,6 +1409,7 @@
         },
         
         start(index, sample ){
+            if (this.offlineMode) return;
             this.$emit("sendMessage", {
                 type: "rerun", 
                 run: this.selectedRun,
@@ -1389,14 +1424,16 @@
             this.$emit("barcode", item)
         },
         flush(){
+            if (this.offlineMode) return;
             this.$emit("sendMessage", { type: "flush" });
              
         },
         cancelJob(index, sample){
-            
+            if (this.offlineMode) return;
             this.$emit("sendMessage", {type: "cancel",  run: this.selectedRun,  index:index, sample: sample   });
         },
         forceRestart(){
+            if (this.offlineMode) return;
             this.$emit("sendMessage", {
                 type: "rerun", 
                 run: this.selectedRun,
@@ -1431,6 +1468,18 @@
         },
         deleteRow(sample){
             console.log(sample, "deleted!")
+            if (this.offlineMode){
+                // delete ht esample from samplesheet AND delet it from selectedsamplesAll
+                // let index = this.samplesheet.findIndex(x => x.sample === sample)
+                // if (index > -1){
+                //     this.samplesheet.splice(index, 1)
+                // }
+                let index2 = this.selectedsamplesAll.findIndex(x => x.sample === sample)
+                if (index2 > -1){
+                    this.selectedsamplesAll.splice(index2, 1)
+                }
+                return
+            };
             // this.$swal({
             //     title: 'Are you sure?',
             //     text: 'You won\'t be able to revert this!',

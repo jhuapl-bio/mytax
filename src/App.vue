@@ -13,7 +13,7 @@
         <span style="margin-right: 10px" v-if="!selectedsamples || selectedsamplesAll.length <= 0 ">No Data Loaded</span>
         <v-spacer></v-spacer>
         <v-checkbox 
-            v-model="gpu" style="text-align:center"    class="mt-6"
+            v-model="gpu" style="text-align:center"    class="mt-6" v-if="isOnline"
         >   
           <template v-slot:label>
               <v-tooltip bottom>
@@ -31,7 +31,7 @@
         </v-checkbox>
         
         <v-spacer></v-spacer>
-        <v-btn   color="blue "  @click="sendMessage({type: 'message', message: 'Message' })">Send message </v-btn>
+        <v-btn   color="blue " v-if="isOnline" @click="sendMessage({type: 'message', message: 'Message' })">Send message </v-btn>
 
           <v-progress-circular
               v-if="anyRunning "
@@ -86,23 +86,24 @@
               </v-btn>
               
               <v-select
+                v-if="isOnline && runs && runs.length > 0"
                 :items="runs"
                 v-model="selectedRun"
-                v-if="runs && runs.length > 0"
                 label="Available Runs"
                 hint="Select a run of number of samples"
                 persistent-hint
                 class="mx-3 flex "
-              >
-              </v-select>
-              <AddRun ref="addRun" 
+              />
+
+              <AddRun
+                v-if="isOnline"
+                ref="addRun"
                 @sendMessage="sendMessage"
                 :selectedRun="selectedRun"
                 :samples="selectedsamplesAll"
                 :pathOptions="pathOptions"
                 :reportSavePath="reportSavePath"
-              >
-              </AddRun> 
+              />
               <v-tooltip bottom>
                 <template v-slot:activator="{ on }">
                   <v-btn v-on="on"  icon
@@ -119,46 +120,44 @@
 
           <!-- Button click to save run information, sned to backend as a method -->
           <Samplesheet
-              :samplesheet="samplesheet"
-              :queueLength="queueLength"
-              :queueList="queueList"
-              :databases="databases"
-              :selectedsamples="selectedsamples"
-              :bundleconfig="bundleconfig"
-              :seen="samplekeys"
-              :current="current"
-              v-if="selectedRun"
-              :socket="socket"
-              @sendNewWatch="sendNewWatch"
-              @importData="importData"
-              :pathOptions1="pathOptions1"
-              :pathOptions2="pathOptions2"
-              :pathOptionsDb="pathOptionsDb"
-              @updateSampleStatus="updateSampleStatus"
-              @sendMessage="sendMessage"
-              @updateData="updateData"
-              @updateEntry="updateEntry"
-              @deleteEntry="deleteEntry"
-              @barcode="barcode"
-              @sampleStatus="sampleStatus"
-              @rerun="rerun"
-              :anyRunning="anyRunning"
-              @pausedChange="pausedChange"
-              :pausedServer="pausedServer"
-              :logs="logs"
-              @updateConfig="updateConfig"
-              :samplesheetName="samplesheet"
-              :status="status"
-              :selectedRun="selectedRun"
-              :selectedsamplesAll="selectedsamplesAll"
-              :statussent="statussent"
-            >
-          </Samplesheet>
-          <v-alert class="py-0 my-0"
-          type="info" v-else
-          ><hr>No Run selected. Please create one with the "+" button first<hr></v-alert>
-          
-          
+        :samplesheet="samplesheet"
+        :queueLength="queueLength"
+        :queueList="queueList"
+        :databases="databases"
+        :selectedsamples="selectedsamples"
+        :bundleconfig="bundleconfig"
+        :seen="samplekeys"
+        :current="current"
+        :socket="socket"
+        @sendNewWatch="sendNewWatch"
+        @importData="importData"
+        :pathOptions1="pathOptions1"
+        :pathOptions2="pathOptions2"
+        :pathOptionsDb="pathOptionsDb"
+        @updateSampleStatus="updateSampleStatus"
+        @sendMessage="sendMessage"
+        @updateData="updateData"
+        @updateEntry="updateEntry"
+        @deleteEntry="deleteEntry"
+        @barcode="barcode"
+        @sampleStatus="sampleStatus"
+        @rerun="rerun"
+        :anyRunning="anyRunning"
+        @pausedChange="pausedChange"
+        :pausedServer="pausedServer"
+        :logs="logs"
+        @updateConfig="updateConfig"
+        :samplesheetName="samplesheet"
+        :status="status"
+        :selectedRun="selectedRun"
+        :selectedsamplesAll="selectedsamplesAll"
+        :statussent="statussent"
+        :offlineMode="!isOnline"  
+      >
+      </Samplesheet>
+      <v-alert class="py-0 my-0" type="info" v-if="isOnline && !selectedRun">
+        <hr>No Run selected. Please create one with the "+" button first<hr>
+      </v-alert>
           <div class="mx-4" 
           style="overflow-y: auto; ">
             
@@ -323,6 +322,9 @@ export default {
       } 
     },
     computed: {
+      isConnected() {
+        return !!(this.socket && this.socket.connected);
+      },
       direction() {
             return this.navigation.shown === false ? "Open" : "Closed";
       },
@@ -408,7 +410,8 @@ export default {
             search: '',
             paused: false,
             dialog: false,
-            connectedStatus: 'Not connected!',
+            isOnline: false,
+            connectedStatus: 'Offline mode: backend not connected yet',
             message: 'No message yet!',
             inputdata: null,
             samples: [],
@@ -802,6 +805,8 @@ export default {
           })
           this.socket.on('disconnect', function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+            this.isOnline = false;
+            this.connectedStatus = 'Offline mode: backend unreachable. You can still load a report.';
           });
           this.socket.on('userSettings', function(e) {
             $this.gpu = e.gpu
@@ -810,11 +815,14 @@ export default {
 
           this.socket.on('error', function(err) {
             console.error('Socket encountered error: ', err.message, 'Closing socket');
-            $this.connectedStatus = 'Disconnected Server, reattempting every 1 second. Check Logs and Network Settings'
+            this.isOnline = false;
+            this.connectedStatus = 'Offline mode: backend error. You can still load a report and Check Logs or Network Settings';
             $this.socket.close();
           });
           this.socket.on("connect_error", (err) => {
             console.error('Socket encountered error: ', err, 'Closing socket');
+            this.isOnline = false;
+            this.connectedStatus = 'Offline mode: cannot reach backend. Load a report file to continue.';
           });
           this.socket.on("connect_timeout", (err) => {
             console.error('Socket encountered error: ', err, 'Closing socket');
@@ -825,6 +833,7 @@ export default {
           })
           $this.socket.on('connect', () => {
               console.log('Websocket connected.');
+              $this.isOnline = true;
               $this.connectedStatus = 'Connected';
               
               if ($this.selectedRun){
@@ -906,6 +915,7 @@ export default {
               $this.socket.on("sampledata", async (e)=>{
                 try{
                     // $this.queueList[e.samplename] = e.queue
+                    console.log(e.data, e.samplename,"<<<")
                     await this.importData(e.data, e.samplename)
                 } catch (err){
                   console.error(err)
@@ -1111,7 +1121,7 @@ export default {
             let socket = this.socket 
             return new Promise((resolve, reject) => {
                 const maxNumberOfAttempts = 10
-                const intervalTime = 200 
+                const intervalTime = 4000
 
                 let currentAttempt = 0
                 const interval = setInterval(() => {
@@ -1130,15 +1140,17 @@ export default {
             // We use a custom send message function, so that we can maintain reliable connection with the
             // websocket server.
             
-            if (this.socket.readyState !== this.socket.OPEN) {
-                try {
+            // if (this.socket.readyState !== this.socket.OPEN) {
+            //     try {
                     
-                    await this.waitForOpenConnection()
-                    this.socket.emit(message.type, message)
-                } catch (err) { console.error(err) }
-            } else {
-              this.socket.emit(message.type, message)
+            //         await this.waitForOpenConnection()
+            //     } catch (err) { console.error(err) }
+            // }
+            if (!this.socket || !this.socket.connected) {
+                console.warn('Offline mode: ignoring message', message);
+                return;
             }
+            this.socket.emit(message.type, message);
         },
         parseData(data){
           function find_latest(obj, found){

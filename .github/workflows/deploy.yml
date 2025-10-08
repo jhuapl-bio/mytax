@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [14.x]  # keep as-is; update if your project supports newer Node
+        node-version: [14.x] 
 
     steps:
       - name: Checkout repository
