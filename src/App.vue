@@ -431,7 +431,7 @@ export default {
             samplesheet: null,
             reportSavePath: null,
             minDepth: 0,
-            minPercent: 0.005, 
+            minPercent: 0.008, 
             jsondata: null, 
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
