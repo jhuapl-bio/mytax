@@ -35,6 +35,13 @@ export  class Orchestrator {
                 fullpath: path.join(this.databasespath, "k2_viral_20231009")
             },
             {
+                url: 'https://genome-idx.s3.amazonaws.com/kraken/k2_viral_20250714.tar.gz',
+                decompress: true,
+                final: 'k2_viral_20250714', 
+                key: 'k2_viral_20250714',
+                fullpath: path.join(this.databasespath, "k2_viral_20250714")
+            },
+            {
                 url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/flukraken2.tar.gz",
                 decompress: true,
                 final: 'flukraken2', 
@@ -57,6 +64,14 @@ export  class Orchestrator {
                 nested: true,
                 key: 'pluspf8',
                 fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20240605")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20250714.tar.gz",
+                decompress: true,
+                final: 'k2_pluspfp_08gb_20250714',
+                nested: true,
+                key: 'pluspf8',
+                fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20250714")
             },
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",

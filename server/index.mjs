@@ -14,13 +14,11 @@ import { storage } from './storage.mjs';
 import  { broadcastToAllActiveConnections } from './messenger.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
-
 // App and server
 let app = express();
 let server = http.createServer(app)
 // Apply expressWs
 let params = {}
-let portclient = 8080
 // if (process.env.NODE_ENV == 'development'){
   let added_ports = ""
   if (process.env.CORS_ADDR){
@@ -32,7 +30,7 @@ let portclient = 8080
   }
     params = {
         cors: {
-            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `${added_ports}`, `http://localhost:${8098}`, `http://localhost:${4555}`] : [`http://localhost:${8098}`, `${added_ports}`, `http://localhost:${4555}`],
+            origin: process.env.NODE_ENV == 'development' ? [`http://localhost:${8080}`, `${added_ports}`, `http://localhost:${8098}`, `http://localhost:${4555}`, `http://localhost:${8081}`] : [`http://localhost:${8098}`, `${added_ports}`, `http://localhost:${4555}`, `http://localhost:${8081}`],
             methods: ["GET", "POST"],
             allowedHeaders: ["my-custom-header"],
             credentials: true

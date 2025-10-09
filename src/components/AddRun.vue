@@ -2,13 +2,20 @@
   <div class="mr-4">
     <v-tooltip  bottom >
       <template v-slot:activator="{ on }">
+        <v-btn  v-on="on" @click="getRuns()" icon>
+          <v-icon>mdi-refresh</v-icon>
+        </v-btn>
+      </template>
+      Refresh Run List
+    </v-tooltip>
+    <v-tooltip  bottom >
+      <template v-slot:activator="{ on }">
         <v-btn fab
             color="primary"
             dark  x-small @click="dialog = true"
             class="mx-2"  v-on="on"
             >
             <v-icon  >mdi-plus</v-icon>
-            
         </v-btn>
       </template>
       Create and define a new run
@@ -128,6 +135,9 @@ export default {
   methods: {
     getReportPath(){
       this.$emit("sendMessage", { type: "getReportPath" })
+    },
+    getRuns(){
+      this.$emit("sendMessage", { type: "getRuns" })
     },
     resetSavePath(){
       this.formData.selectedPath = this.reportSavePath

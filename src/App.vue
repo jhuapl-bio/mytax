@@ -842,12 +842,16 @@ export default {
                   type: "getRunInformation", 
                 })
               } 
+              this.sendMessage({
+                type: "getRuns"          
+              }); 
               $this.sendMessage({
                 type: "getStatus"       
               })
               
               $this.socket.on("runs", (e)=>{
                 $this.runs = e;
+                console.log(e, "Available Runs")
                 // get index of this.selectedRun and if in runs then set to that index otherwise set to first run
                 if (!this.selectedRun){
                   this.selectedRun = e[0]
