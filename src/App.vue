@@ -1242,7 +1242,11 @@ export default {
 
         },
         async importData(information, sample){
-          this.addSample( sample )
+          if (!information || typeof information !== 'string') {
+            console.warn('importData: no text provided');
+            return;
+          }
+          this.addSample(sample);
           let text = information
           let fullsize = 0
           const $this = this
@@ -1258,7 +1262,7 @@ export default {
               depth: 0
           }
 
-          let data = data != "" ? d3.tsvParseRows(text, (d)=>{
+          let data = text !== "" ? d3.tsvParseRows(text, (d)=> {
             d[0] = d[0].trim()
             d[5]  = d[5] ? d[5] : "Unknown"
             d[5] = d[5].replace(/\t/, '')
