@@ -6,7 +6,7 @@ SHELL ["/bin/bash", "--login", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
 # install apt dependencies and update conda
-RUN apt-get  --allow-releaseinfo-change  update
+RUN apt-get  --allow-releaseinfo-change  update --fix-missing
 RUN apt-get install git -y \
     && apt-get install -y nginx apt-transport-https ca-certificates wget unzip bzip2 libfontconfig1 && \
     update-ca-certificates \
