@@ -554,7 +554,7 @@
       </v-main>
 
       <!-- Always-available, selectable K2 report drop zone, pinned top-right -->
-      <div class="mtx-dropzone-pin">
+      <div class="mtx-dropzone-pin" :class="{ 'mtx-dropzone-pin--offset': !isOnline }">
         <DropZone @importData="importData" />
       </div>
 
@@ -2169,6 +2169,11 @@ th, td {
   top: 92px;
   right: 22px;
   z-index: 7;
+  transition: top 0.18s ease;
+}
+/* Drop below the offline banner so it doesn't cover the "Load demo data" button */
+.mtx-dropzone-pin--offset {
+  top: 184px;
 }
 
 /* --- sample source legend (left panel) --- */
