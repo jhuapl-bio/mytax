@@ -39,6 +39,9 @@ export  class Sample {
         this.outputdir = path.join(info.outrun, this.sample)
         this.fullreport = path.join(this.outputdir,'full.report')
         this.platform = info.platform ? info.platform : 'illumina'
+        // watch === true (default) keeps watching the input for new reads in real time;
+        // false does a single pass over existing files then stops watching.
+        this.watch = info.watch !== undefined ? info.watch : true
         this.format = info.format ? info.format : 'file'
         this.pattern = info.pattern
         this.kits = info.kits
@@ -79,6 +82,10 @@ export  class Sample {
     // samples can be either a directory where each directory is a sample OR if it is a file then it belongs to a single sample
     async setupWatcherSequencing(){
         const $this = this
+        if (!this.path_1){
+            logger.warn(`No input path set for sample ${this.sample}; skipping sequencing watcher setup`)
+            return
+        }
         logger.info(`Setting up run ${this.path_1}`)
         let format = "directory"
         // check if the this.path_1 is a file or a directory
@@ -121,8 +128,16 @@ export  class Sample {
             })
             .on('unlinkDir', function(directory) { 
                 logger.info(`Directory ${directory} has been removed`);
-            }).on('unlink', function(filepath) {    
+            }).on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);
+            }).on('ready', function() {
+                // initial scan finished; if real-time watching is disabled, stop here
+                if ($this.watch === false){
+                    logger.info(`Initial scan complete for ${$this.sample}; watch disabled, closing watcher`)
+                    try { $this.watcher.close() } catch (err) { logger.error(`${err} closing watcher`) }
+                } else {
+                    logger.info(`Watching for new reads in ${$this.path_1} (sample ${$this.sample})`)
+                }
             })
         } catch (err){
             logger.error(`${err} error in watching base dir files`)
@@ -264,6 +279,17 @@ export  class Sample {
             // obj.generateKrakenCommand()
             const controller = new AbortController();
             obj.controller = controller
+            obj.status = {
+                ...obj.status,
+                waiting: true,
+                running: false,
+                cancelled: false
+            }
+            // notify clients immediately that a sample/job was queued
+            broadcastToAllActiveConnections("queueJob", {
+                samplename: $this.sample,
+                queue: $this.formatQueueInfo(obj.index)
+            })
             storage.queue.add(async ({signal}) => { 
                 $this.queueRecords[obj.index] = obj 
                 // Check that filepath exists, and if not then remove from queue
@@ -272,6 +298,7 @@ export  class Sample {
                     $this.queueRecords = $this.queueRecords.filter((d)=>{return d.filepath != obj.filepath})
                     return 
                 }
+                obj.status.waiting = false
                 signal.addEventListener('abort', () => {
                     logger.info(`aborting job ${obj.filepath}-${id}`)
                     obj.stop() 
@@ -393,7 +420,7 @@ export  class Sample {
   
     updateStatusQueueList(classifier){
         let index = classifier.index 
-        if (index){ 
+        if (index !== undefined && index !== null && index >= 0 && this.queueList[index]){ 
             this.queueList[index].info.status = classifier.status
         }
         return classifier.status
@@ -409,7 +436,7 @@ export  class Sample {
         msg.database = obj.database
         msg.sample = this.sample 
         msg.run = this.run
-        if (obj.index){
+        if (obj.index !== undefined && obj.index !== null){
             msg.index = obj.index
         } else {
             msg.index = this.queueList.length 
@@ -423,7 +450,8 @@ export  class Sample {
         return msg 
     }
     formatQueueInfo(index ){
-        if (!index){
+        const hasIndex = index !== undefined && index !== null
+        if (!hasIndex){
             try{
                 let info = []
                 this.queueList.map((d)=>{
@@ -444,13 +472,14 @@ export  class Sample {
             try{
                 // get job at index 
                 let d = this.queueList[index]
+                if (!d) return null
                 let config = {
                     ...d.info,
                     ...d.job.sample 
                 }
                 config.command = config.command.args[1]
                 config.status = d.job.status
-                let info = config
+                return config
             } catch (err){
                 logger.error(`${err} error in getting job at index ${index} for sample ${this.sample}`)
                 return null
@@ -531,12 +560,18 @@ export  class Sample {
       
     }
     async update(info, run, sample){
-        // look at the config of info, and update the samplesheet entry for this sample
-        if (info.path_1 != this.path_1 || info.path_2 != this.path_2){
+        // look at the config of info, and update the samplesheet entry for this sample.
+        // IMPORTANT: metadata-only edits (e.g. adding lat/long from the Metadata tab)
+        // arrive without path_1/path_2. Treat a missing/undefined path as "no change"
+        // so we never wipe the existing path, delete reports, or restart the watcher
+        // with an undefined path (which previously crashed lstatSync and lost the sample).
+        const path1Changed = info.path_1 != null && info.path_1 !== this.path_1
+        const path2Changed = info.path_2 != null && info.path_2 !== this.path_2
+        if (path1Changed || path2Changed){
             // need to update the watcher
             try{
-                this.path_1 = info.path_1
-                this.path_2 = info.path_2
+                if (info.path_1 != null) this.path_1 = info.path_1
+                if (info.path_2 != null) this.path_2 = info.path_2
                 if (this.watcher){
                     this.watcher.close().then(() => logger.info('closed watcher'));
                     this.watcher._watched.clear()
@@ -556,9 +591,14 @@ export  class Sample {
             }
                      
         }
-        for (let key in info){ 
+        for (let key in info){
+            // never overwrite a known path with an undefined/null value coming from a
+            // metadata-only update
+            if ((key === 'path_1' || key === 'path_2') && info[key] == null) continue
             this[key] = info[key]
         }
+        // keep the samplesheet projection in sync with any new metadata (lat/long, etc.)
+        this.samplesheet = { ...this.samplesheet, ...info, sample: this.sample, path_1: this.path_1, path_2: this.path_2 }
         this.updateQueueRecords()
 
         return
