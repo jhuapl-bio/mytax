@@ -7,7 +7,15 @@
         dense
       >
         
-        <v-toolbar-title>Real Time Nanopore Report Analysis</v-toolbar-title>
+        <v-tooltip bottom>
+          <template v-slot:activator="{ on }">
+            <v-btn icon v-on="on" @click="toggleDrawer" class="mr-2">
+              <v-icon>{{ navigation.collapsed ? 'mdi-menu' : 'mdi-backburger' }}</v-icon>
+            </v-btn>
+          </template>
+          {{ navigation.collapsed ? 'Expand samples panel' : 'Collapse samples panel' }}
+        </v-tooltip>
+        <v-toolbar-title>Mytax2: Real Time Nanopore Report Analysis</v-toolbar-title>
         <v-spacer>
         </v-spacer>
         <span style="margin-right: 10px" v-if="!selectedsamples || selectedsamplesAll.length <= 0 ">No Data Loaded</span>
@@ -31,92 +39,279 @@
         </v-checkbox>
         
         <v-spacer></v-spacer>
-        <v-btn   color="blue " v-if="isOnline" @click="sendMessage({type: 'message', message: 'Message' })">Send message </v-btn>
 
-          <v-progress-circular
-              v-if="anyRunning "
-              :indeterminate="true" top
-              stream   class="mr-2" size="14"
-              color="white"
-          ></v-progress-circular>        
-      </v-app-bar> 
+        <!-- Server status dot -->
+        <v-tooltip bottom>
+          <template v-slot:activator="{ on }">
+            <span
+              class="mtx-status-dot"
+              :class="statusClass"
+              v-on="on"
+              @click="settingsDialog = true"
+              style="cursor:pointer"
+            ></span>
+          </template>
+          <span>{{ statusLabel }}</span>
+        </v-tooltip>
+
+        <!-- Running spinner -->
+        <v-progress-circular
+          v-if="anyRunning"
+          :indeterminate="true"
+          stream class="mr-1 ml-1" size="14"
+          color="white"
+        ></v-progress-circular>
+
+        <!-- Settings button -->
+        <v-tooltip bottom>
+          <template v-slot:activator="{ on }">
+            <v-btn icon v-on="on" @click="settingsDialog = true" class="ml-1">
+              <v-icon>mdi-cog-outline</v-icon>
+            </v-btn>
+          </template>
+          Server &amp; app settings
+        </v-tooltip>
+
+      </v-app-bar>
+
+      <!-- ===== Settings dialog ===== -->
+      <v-dialog v-model="settingsDialog" max-width="560" scrollable>
+        <v-card class="mtx-settings-card">
+          <v-card-title class="mtx-settings-title">
+            <v-icon class="mr-2">mdi-cog</v-icon>
+            Settings
+            <v-spacer></v-spacer>
+            <v-btn icon @click="settingsDialog = false"><v-icon>mdi-close</v-icon></v-btn>
+          </v-card-title>
+
+          <v-divider></v-divider>
+
+          <v-card-text class="mtx-settings-body">
+
+            <!-- Connection -->
+            <div class="mtx-set-section">
+              <div class="mtx-set-head">
+                <v-icon x-small class="mr-1">mdi-lan-connect</v-icon>
+                Backend server connection
+                <span class="mtx-set-status-chip" :class="statusClass">{{ statusLabel }}</span>
+              </div>
+              <v-row dense>
+                <v-col cols="7">
+                  <v-text-field
+                    v-model="settingsEditHost"
+                    label="Host"
+                    outlined dense hide-details
+                    placeholder="localhost"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="5">
+                  <v-text-field
+                    v-model="settingsEditPort"
+                    label="Port"
+                    outlined dense hide-details
+                    type="number"
+                    placeholder="7689"
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+              <div class="mtx-set-url-preview">
+                Connecting to: <code>{{ settingsPreviewUrl }}</code>
+              </div>
+              <v-btn small color="primary" class="mt-2" @click="applySettings">
+                <v-icon small left>mdi-connection</v-icon>
+                Reconnect with new URL
+              </v-btn>
+            </div>
+
+            <v-divider class="my-3"></v-divider>
+
+            <!-- Report save path -->
+            <div class="mtx-set-section">
+              <div class="mtx-set-head">
+                <v-icon x-small class="mr-1">mdi-folder-outline</v-icon>
+                Report save directory
+              </div>
+              <div class="mtx-set-path">
+                <v-icon small class="mr-1" color="#5b7a90">mdi-folder</v-icon>
+                <span>{{ reportSavePath || 'Not yet received from server' }}</span>
+              </div>
+            </div>
+
+            <v-divider class="my-3"></v-divider>
+
+            <!-- Databases -->
+            <div class="mtx-set-section">
+              <div class="mtx-set-head">
+                <v-icon x-small class="mr-1">mdi-database-outline</v-icon>
+                Reference databases
+              </div>
+              <div v-if="databases && databases.length">
+                <div v-for="db in databases" :key="db.key" class="mtx-set-db-row">
+                  <v-icon small :color="db.size ? 'green' : 'orange'" class="mr-1">
+                    {{ db.size ? 'mdi-check-circle' : 'mdi-alert-circle-outline' }}
+                  </v-icon>
+                  <span class="mtx-set-db-key">{{ db.key }}</span>
+                  <span class="mtx-set-db-path">{{ db.final || db.url || '—' }}</span>
+                </div>
+              </div>
+              <div v-else class="mtx-set-empty">No database info received yet</div>
+            </div>
+
+            <v-divider class="my-3"></v-divider>
+
+            <!-- Config -->
+            <div class="mtx-set-section">
+              <div class="mtx-set-head">
+                <v-icon x-small class="mr-1">mdi-file-cog-outline</v-icon>
+                Configuration
+              </div>
+              <v-btn small outlined @click="reloadConfig">
+                <v-icon small left>mdi-reload</v-icon>
+                Reload default .config from server
+              </v-btn>
+              <div v-if="bundleconfig" class="mtx-set-config-preview">
+                <div class="mtx-set-config-label">Loaded config keys:</div>
+                <code>{{ Object.keys(bundleconfig).join(', ') }}</code>
+              </div>
+            </div>
+
+          </v-card-text>
+        </v-card>
+      </v-dialog> 
       <div class="pt-6 "> 
         
-        <v-navigation-drawer permanent class="pt-6"
-          app ref="information_panel_drawer"  left :width="navigation.width" v-model="navigation.shown"
-        >    
-          <v-row class="mt-10 ml-2">
-              <v-select  
-                v-model="database" 
-                :items="databases" 
-                label="Database" 
-                item-key="url"
-                item-value="key"
-                return-object
-                item-text="final"
-                :hint="`${database.size}`"
-                persistent-hint class="mx-3 flex " >
-                <template v-slot:prepend>
-                  <v-tooltip bottom>
-                  <template v-slot:activator="{ on }">
-                    <v-btn @click="downloaddb" v-on="on" icon>
-                      <v-icon>mdi-download</v-icon>
-                    </v-btn>
-                  </template> 
-                  Download Database to home directory
-                  </v-tooltip>
-                </template>
-                <template v-slot:selection="{ item }">
-                  {{ item.key }} <v-spacer vertical></v-spacer>
-                    <v-progress-circular :indeterminate="true" top
-                      stream   
-                      class="mr-2" 
-                      size="14"  color="blue lighten-2"
-                      v-if="item.downloading" >
-                    </v-progress-circular>
-                    <v-icon v-else
-                      :color="item.size != 0 ? 'green' : 'orange lighten-1' "
-                      large
-                    >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
-                    </v-icon>
-                </template>
-              </v-select>
-              <v-btn class="mr-10" @click="canceldownload" v-if="database.downloading" icon>
-                <v-icon>mdi-cancel</v-icon>
-              </v-btn>
-              
-              <v-select
-                v-if="isOnline && runs && runs.length > 0"
-                :items="runs"
-                v-model="selectedRun"
-                label="Available Runs"
-                hint="Select a run of number of samples"
-                persistent-hint
-                class="mx-3 flex "
-              />
+        <v-navigation-drawer permanent class="pt-6 mtx-drawer"
+          app ref="information_panel_drawer"  left :width="drawerWidth" v-model="navigation.shown"
+          :mini-variant="navigation.collapsed" mini-variant-width="0"
+        >
+          <div class="mtx-drawer-header" v-show="!navigation.collapsed">
+            <div class="mtx-drawer-heading">
+              <v-icon small color="white" class="mr-2">mdi-dna</v-icon>
+              <span class="mtx-drawer-title">Runs &amp; Samples</span>
+            </div>
+            <v-btn icon small dark @click="toggleDrawer" title="Collapse panel">
+              <v-icon small>mdi-chevron-left</v-icon>
+            </v-btn>
+          </div>
 
-              <AddRun
-                v-if="isOnline"
-                ref="addRun"
-                @sendMessage="sendMessage"
-                :selectedRun="selectedRun"
-                :samples="selectedsamplesAll"
-                :pathOptions="pathOptions"
-                :reportSavePath="reportSavePath"
-              />
-              <v-tooltip bottom>
-                <template v-slot:activator="{ on }">
-                  <v-btn v-on="on"  icon
-                    @click="sendMessage({type: 'openPath' })"
-                    class="mr-10 mb-2">
-                    <v-icon color="black"  >mdi-home</v-icon>
-                  </v-btn>
-                </template>
-                Open Base Path to default database(s), reports, information
-              </v-tooltip>
-             
-          </v-row>
-            
+          <div class="mtx-drawer-scroll" v-show="!navigation.collapsed">
+
+            <!-- ===== Database section ===== -->
+            <section class="mtx-sec">
+              <div class="mtx-sec-head">
+                <v-icon x-small class="mr-1">mdi-database</v-icon>
+                <span>Reference database</span>
+              </div>
+              <div class="mtx-sec-body mtx-row-end">
+                <v-select
+                  v-model="database"
+                  :items="databases"
+                  label="Database"
+                  item-key="url"
+                  item-value="key"
+                  return-object
+                  item-text="final"
+                  :hint="`${database.size}`"
+                  dense outlined
+                  persistent-hint class="flex" >
+                  <template v-slot:prepend>
+                    <v-tooltip bottom>
+                    <template v-slot:activator="{ on }">
+                      <v-btn @click="downloaddb" v-on="on" icon small>
+                        <v-icon>mdi-download</v-icon>
+                      </v-btn>
+                    </template>
+                    Download Database to home directory
+                    </v-tooltip>
+                  </template>
+                  <template v-slot:selection="{ item }">
+                    {{ item.key }} <v-spacer vertical></v-spacer>
+                      <v-progress-circular :indeterminate="true" top
+                        stream
+                        class="mr-2"
+                        size="14"  color="blue lighten-2"
+                        v-if="item.downloading" >
+                      </v-progress-circular>
+                      <v-icon v-else
+                        :color="item.size != 0 ? 'green' : 'orange lighten-1' "
+                      >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
+                      </v-icon>
+                  </template>
+                </v-select>
+                <v-btn class="ml-1" @click="canceldownload" v-if="database.downloading" icon small>
+                  <v-icon>mdi-cancel</v-icon>
+                </v-btn>
+              </div>
+            </section>
+
+            <!-- ===== Run section ===== -->
+            <section class="mtx-sec">
+              <div class="mtx-sec-head">
+                <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>
+                <span>Run</span>
+              </div>
+              <div class="mtx-sec-body">
+                <v-select
+                  v-if="isOnline && runs && runs.length > 0"
+                  :items="runs"
+                  v-model="selectedRun"
+                  label="Available runs"
+                  hint="Select a run / set of samples"
+                  dense outlined
+                  persistent-hint
+                  class="flex"
+                />
+                <div class="mtx-run-actions">
+                  <AddRun
+                    v-if="isOnline"
+                    ref="addRun"
+                    @sendMessage="sendMessage"
+                    :selectedRun="selectedRun"
+                    :samples="selectedsamplesAll"
+                    :pathOptions="pathOptions"
+                    :reportSavePath="reportSavePath"
+                  />
+                  <v-tooltip bottom>
+                    <template v-slot:activator="{ on }">
+                      <v-btn v-on="on" icon
+                        @click="sendMessage({type: 'openPath' })">
+                        <v-icon color="black">mdi-home</v-icon>
+                      </v-btn>
+                    </template>
+                    Open Base Path to default database(s), reports, information
+                  </v-tooltip>
+                </div>
+              </div>
+            </section>
+
+            <!-- ===== Samples section ===== -->
+            <section class="mtx-sec">
+              <div class="mtx-sec-head">
+                <v-icon x-small class="mr-1">mdi-test-tube</v-icon>
+                <span>Samples &amp; fastq sources</span>
+              </div>
+
+              <!-- Source legend: separates live server-watched samples from local uploads -->
+              <div class="mtx-source-legend" v-if="selectedsamplesAll.length">
+                <span class="mtx-src-chip mtx-src-server">
+                  <v-icon x-small class="mr-1">mdi-server-network</v-icon>{{ sampleSourceCounts.server }} listened
+                </span>
+                <span class="mtx-src-chip mtx-src-upload">
+                  <v-icon x-small class="mr-1">mdi-tray-arrow-up</v-icon>{{ sampleSourceCounts.upload }} uploaded
+                </span>
+                <span class="mtx-src-chip mtx-src-demo" v-if="sampleSourceCounts.demo">
+                  <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>{{ sampleSourceCounts.demo }} demo
+                </span>
+                <v-spacer></v-spacer>
+                <button
+                  class="mtx-src-clear"
+                  v-if="hasUploads"
+                  @click="clearUploadedData"
+                  title="Remove uploaded & demo reports (keeps live server samples)"
+                >
+                  <v-icon x-small class="mr-1">mdi-broom</v-icon>Clear local
+                </button>
+              </div>
 
           <!-- Button click to save run information, sned to backend as a method -->
           <Samplesheet
@@ -138,6 +333,7 @@
         @sendMessage="sendMessage"
         @updateData="updateData"
         @updateEntry="updateEntry"
+        @updateMeta="setSampleMeta"
         @deleteEntry="deleteEntry"
         @barcode="barcode"
         @sampleStatus="sampleStatus"
@@ -155,64 +351,85 @@
         :offlineMode="!isOnline"  
       >
       </Samplesheet>
-      <v-alert class="py-0 my-0" type="info" v-if="isOnline && !selectedRun">
-        <hr>No Run selected. Please create one with the "+" button first<hr>
+      <v-alert class="py-0 my-0 mt-2" dense type="info" v-if="isOnline && !selectedRun">
+        No run selected. Create one with the “+” button first.
       </v-alert>
-          <div class="mx-4" 
-          style="overflow-y: auto; ">
-            
-            <v-spacer class="py-0"></v-spacer>
-            
-            <v-range-slider
-              v-model="depthRange"
-              :max="maxDepth"
-              :min="0"
-              label="Depth Range"
-              :step="1"
-              hide-details
-              class="align-center"
-            >
-              <template v-slot:prepend>
-                <v-text-field
-                  v-model="depthRange[0]"
-                  hide-details
-                  single-line
-                  type="number"
-                  variant="outlined"
-                  density="compact"
-                  style="width: 70px"
-                ></v-text-field>
-              </template>
-              <template v-slot:append>
-                <v-text-field
-                  v-model="depthRange[1]"
-                  hide-details
-                  single-line
-                  type="number"
-                  variant="outlined"
-                  style="width: 70px"
-                  density="compact"
-                ></v-text-field>
-              </template>
-            </v-range-slider>
-            <v-spacer class="py-4"></v-spacer>
-            <v-text-field
-              hint="Min Abu in Sample"
-              v-model="minPercent"
-              persistent-hint 
-              single-line
-              type="number"
-              step="0.005"
-            ></v-text-field>
-      
-            <v-slider
-              v-model="minPercent"
-              :min="0" 
-              :step="0.005"
-              :max="1"
-            ></v-slider>
-            <v-spacer class="py-4"></v-spacer>
-            
+            </section>
+
+            <!-- ===== Filters section ===== -->
+            <section class="mtx-sec">
+              <div class="mtx-sec-head">
+                <v-icon x-small class="mr-1">mdi-tune-variant</v-icon>
+                <span>Display filters</span>
+              </div>
+              <div class="mtx-sec-body mtx-filters">
+
+            <div class="mtx-filter-block">
+              <div class="mtx-filter-row">
+                <span class="mtx-filter-label">Depth range</span>
+                <span class="mtx-filter-chip">{{ depthRange[0] }} – {{ depthRange[1] }}</span>
+              </div>
+              <v-range-slider
+                v-model="depthRange"
+                :max="maxDepth"
+                :min="0"
+                :step="1"
+                hide-details
+                track-color="#dbe6f0"
+                color="#1e6b97"
+                thumb-color="#0e3f6a"
+                class="mtx-slider align-center"
+              >
+                <template v-slot:prepend>
+                  <v-text-field
+                    v-model="depthRange[0]"
+                    hide-details single-line type="number"
+                    density="compact"
+                    class="mtx-filter-num"
+                    style="width: 64px"
+                  ></v-text-field>
+                </template>
+                <template v-slot:append>
+                  <v-text-field
+                    v-model="depthRange[1]"
+                    hide-details single-line type="number"
+                    density="compact"
+                    class="mtx-filter-num"
+                    style="width: 64px"
+                  ></v-text-field>
+                </template>
+              </v-range-slider>
+            </div>
+
+            <div class="mtx-filter-block">
+              <div class="mtx-filter-row">
+                <span class="mtx-filter-label">Min abundance in sample</span>
+                <span class="mtx-filter-chip">{{ minPercent }}</span>
+              </div>
+              <v-slider
+                v-model="minPercent"
+                :min="0"
+                :step="0.005"
+                :max="1"
+                hide-details
+                track-color="#dbe6f0"
+                color="#1e6b97"
+                thumb-color="#0e3f6a"
+                class="mtx-slider"
+              >
+                <template v-slot:append>
+                  <v-text-field
+                    v-model="minPercent"
+                    hide-details single-line type="number"
+                    step="0.005"
+                    density="compact"
+                    class="mtx-filter-num"
+                    style="width: 78px"
+                  ></v-text-field>
+                </template>
+              </v-slider>
+            </div>
+
             <v-select
               label="Tax Rank Codes"
               v-model="defaults" multiple
@@ -245,13 +462,43 @@
               </template>
             
             </v-select>
-          </div>
+              </div>
+            </section>
+
+          </div><!-- /mtx-drawer-scroll -->
+            <div
+              v-show="!navigation.collapsed"
+              class="mtx-drawer-resizer"
+              @mousedown.prevent="startDrawerDrag"
+              title="Drag to resize"
+            ></div>
           </v-navigation-drawer>
-        </div> 
+        </div>
       <v-main class="pb-0">
-        <v-alert
-          type="error" v-if="connectedStatus != 'Connected'"
-        >{{  connectedStatus }}</v-alert>
+        <!-- Frontend-only / offline banner (e.g. GitHub Pages with no backend) -->
+        <div class="mtx-offline-banner" v-if="!isOnline">
+          <v-icon color="#b45309" class="mr-3">mdi-cloud-off-outline</v-icon>
+          <div class="mtx-offline-text">
+            <div class="mtx-offline-title">Frontend-only mode — not connected to a backend</div>
+            <div class="mtx-offline-sub">
+              {{ connectedStatus }} Real-time sequencing &amp; job submission are disabled here. You can still explore by
+              loading demo data or dropping your own Kraken2 reports (top-right).
+            </div>
+          </div>
+          <v-spacer></v-spacer>
+          <v-btn
+            small color="primary" depressed class="ml-2"
+            v-if="!demoLoaded" @click="loadDemoData"
+          >
+            <v-icon small left>mdi-flask-outline</v-icon>Load demo data
+          </v-btn>
+          <v-btn
+            small text class="ml-1"
+            v-if="hasUploads" @click="clearUploadedData"
+          >
+            <v-icon small left>mdi-broom</v-icon>Clear demo/uploaded
+          </v-btn>
+        </div>
         <v-row class="ml-4 pb-0">
           
           <v-col
@@ -259,7 +506,19 @@
               id=""
               class="overflow-y-auto  my-0"
           >
-             
+              <v-tabs
+                v-model="tab"
+                background-color="transparent"
+                color="indigo darken-3"
+                class="mtx-tabnav"
+                show-arrows
+              >
+                <v-tab v-for="(tabItem, key) in tabs" :key="`${key}-tab`">
+                  <v-icon small left v-if="tabItem.mdi">{{ tabItem.mdi }}</v-icon>
+                  {{ tabItem.name }}
+                </v-tab>
+              </v-tabs>
+
               <v-tabs-items v-model="tab"
               >
 
@@ -275,7 +534,11 @@
                           :namesData="uniquenametypes"
                           :fullsize="fullsize"
                           :selectedsamples="Object.keys(selectedData)"
+                          :sampleMeta="sampleMeta"
+                          :run="selectedRun"
                           :socket="socket"
+                          @updateMeta="setSampleMeta"
+                          @updateRunMeta="setRunMeta"
                       >
                       </component>
 
@@ -289,8 +552,12 @@
           </v-col>
         </v-row>
       </v-main>
-      
-      
+
+      <!-- Always-available, selectable K2 report drop zone, pinned top-right -->
+      <div class="mtx-dropzone-pin">
+        <DropZone @importData="importData" />
+      </div>
+
   </v-app>
 </template>
 
@@ -298,8 +565,15 @@
 import Plates from "@/components/Plates"
 import * as d3 from 'd3'
 import Samplesheet from "@/components/Samplesheet"
-import RunStats from "@/components/RunStats"
+import Heatmap from "@/components/Heatmap"
+import Explore from "@/components/Explore"
+import Map from "@/components/Map"
+import CrossSample from "@/components/CrossSample"
+import DataTableTab from "@/components/DataTableTab"
+import Metadata from "@/components/Metadata"
 import AddRun from "@/components/AddRun"
+import DropZone from "@/components/DropZone"
+import demoSamples from "@/assets/demoData"
 import _ from 'lodash'
 import { io } from "socket.io-client";
  
@@ -307,10 +581,16 @@ import { io } from "socket.io-client";
 export default {
     name: 'App',
     components: {
-      Plates, 
+      Plates,
       Samplesheet,
       AddRun,
-      RunStats,
+      DropZone,
+      Heatmap,
+      Explore,
+      Map,
+      CrossSample,
+      DataTableTab,
+      Metadata,
     },
     beforeDestroy(){ 
       if (this.interval){
@@ -320,10 +600,29 @@ export default {
           console.error(err)
         }
       } 
+      document.removeEventListener('mousemove', this.onDrawerDrag)
+      document.removeEventListener('mouseup', this.stopDrawerDrag)
     },
     computed: {
       isConnected() {
         return !!(this.socket && this.socket.connected);
+      },
+      statusClass() {
+        if (this.isOnline) return 'connected'
+        if (this.isConnecting) return 'connecting'
+        return 'offline'
+      },
+      statusLabel() {
+        if (this.isOnline) return 'Connected to backend'
+        if (this.isConnecting) return 'Connecting to backend…'
+        return this.connectedStatus || 'Backend offline'
+      },
+      settingsPreviewUrl() {
+        const proto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'https:' : 'http:'
+        return `${proto}//${this.settingsEditHost}:${this.settingsEditPort}`
+      },
+      drawerWidth() {
+        return this.navigation.collapsed ? 0 : this.navigation.width;
       },
       direction() {
             return this.navigation.shown === false ? "Open" : "Closed";
@@ -357,22 +656,46 @@ export default {
       samplekeys(){
         return Object.keys(this.fullData)
       },
-      
-      
-      
+      // Tally samples by where they came from so the left panel can clearly
+      // separate live server-watched samples from locally uploaded K2 reports.
+      sampleSourceCounts(){
+        const counts = { server: 0, upload: 0, demo: 0 }
+        this.selectedsamplesAll.forEach((s) => {
+          const o = s.origin || 'server'
+          if (counts[o] === undefined) counts[o] = 0
+          counts[o] += 1
+        })
+        return counts
+      },
+      hasUploads(){
+        return (this.sampleSourceCounts.upload + this.sampleSourceCounts.demo) > 0
+      },
+
+
+
     },
-    
+
     data() {
+        const savedHost = localStorage.getItem('mtx_serverHost') || (typeof window !== 'undefined' ? window.location.hostname : 'localhost')
+        const savedPort = localStorage.getItem('mtx_serverPort') || '7689'
         return {
+          settingsDialog: false,
+          serverHost: savedHost,
+          serverPort: savedPort,
+          settingsEditHost: savedHost,
+          settingsEditPort: savedPort,
+          isConnecting: true,
           search: '',
             queueLength: 0,
             manuals: {},
+            sampleMeta: {},
             socket: {},
             socketReport: {},
             navigation: {
                 shown: true,
+                collapsed: false,
                 width: 550,
-                borderSize: 3
+                borderSize: 6
             },
             runs: [], 
             selectedRun: null,
@@ -411,6 +734,7 @@ export default {
             paused: false,
             dialog: false,
             isOnline: false,
+            demoLoaded: false,
             connectedStatus: 'Offline mode: backend not connected yet',
             message: 'No message yet!',
             inputdata: null,
@@ -447,13 +771,39 @@ export default {
             gpu: false,
             statussent: null, 
             queueList: {},
+            drawerDragging: false,
             tabs: [
                 {
-                  name: 'Run Stats',
+                  name: 'Heatmap',
                   icon: "square",
-                  component: "RunStats"
+                  mdi: "mdi-grid",
+                  component: "Heatmap"
                 },
-                
+                {
+                  name: 'Explore',
+                  mdi: "mdi-chart-donut",
+                  component: "Explore"
+                },
+                {
+                  name: 'Cross-Sample',
+                  mdi: "mdi-compare",
+                  component: "CrossSample"
+                },
+                {
+                  name: 'Table',
+                  mdi: "mdi-table",
+                  component: "DataTableTab"
+                },
+                {
+                  name: 'Metadata',
+                  mdi: "mdi-information-outline",
+                  component: "Metadata"
+                },
+                {
+                  name: 'Map',
+                  mdi: "mdi-map-outline",
+                  component: "Map"
+                },
             ]
         }
     },
@@ -472,9 +822,10 @@ export default {
       selectedRun(val){
         if (val){
           this.selectedsamplesAll = []
+          this.loadMeta()
           this.sendMessage({
             run: val,
-            type: "getRunInformation", 
+            type: "getRunInformation",
           })
         }
       },
@@ -526,9 +877,11 @@ export default {
     async mounted() {
         // Calculate the URL for the websocket. If you have a fixed URL, then you can remove all this and simply put in
         // ws://your-url-here.com or wss:// for secure websockets.
-        this.setBorderWidth();
-        this.setEvents();
-        
+        this.$nextTick(() => {
+          this.setBorderWidth();
+          this.setEvents();
+        });
+
         this.connect()
 
       
@@ -537,6 +890,74 @@ export default {
     methods: {
       generateUserId() {
         return `user_${Math.random().toString(36)}`;
+      },
+      toggleDrawer(){
+        this.navigation.collapsed = !this.navigation.collapsed;
+        // give the layout a tick to settle, then nudge a resize so plots reflow
+        this.$nextTick(() => {
+          window.dispatchEvent(new Event('resize'));
+        });
+      },
+      startDrawerDrag(){
+        if (this.navigation.collapsed) return
+        this.drawerDragging = true
+        document.body.style.cursor = 'ew-resize'
+        document.body.style.userSelect = 'none'
+        document.addEventListener('mousemove', this.onDrawerDrag)
+        document.addEventListener('mouseup', this.stopDrawerDrag)
+      },
+      onDrawerDrag(e){
+        if (!this.drawerDragging) return
+        const MIN_W = 320
+        const MAX_W = 820
+        const width = Math.max(MIN_W, Math.min(MAX_W, e.clientX))
+        this.navigation.width = width
+      },
+      stopDrawerDrag(){
+        if (!this.drawerDragging) return
+        this.drawerDragging = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        document.removeEventListener('mousemove', this.onDrawerDrag)
+        document.removeEventListener('mouseup', this.stopDrawerDrag)
+        this.$nextTick(() => window.dispatchEvent(new Event('resize')))
+      },
+      metaStorageKey(){
+        return `mytax_meta_${this.selectedRun || 'default'}`
+      },
+      loadMeta(){
+        try {
+          const raw = localStorage.getItem(this.metaStorageKey())
+          this.sampleMeta = raw ? JSON.parse(raw) : {}
+        } catch (err) { this.sampleMeta = {} }
+      },
+      saveMeta(){
+        try { localStorage.setItem(this.metaStorageKey(), JSON.stringify(this.sampleMeta)) } catch (err) { console.error(err) }
+      },
+      setSampleMeta(payload){
+        // payload: { sample, ...fields } (e.g. lat, lon, notes)
+        if (!payload || !payload.sample) return
+        const existing = this.sampleMeta[payload.sample] || {}
+        const merged = { ...existing, ...payload }
+        delete merged.sample
+        this.$set(this.sampleMeta, payload.sample, merged)
+        this.saveMeta()
+        // best-effort persist to backend run samplesheet entry
+        this.sendMessage({
+          type: 'updateEntry',
+          sample: payload.sample,
+          info: { sample: payload.sample, ...merged },
+          run: this.selectedRun,
+          message: `Update metadata for ${payload.sample}`
+        })
+      },
+      setRunMeta(payload){
+        // apply coordinates/fields to every loaded sample in the run
+        const fields = { ...payload }
+        delete fields.sample
+        this.selectedsamplesAll.forEach((s) => {
+          this.setSampleMeta({ sample: s.sample, ...fields })
+        })
       },
       updateSampleStatus(sample, status){
         // iterate through queueList and find sample. Set success if all are success, set historical if all historical, set running if any running etc also do logs and error. Update selectedsamplesAll with new status
@@ -640,50 +1061,66 @@ export default {
       
       
       setBorderWidth() {
-          let i = this.$refs.information_panel_drawer.$el.querySelector(
-              ".v-navigation-drawer__border"
-          );
+          const drawer = this.$refs.information_panel_drawer;
+          if (!drawer) return;
+          const i = drawer.$el.querySelector(".v-navigation-drawer__border");
+          if (!i) return;
           i.style.width = this.navigation.borderSize + "px";
           i.style.cursor = "ew-resize";
+          // make sure the grab strip sits above the panel content
+          i.style.zIndex = "5";
         },
         setEvents() {
-            const minSize = this.navigation.borderSize;
-            const el = this.$refs.information_panel_drawer.$el;
-            const drawerBorder = el.querySelector(".v-navigation-drawer__border");
+            const drawer = this.$refs.information_panel_drawer;
+            if (!drawer) return;
+            const el = drawer.$el;
+            const border = el.querySelector(".v-navigation-drawer__border");
+            if (!border) return;
             const vm = this;
             const direction = el.classList.contains("v-navigation-drawer--right")
                 ? "right"
                 : "left";
+            const MIN_W = 320, MAX_W = 820;
 
-            function resize(e) {
-                document.body.style.cursor = "ew-resize";
+            let dragging = false, raf = null, pendingW = null;
+
+            const apply = () => {
+                raf = null;
+                // drive the reactive width so Vuetify resizes the drawer AND shifts the
+                // main content; setting el.style.width directly snapped back on re-render.
+                if (pendingW != null) vm.navigation.width = pendingW;
+            };
+            const onMove = (e) => {
+                if (!dragging) return;
                 let f = direction === "right"
                     ? document.body.scrollWidth - e.clientX
                     : e.clientX;
-                el.style.width = f + "px";
-            }
+                f = Math.max(MIN_W, Math.min(MAX_W, f));
+                pendingW = f;
+                if (raf == null) raf = requestAnimationFrame(apply);
+            };
+            const stop = () => {
+                if (!dragging) return;
+                dragging = false;
+                if (raf != null) { cancelAnimationFrame(raf); raf = null; apply(); }
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+                el.style.transition = "";
+                document.removeEventListener("mousemove", onMove);
+                document.removeEventListener("mouseup", stop);
+                // let plots reflow to the new width
+                vm.$nextTick(() => window.dispatchEvent(new Event("resize")));
+            };
 
-            drawerBorder.addEventListener(
-                "mousedown",
-                function (e) {
-                    if (e.offsetX < minSize) {
-                        let m_pos = e.x;
-                        el.style.transition = 'initial'; document.addEventListener("mousemove", resize, false);
-                    }
-                },
-                false
-            );
-
-            document.addEventListener(
-                "mouseup",
-                function () {
-                    el.style.transition = '';
-                    vm.navigation.width = el.style.width;
-                    document.body.style.cursor = "";
-                    document.removeEventListener("mousemove", resize, false);
-                },
-                false
-            );
+            border.addEventListener("mousedown", (e) => {
+                e.preventDefault();
+                dragging = true;
+                el.style.transition = "initial";
+                document.body.style.cursor = "ew-resize";
+                document.body.style.userSelect = "none";
+                document.addEventListener("mousemove", onMove);
+                document.addEventListener("mouseup", stop);
+            });
         },
         pausedChange(val){
           this.paused = val
@@ -737,12 +1174,29 @@ export default {
           this.selectedsamplesAll = []
           this.selectedData = {}
         },
+        applySettings() {
+          this.serverHost = this.settingsEditHost.trim() || window.location.hostname
+          this.serverPort = String(this.settingsEditPort).trim() || '7689'
+          localStorage.setItem('mtx_serverHost', this.serverHost)
+          localStorage.setItem('mtx_serverPort', this.serverPort)
+          if (this.socket && typeof this.socket.disconnect === 'function') {
+            this.socket.disconnect()
+          }
+          this.isOnline = false
+          this.isConnecting = true
+          this.connectedStatus = 'Connecting…'
+          this.settingsDialog = false
+          this.$nextTick(() => this.connect())
+        },
+        reloadConfig() {
+          this.sendMessage({ type: 'getbundleconfig' })
+          this.sendMessage({ type: 'getReportPath' })
+          this.sendMessage({ type: 'getDbs' })
+        },
         async connect(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'https:' : 'http:')
-          const port = process.env.NODE_ENV == 'development' ? ':7689' : ':7689';
-          // this.ext = process.env.VUE_APP_ext
-          // this.compressed = process.env.VUE_APP_compressed
-          const echoSocketUrl = socketProtocol + '//' + window.location.hostname + port
+          const port = ':' + (this.serverPort || '7689')
+          const echoSocketUrl = socketProtocol + '//' + (this.serverHost || window.location.hostname) + port
           // this.defaults = this.defaultsList
           // Define socket and attach it to our data object
           // set user id for local storage
@@ -805,8 +1259,9 @@ export default {
           })
           this.socket.on('disconnect', function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
-            this.isOnline = false;
-            this.connectedStatus = 'Offline mode: backend unreachable. You can still load a report.';
+            $this.isOnline = false;
+            $this.isConnecting = true;
+            $this.connectedStatus = 'Offline mode: backend unreachable. You can still load a report.';
           });
           this.socket.on('userSettings', function(e) {
             $this.gpu = e.gpu
@@ -815,14 +1270,16 @@ export default {
 
           this.socket.on('error', function(err) {
             console.error('Socket encountered error: ', err.message, 'Closing socket');
-            this.isOnline = false;
-            this.connectedStatus = 'Offline mode: backend error. You can still load a report and Check Logs or Network Settings';
+            $this.isOnline = false;
+            $this.isConnecting = false;
+            $this.connectedStatus = 'Offline mode: backend error. You can still load a report and Check Logs or Network Settings';
             $this.socket.close();
           });
           this.socket.on("connect_error", (err) => {
             console.error('Socket encountered error: ', err, 'Closing socket');
-            this.isOnline = false;
-            this.connectedStatus = 'Offline mode: cannot reach backend. Load a report file to continue.';
+            $this.isOnline = false;
+            $this.isConnecting = false;
+            $this.connectedStatus = 'Offline mode: cannot reach backend. Load a report file to continue.';
           });
           this.socket.on("connect_timeout", (err) => {
             console.error('Socket encountered error: ', err, 'Closing socket');
@@ -834,6 +1291,7 @@ export default {
           $this.socket.on('connect', () => {
               console.log('Websocket connected.');
               $this.isOnline = true;
+              $this.isConnecting = false;
               $this.connectedStatus = 'Connected';
               
               if ($this.selectedRun){
@@ -913,14 +1371,43 @@ export default {
                 this.pathOptions2 = e.data
               })
               $this.socket.on("queueJob", (e)=>{
-                // assume this is the entire set of sample queue records
-                // this.queueList[e.samplename] = e.queue
+                try {
+                  const sample = e.samplename
+                  if (!sample) return
+                  let job = e.queue
+                  if (Array.isArray(job)) {
+                    job = job.length ? job[job.length - 1] : null
+                  }
+                  this.addSample(sample, job || {})
+                  if (!this.queueList[sample]) {
+                    this.$set(this.queueList, sample, [])
+                  }
+                  const idx = (job && job.index != null) ? job.index : this.queueList[sample].length
+                  const merged = {
+                    ...(this.queueList[sample][idx] || {}),
+                    ...(job || {})
+                  }
+                  if (!merged.status) {
+                    merged.status = {
+                      running: false,
+                      waiting: true,
+                      success: null,
+                      historical: false,
+                      error: null,
+                      logs: []
+                    }
+                  }
+                  this.$set(this.queueList[sample], idx, merged)
+                  this.updateSampleStatus(sample)
+                } catch (err) {
+                  console.error(err)
+                }
               })
               $this.socket.on("sampledata", async (e)=>{
                 try{
                     // $this.queueList[e.samplename] = e.queue
                     console.log(e.data, e.samplename,"<<<")
-                    await this.importData(e.data, e.samplename)
+                    await this.importData(e.data, e.samplename, 'server')
                 } catch (err){
                   console.error(err)
                 }
@@ -966,8 +1453,8 @@ export default {
               } )
               $this.socket.on("data", (e)=>{
                 if (e.run == $this.selectedRun ){
-                  ( async ()=>{   
-                    await $this.importData(e.data, e.samplename) 
+                  ( async ()=>{
+                    await $this.importData(e.data, e.samplename, 'server')
                   }
                   )();
                 }
@@ -1220,13 +1707,17 @@ export default {
             console.error(Err)
           }
         },
-        addSample(sample, config){
+        addSample(sample, config, origin){
+          // origin: where this sample came from — 'server' (live, backend-watched
+          // local directories), 'upload' (a K2 report the user dropped/selected),
+          // or 'demo' (canned offline sample data).
+          origin = origin || 'server'
           // check if object with sample attribute equals the sample , get index
           let indx = this.selectedsamplesAll.findIndex(x => x.sample === sample );
-          // check if thisqueueList has sample if not then add it 
-          
+          // check if thisqueueList has sample if not then add it
+
           this.sendMessage({
-            type: "getStatus", 
+            type: "getStatus",
             sample: sample,
             run: this.selectedRun,
             "message" : `Get Queue and Status/Info for ${sample} `
@@ -1235,22 +1726,50 @@ export default {
             let s = {
               sample: sample,
               hidden: false,
-              data: null, 
+              data: null,
               status: {},
+              origin: origin,
             }
             this.selectedsamplesAll.push(s)
             indx = this.selectedsamplesAll.length-1
-          } 
+          } else if (origin && !this.selectedsamplesAll[indx].origin){
+            this.$set(this.selectedsamplesAll[indx], 'origin', origin)
+          }
           this.selectedsamplesAll[indx].config = config ? config : {}
-          return 
+          return
 
         },
-        async importData(information, sample){
+        // Load the canned demo reports so the frontend-only (GitHub Pages) build
+        // has something to visualize without a backend.
+        async loadDemoData(){
+          for (const s of demoSamples){
+            try {
+              await this.importData(s.report, s.sample, 'demo')
+              // seed Florida-coast coordinates so the Map tab is populated
+              if (s.lat != null && s.lon != null) {
+                this.setSampleMeta({ sample: s.sample, lat: s.lat, lon: s.lon })
+              }
+            } catch (err){
+              console.error('Failed to load demo sample', s.sample, err)
+            }
+          }
+          this.demoLoaded = true
+        },
+        // Remove only the locally-loaded reports (demo + uploaded), leaving any
+        // live server-watched samples untouched.
+        clearUploadedData(){
+          const keep = this.selectedsamplesAll.filter((s) => (s.origin || 'server') === 'server')
+          this.selectedsamplesAll = keep
+          this.demoLoaded = false
+        },
+        async importData(information, sample, origin){
           if (!information || typeof information !== 'string') {
             console.warn('importData: no text provided');
             return;
           }
-          this.addSample(sample);
+          // default uploads when no explicit origin is supplied (drag/drop, file picker)
+          origin = origin || 'upload'
+          this.addSample(sample, null, origin);
           let text = information
           let fullsize = 0
           const $this = this
@@ -1352,47 +1871,339 @@ th, td {
 .container {
   max-width: 100000px
 }
+.mtx-tabnav {
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 14px;
+}
+.mtx-tabnav .v-tab {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+/* ---- left panel overhaul ---- */
+.mtx-drawer {
+  background: #f7fafc !important;
+}
+.mtx-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 10px 16px;
+  margin: 4px 8px 10px;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #274766, #325b80);
+  box-shadow: 0 6px 18px -10px rgba(39,71,102,.8);
+}
+.mtx-drawer-heading { display: flex; align-items: center; }
+.mtx-drawer-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #ffffff;
+}
+.mtx-drawer-scroll {
+  padding: 0 10px 24px;
+  overflow-y: auto;
+  height: calc(100vh - 120px);
+}
+.mtx-sec {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 10px 12px 4px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 10px 26px -20px rgba(16,24,40,.35);
+}
+.mtx-sec-head {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #5b6573;
+  margin-bottom: 6px;
+}
+.mtx-sec-body { padding-top: 2px; }
+
+/* ---- modern Display-filters ---- */
+.mtx-filters { display: flex; flex-direction: column; gap: 16px; padding-top: 6px; }
+.mtx-filter-block {
+  background: linear-gradient(180deg, #f9fcff 0%, #f1f7fc 100%);
+  border: 1px solid #e1ebf4;
+  border-radius: 12px;
+  padding: 10px 12px 4px;
+}
+.mtx-filter-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.mtx-filter-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #5b7a90; }
+.mtx-filter-chip {
+  font-size: 11px; font-weight: 700; color: #0e3f6a; background: #dfeefb;
+  border-radius: 999px; padding: 2px 10px; font-variant-numeric: tabular-nums;
+}
+.mtx-slider.v-input { margin-top: 2px; padding-top: 0; }
+.mtx-slider .v-slider { margin: 0; }
+.mtx-slider .v-slider__track-container { height: 5px; border-radius: 999px; }
+.mtx-slider .v-slider__track-background,
+.mtx-slider .v-slider__track-fill { border-radius: 999px; }
+.mtx-slider .v-slider__thumb { width: 14px; height: 14px; box-shadow: 0 1px 4px rgba(14,63,106,.4); }
+.mtx-slider .v-slider__thumb:before { opacity: 0; }
+.mtx-filter-num .v-input__slot {
+  min-height: 34px !important;
+  border-radius: 9px !important;
+  background: #fff !important;
+  border: 1px solid #d3e0ec !important;
+  box-shadow: 0 1px 2px rgba(20,56,84,.05) !important;
+  padding: 0 8px !important;
+}
+.mtx-filter-num .v-input__slot:before,
+.mtx-filter-num .v-input__slot:after { display: none !important; }
+.mtx-filter-num input { font-size: 12px; color: #274766; text-align: center; font-variant-numeric: tabular-nums; }
+.mtx-filter-num.v-input--is-focused .v-input__slot {
+  border-color: #1e6b97 !important; box-shadow: 0 0 0 3px rgba(30,107,151,.15) !important;
+}
+.mtx-filters .v-select .v-input__slot {
+  border-radius: 10px !important;
+  min-height: 42px !important;
+  border: 1px solid #d3e0ec !important;
+  box-shadow: 0 1px 2px rgba(20,56,84,.06) !important;
+}
+.mtx-filters .v-select .v-input__slot:before,
+.mtx-filters .v-select .v-input__slot:after { display: none !important; }
+.mtx-filters .v-select.v-input--is-focused .v-input__slot {
+  border-color: #1e6b97 !important; box-shadow: 0 0 0 3px rgba(30,107,151,.15) !important;
+}
+
+.mtx-row-end { display: flex; align-items: flex-start; gap: 4px; }
+.mtx-run-actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.mtx-drawer-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 30;
+  background: transparent;
+}
+.mtx-drawer-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 34px;
+  border-radius: 2px;
+  background: #8aa2b8;
+  opacity: .85;
+}
+.mtx-drawer-resizer:hover {
+  background: rgba(39, 71, 102, .12);
+}
+.mtx-drawer .v-navigation-drawer__border {
+  width: 6px !important;
+  background: #cdd9e5;
+  cursor: ew-resize;
+  transition: background .15s ease;
+}
+.mtx-drawer .v-navigation-drawer__border::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 2px; height: 28px;
+  transform: translate(-50%, -50%);
+  background: #8aa2b8;
+  border-radius: 2px;
+}
+.mtx-drawer .v-navigation-drawer__border:hover {
+  background: #274766;
+}
 .v-main{
   padding-bottom: 0px !important;
 }
-.pulse {
-  display: block;
-  margin-left: 10px;
-  margin-right: 10px;
-  width: 22px;
-  height: 22px;
+/* --- Server status dot --- */
+.mtx-status-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: #da4040;
-  box-shadow: 0 0 0 rgba(255, 255, 255, 0.4);
-  animation: pulse 2s infinite;
+  margin: 0 6px;
+  flex-shrink: 0;
+  transition: background .3s;
 }
-.pulse:hover {
-  animation: none;
+.mtx-status-dot.connected {
+  background: #22c55e;
+  animation: mtx-pulse-green 2.2s ease infinite;
+}
+.mtx-status-dot.connecting {
+  background: #f59e0b;
+  animation: mtx-pulse-yellow 1s ease infinite;
+}
+.mtx-status-dot.offline {
+  background: #ef4444;
+  animation: mtx-pulse-red 2.2s ease infinite;
+}
+@keyframes mtx-pulse-green {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+@keyframes mtx-pulse-yellow {
+  0%   { box-shadow: 0 0 0 0 rgba(245,158,11,.6); }
+  50%  { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+}
+@keyframes mtx-pulse-red {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
 }
 
-@-webkit-keyframes pulse {
-  0% {
-    -webkit-box-shadow: 0 0 0 0 rgba(252, 251, 248, 0.4);
-  }
-  70% {
-      -webkit-box-shadow: 0 0 0 30px rgba(204,169,44, 0);
-  }
-  100% {
-      -webkit-box-shadow: 0 0 0 0 rgba(204,169,44, 0);
-  }
+/* --- Settings dialog --- */
+.mtx-settings-card { font-family: Inter, system-ui, sans-serif; }
+.mtx-settings-title {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #1f2937;
+  padding: 14px 16px !important;
 }
-@keyframes pulse {
-  0% {
-    -moz-box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
-  }
-  70% {
-      -moz-box-shadow: 0 0 0 30px rgba(204,169,44, 0);
-      box-shadow: 0 0 0 30px rgba(204,169,44, 0);
-  }
-  100% {
-      -moz-box-shadow: 0 0 0 0 rgba(204,169,44, 0);
-      box-shadow: 0 0 0 0 rgba(204,169,44, 0);
-  }
+.mtx-settings-body { padding: 16px 20px !important; }
+.mtx-set-section { margin-bottom: 4px; }
+.mtx-set-head {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #5b6573;
+  margin-bottom: 10px;
+  gap: 4px;
 }
+.mtx-set-status-chip {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.mtx-set-status-chip.connected  { background: #dcfce7; color: #15803d; }
+.mtx-set-status-chip.connecting { background: #fef3c7; color: #b45309; }
+.mtx-set-status-chip.offline    { background: #fee2e2; color: #b91c1c; }
+.mtx-set-url-preview {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 8px;
+}
+.mtx-set-url-preview code {
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.mtx-set-path {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  word-break: break-all;
+}
+.mtx-set-db-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 12.5px;
+}
+.mtx-set-db-key { font-weight: 700; color: #1e3a5f; min-width: 90px; }
+.mtx-set-db-path { color: #64748b; word-break: break-all; font-size: 11.5px; }
+.mtx-set-empty { font-size: 12px; color: #94a3b8; font-style: italic; }
+.mtx-set-config-preview { margin-top: 10px; }
+.mtx-set-config-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+.mtx-set-config-preview code {
+  font-size: 11px;
+  color: #475569;
+  background: #f8fafc;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: block;
+  word-break: break-all;
+}
+
+/* --- Frontend-only / offline banner --- */
+.mtx-offline-banner {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  margin: 6px 18px 10px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #fff8ed, #fef3c7);
+  border: 1px solid #fcd9a0;
+  box-shadow: 0 6px 18px -14px rgba(180, 83, 9, 0.5);
+}
+.mtx-offline-text { line-height: 1.35; }
+.mtx-offline-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #92400e;
+}
+.mtx-offline-sub {
+  font-size: 11.5px;
+  color: #a16207;
+  max-width: 720px;
+}
+
+/* --- pinned drop zone --- */
+.mtx-dropzone-pin {
+  position: fixed;
+  top: 92px;
+  right: 22px;
+  z-index: 7;
+}
+
+/* --- sample source legend (left panel) --- */
+.mtx-source-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 2px 8px;
+}
+.mtx-src-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 9px;
+  letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+}
+.mtx-src-server { background: #e0f2fe; color: #075985; }
+.mtx-src-upload { background: #ede9fe; color: #5b21b6; }
+.mtx-src-demo   { background: #dcfce7; color: #166534; }
+.mtx-src-clear {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.mtx-src-clear:hover { background: #fecaca; }
 </style>

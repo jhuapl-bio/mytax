@@ -254,8 +254,9 @@ export  class Run {
                 // update samplesheet entry in the json path of this.filepath
                 // if searchPatternBC then look through all subdirectories in the run directory
                 let index = this.samplesheet.findIndex((d)=>d.sample == sample)
-                if (index > -1){ 
-                    this.samplesheet[index] = info
+                if (index > -1){
+                    // merge so metadata-only updates (lat/long) don't drop path_1/path_2/kits
+                    this.samplesheet[index] = { ...this.samplesheet[index], ...info }
                 }
                 await this.saveRunInformation()
             } else {

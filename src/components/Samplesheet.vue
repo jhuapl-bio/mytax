@@ -83,10 +83,27 @@
                         </v-tooltip>
                             
                         </template>
+                        <template v-slot:item.origin="{ item }">
+                            <v-tooltip bottom>
+                                <template v-slot:activator="{ on }">
+                                    <span v-on="on" class="mtx-src-tag" :class="'mtx-src-tag--' + (item.origin || 'server')">
+                                        <v-icon x-small class="mr-1">{{ sourceIcon(item.origin) }}</v-icon>{{ sourceLabel(item.origin) }}
+                                    </span>
+                                </template>
+                                {{ sourceTooltip(item.origin) }}
+                            </v-tooltip>
+                        </template>
                         <template v-slot:item.delete="{ item }">
-                        <v-btn icon @click="deleteRow(item.sample)">
-                            <v-icon>mdi-delete</v-icon>
-                        </v-btn>
+                        <v-tooltip bottom>
+                            <template v-slot:activator="{ on }">
+                                <v-btn icon small v-on="on"
+                                    :class="isLocal(item) ? 'mtx-del-local' : 'mtx-del-server'"
+                                    @click="deleteRow(item.sample)">
+                                    <v-icon small>{{ isLocal(item) ? 'mdi-close-circle' : 'mdi-delete' }}</v-icon>
+                                </v-btn>
+                            </template>
+                            {{ isLocal(item) ? 'Remove this uploaded report (local only)' : 'Delete sample from run' }}
+                        </v-tooltip>
                         </template>
                         <template v-slot:item.edit="{ item }">
                         <v-btn icon @click="editItem(item.sample)">
@@ -142,16 +159,35 @@
                 </div>
                 <span>Jobs in Queue: {{ queueLength }}</span>
                 <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
-                <div >
-                <v-file-input
-                    :hint="'These are generated from your own kraken2 runs and not directly imported from mytax2'"
-                    persistent-hint 
-                    v-model="recentDataFileadded"
-                    prepend-icon=""
-                    @change="onFileSelected"
-                    label="Place or Drop Individual Kraken2 Reports here"
+                <div
+                    class="mtx-upbox"
+                    :class="{ 'mtx-upbox--over': uploadDragOver }"
+                    @click="pickUpload"
+                    @drop.prevent="onUploadDrop"
+                    @dragover.prevent="uploadDragOver = true"
+                    @dragenter.prevent="uploadDragOver = true"
+                    @dragleave.prevent="uploadDragOver = false"
                 >
-                </v-file-input>
+                    <div class="mtx-upbox-icon">
+                        <v-icon size="30" :color="uploadDragOver ? '#1e6b97' : '#7d97ad'">mdi-cloud-upload-outline</v-icon>
+                    </div>
+                    <div class="mtx-upbox-text">
+                        <strong>Add a Kraken2 report</strong>
+                        <span><u>Click to browse</u> or drop .report / .txt files here</span>
+                        <small>From your own Kraken2 runs — also available via the drop card pinned top-right</small>
+                    </div>
+                    <div v-if="uploadRecent.length" class="mtx-upbox-recent">
+                        <v-icon x-small color="#15803d" class="mr-1">mdi-check-circle</v-icon>
+                        Added {{ uploadRecent.length }}: {{ uploadRecent.slice(0, 3).join(', ') }}{{ uploadRecent.length > 3 ? '…' : '' }}
+                    </div>
+                    <input
+                        ref="uploadInput"
+                        type="file"
+                        accept=".report,.txt,.tsv,.kreport,text/plain"
+                        multiple
+                        class="mtx-upbox-input"
+                        @change="onUploadSelect"
+                    />
                 </div>
             </div>
         <v-toolbar extended>
@@ -221,16 +257,17 @@
             
             <v-dialog
                 v-model="dialog"
-                max-width="500px"
+                max-width="720px"
+                scrollable
                 >
                 <template v-slot:activator="{ on, attrs }">
-            
+
                     <v-btn fab
                         color="primary"
                         dark  x-small
                         class="mx-2" v-on="on"
                         v-bind="attrs"
-                        
+
                         >
                         <v-tooltip bottom >
                             <template v-slot:activator="{ on }">
@@ -239,154 +276,197 @@
                             Add Entry To Samplesheet
                         </v-tooltip>
                     </v-btn>
-                        
+
                 </template>
-                <v-card>
-                    <v-card-title>
-                    <span class="text-h5">{{ formTitle }}</span>
+                <v-card class="mtx-add-card">
+                    <v-card-title class="mtx-add-title">
+                        <v-icon left color="primary">mdi-flask-outline</v-icon>
+                        <span class="text-h6">{{ formTitle }}</span>
+                        <v-spacer></v-spacer>
+                        <v-btn icon @click="closeItem"><v-icon>mdi-close</v-icon></v-btn>
                     </v-card-title>
+                    <v-divider></v-divider>
 
-                    <v-card-text>
-                    <v-container>
-                        <v-row>
-                        <v-col
-                            cols="12"
-                            sm="6"
-                            md="4"
-                        >
-                            <v-switch
-                                v-model="toggleDemuxRun"
-                                :label="toggleDemuxRun ? 'Search for Barcodes' : 'Individual Sample Path'"
-                            >
-                            </v-switch>
-                            <v-textarea
-                            v-model="editedItem.sample"
-                            :label=" toggleDemuxRun ? 'Run Name' : 'Sample Name'"
-                            :error-messages="sampleErrors"
+                    <v-card-text class="mtx-add-body">
+                        <!-- ===== 1. Input mode ===== -->
+                        <div class="mtx-sec-label">1 · Input mode</div>
+                        <v-btn-toggle v-model="toggleDemuxRun" mandatory dense class="mb-3 mtx-mode-toggle">
+                            <v-btn :value="false" small>
+                                <v-icon left small>mdi-file-outline</v-icon> Single sample
+                            </v-btn>
+                            <v-btn :value="true" small>
+                                <v-icon left small>mdi-barcode</v-icon> Barcoded run
+                            </v-btn>
+                        </v-btn-toggle>
+                        <div class="mtx-hint mb-3">
+                            {{ toggleDemuxRun
+                                ? 'Point at a run directory; each matching sub-directory becomes its own sample.'
+                                : 'Add one sample from a single file or directory of reads.' }}
+                        </div>
 
-                            >
-                            </v-textarea>
-                        </v-col>
-                       
-                        <v-col
-                            cols="12" v-if="editedItem.demux"
-                            sm="6"
-                            md="4"
-                        >
-                            <v-textarea
-                            v-model="editedItem.kits"
-                            label="Barcode Kit Name"
-                            ></v-textarea>
-                        </v-col>
-                        <v-col
-                            cols="12"
-                            sm="6"
-                            md="4"
-                        >
-                            <v-combobox  
-                                v-model="editedItem.path_1"
-                                :items="pathOptions1"
-                                :hint="editedItem.path_1 ? `Sequencing file/directory: ${editedItem.path_1}` : '' "
-                                persistent-hint
-                                :error-messages="pathErrors1"
-                                label="Sequencing File(s)"
-                                @keyup="handleInputPath1"
-                            ></v-combobox>
-                        </v-col>
-                        <v-col
-                            cols="12"
-                            sm="6"
-                            md="4"
-                        >
-                            <v-combobox  
-                                v-model="editedItem.path_2"
-                                :items="pathOptions2"
-                                :hint="editedItem.path_2 ? `Paired End Path: ${editedItem.path_2}` : '' "
-                                persistent-hint
-                                label="Paired Reads"
-                                @keyup="handleInputPath2"
-                            ></v-combobox>
-                        </v-col>
-                        <v-col sm="12">
-                            <v-switch
-                                v-model="toggleDatabases"
-                                :label="toggleDatabases ? 'Use Standard Databases' : 'Use Custom Database. Provide PATH'"
-                            >
-                            </v-switch>
-                            <!-- Set input field for searchPatternBC -->
-                            <v-text-field
-                                v-if="toggleDatabases"
-                                v-model="searchPatternBC"
-                                :label="`Search Pattern for Barcode Files`"
-                            ></v-text-field>
-                        </v-col>
-                        <v-col
-                            cols="12"
-                            sm="6"
-                            md="4"
-                        >
-                            
-                            <!-- add a toggle that switches betwee a textarea OR a dropdown -->
-                            <v-select v-if="toggleDatabases" chips
-                                v-model="editedItem.database" class="truncate-text"
-                                :items="databases" :error-messages="dbErrors"
-                                label="Database" item-text="key" item-value="fullpath" 
-                                    persistent-hint  
-                            >
-                                <template v-slot:selection="{ item }">
-                                    <v-tooltip bottom>
-                                    <template v-slot:activator="{ on, attrs }">
-                                        <span v-bind="attrs" v-on="on" class="tooltip-content">
-                                        <span v-if="item.downloading">
-                                            <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
-                                            {{ item.key }}
-                                        </span>
-                                        <span v-else-if="item.size == 0">
-                                            <v-chip>
-                                            <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
-                                            {{ item.key }}; Size is empty
-                                            </v-chip>
-                                        </span>
-                                        <span v-else>
-                                            <v-chip>
-                                            <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
-                                            {{ item.key }}
-                                            </v-chip>
-                                        </span>
-                                        </span>
-                                    </template>
-                                    <span>{{ item.key }}</span>
-                                    </v-tooltip>
-                                </template>
-                            </v-select>
-                            <v-combobox   v-else
-                                v-model="editedItem.database"
-                                :items="pathOptionsDb"
-                                :hint="editedItem.database ? `Paired End Path: ${editedItem.database}` : '' "
-                                persistent-hint
-                                label="K2 Db path"
-                                :error-messages="dbErrors"
-                                @keyup="handleInputPathDb"
-                            ></v-combobox>
-                           
-                        </v-col>
+                        <!-- ===== 2. Name + inputs ===== -->
+                        <div class="mtx-sec-label">2 · {{ toggleDemuxRun ? 'Run' : 'Sample' }} details</div>
+                        <v-row dense>
+                            <v-col cols="12" :md="toggleDemuxRun ? 6 : 12">
+                                <v-text-field
+                                    v-model="editedItem.sample"
+                                    :label="toggleDemuxRun ? 'Run name' : 'Sample name'"
+                                    :error-messages="sampleErrors"
+                                    prepend-inner-icon="mdi-rename-box"
+                                    dense outlined hide-details="auto"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6" v-if="toggleDemuxRun">
+                                <v-text-field
+                                    v-model="editedItem.kits"
+                                    label="Barcode kit name (optional)"
+                                    prepend-inner-icon="mdi-barcode-scan"
+                                    dense outlined hide-details="auto"
+                                ></v-text-field>
+                            </v-col>
+
+                            <v-col cols="12" :md="toggleDemuxRun ? 12 : 6">
+                                <v-combobox
+                                    v-model="editedItem.path_1"
+                                    :items="pathOptions1"
+                                    :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path; matches are suggested as you go'"
+                                    persistent-hint
+                                    :error-messages="pathErrors1"
+                                    :label="toggleDemuxRun ? 'Run directory' : 'Sequencing file or directory'"
+                                    prepend-inner-icon="mdi-folder-search-outline"
+                                    dense outlined
+                                    @keyup="handleInputPath1"
+                                ></v-combobox>
+                            </v-col>
+                            <v-col cols="12" md="6" v-if="!toggleDemuxRun">
+                                <v-combobox
+                                    v-model="editedItem.path_2"
+                                    :items="pathOptions2"
+                                    :hint="editedItem.path_2 ? `Paired reads: ${editedItem.path_2}` : 'Optional — paired-end R2'"
+                                    persistent-hint
+                                    label="Paired reads (optional)"
+                                    prepend-inner-icon="mdi-file-multiple-outline"
+                                    dense outlined
+                                    @keyup="handleInputPath2"
+                                ></v-combobox>
+                            </v-col>
+
+                            <!-- barcode search pattern (only meaningful in barcoded-run mode) -->
+                            <v-col cols="12" md="6" v-if="toggleDemuxRun">
+                                <v-text-field
+                                    v-model="searchPatternBC"
+                                    label="Sub-directory match pattern"
+                                    hint="Glob for barcode folders, e.g. barcode*"
+                                    persistent-hint
+                                    prepend-inner-icon="mdi-regex"
+                                    dense outlined
+                                ></v-text-field>
+                            </v-col>
                         </v-row>
-                    </v-container>
+
+                        <!-- ===== Watch toggle ===== -->
+                        <v-sheet rounded outlined class="mtx-watch pa-3 my-3">
+                            <div class="d-flex align-center">
+                                <v-icon :color="editedItem.watch ? 'green darken-1' : 'grey'" class="mr-3">
+                                    {{ editedItem.watch ? 'mdi-radar' : 'mdi-eye-off-outline' }}
+                                </v-icon>
+                                <div class="flex-grow-1">
+                                    <div class="font-weight-medium">Watch for new reads (real-time)</div>
+                                    <div class="mtx-hint">
+                                        Keep watching the input directory and classify new FASTQ files as the
+                                        sequencer writes them. Turn off for a one-time run of existing files.
+                                    </div>
+                                </div>
+                                <v-switch v-model="editedItem.watch" inset hide-details class="ma-0 pa-0"></v-switch>
+                            </div>
+                        </v-sheet>
+
+                        <!-- ===== 3. Database ===== -->
+                        <div class="mtx-sec-label">3 · Reference database</div>
+                        <v-switch
+                            v-model="toggleDatabases"
+                            dense hide-details class="mt-0 mb-2"
+                            :label="toggleDatabases ? 'Use a standard (downloaded) database' : 'Use a custom database path'"
+                        ></v-switch>
+                        <v-select v-if="toggleDatabases" chips
+                            v-model="editedItem.database" class="truncate-text"
+                            :items="databases" :error-messages="dbErrors"
+                            label="Database" item-text="key" item-value="fullpath"
+                            dense outlined persistent-hint
+                        >
+                            <template v-slot:selection="{ item }">
+                                <v-tooltip bottom>
+                                <template v-slot:activator="{ on, attrs }">
+                                    <span v-bind="attrs" v-on="on" class="tooltip-content">
+                                    <span v-if="item.downloading">
+                                        <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
+                                        {{ item.key }}
+                                    </span>
+                                    <span v-else-if="item.size == 0">
+                                        <v-chip>
+                                        <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
+                                        {{ item.key }}; Size is empty
+                                        </v-chip>
+                                    </span>
+                                    <span v-else>
+                                        <v-chip>
+                                        <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
+                                        {{ item.key }}
+                                        </v-chip>
+                                    </span>
+                                    </span>
+                                </template>
+                                <span>{{ item.key }}</span>
+                                </v-tooltip>
+                            </template>
+                        </v-select>
+                        <v-combobox v-else
+                            v-model="editedItem.database"
+                            :items="pathOptionsDb"
+                            :hint="editedItem.database ? `Database path: ${editedItem.database}` : 'Path to a Kraken2 database directory'"
+                            persistent-hint
+                            label="Kraken2 database path"
+                            prepend-inner-icon="mdi-database-search-outline"
+                            :error-messages="dbErrors"
+                            dense outlined
+                            @keyup="handleInputPathDb"
+                        ></v-combobox>
+
+                        <!-- ===== 4. Location ===== -->
+                        <div class="mtx-sec-label mt-4">4 · Location <span class="mtx-opt">optional</span></div>
+                        <div class="mtx-hint mb-2">Adds this sample to the Map tab.</div>
+                        <v-row dense>
+                            <v-col cols="6">
+                                <v-text-field
+                                    v-model.number="editedItem.lat"
+                                    label="Latitude" type="number" step="any" dense outlined hide-details
+                                    hint="north +, e.g. 39.16"
+                                    prepend-inner-icon="mdi-latitude"
+                                ></v-text-field>
+                            </v-col>
+                            <v-col cols="6">
+                                <v-text-field
+                                    v-model.number="editedItem.lon"
+                                    label="Longitude" type="number" step="any" dense outlined hide-details
+                                    hint="east +, e.g. -76.62"
+                                    prepend-inner-icon="mdi-longitude"
+                                ></v-text-field>
+                            </v-col>
+                        </v-row>
                     </v-card-text>
 
-                    <v-card-actions>
+                    <v-divider></v-divider>
+                    <v-card-actions class="px-4 py-3">
+                        <v-icon small color="grey" class="mr-1">mdi-information-outline</v-icon>
+                        <span class="mtx-hint">{{ isFormValid ? 'Ready to add.' : 'Fill in name, input path and database.' }}</span>
                         <v-spacer></v-spacer>
-                        <v-btn
-                            color="blue darken-1"
-                            text  x-small
-                            @click="closeItem"
-                        >
-                            Cancel
+                        <v-btn text @click="closeItem">Cancel</v-btn>
+                        <v-btn color="primary" depressed :disabled="!isFormValid" @click="saveItem">
+                            <v-icon left small>mdi-plus</v-icon>{{ formTitle === 'Edit Sample' ? 'Save' : 'Add' }}
                         </v-btn>
-                        <v-btn color="blue darken-1" :disabled="!isFormValid" text @click="saveItem">Add</v-btn>
                     </v-card-actions>
                 </v-card>
-                
+
             </v-dialog>
             
             <v-dialog
@@ -1012,11 +1092,14 @@
             if (this.offlineMode) {
                 return [
                     { text: 'Sample Name', value: 'sample' },
+                    { text: 'Source', value: 'origin', sortable: true },
                     { text: 'Actions', value: 'action', sortable: false }, // purely local hide/show
+                    { text: 'Remove', value: 'delete', sortable: false },
                 ];
             }
             return [
                 { text: 'Sample Name', value: 'sample' },
+                { text: 'Source', value: 'origin', sortable: true },
                 { text: 'Status', value: 'status' },
                 { text: 'Actions', value: 'action', sortable: false },
                 { text: 'Jobs', value: 'jobs', sortable: false },
@@ -1164,6 +1247,8 @@
           selectedQueueJob: null,
           selectedQueueSample: null,
           recentDataFileadded: null,
+          uploadDragOver: false,
+          uploadRecent: [],
           addRunDialog: false,
           config: {},
           paused: false,
@@ -1175,6 +1260,9 @@
             database: null,
             kits: null,
             pattern: "",
+            watch: true,
+            lat: null,
+            lon: null,
           },
           defaultItem: {
             sample: '',
@@ -1182,7 +1270,10 @@
             path_2: null,
             database: null,
             kits: null,
-            pattern: ""
+            pattern: "",
+            watch: true,
+            lat: null,
+            lon: null,
           },
           selectedSample: null,
           selectedSampleObj: {},
@@ -1352,14 +1443,35 @@
         onFileSelected(file) {
             const $this  = this
             if (!file) return;
-            let reader = new FileReader();  
+            let reader = new FileReader();
             reader.addEventListener("load", parseFile, false);
             reader.readAsText(file);
             let samplename  = path.parse(file.name).name
-            
+
             async function parseFile(){
                 $this.$emit("importData", reader.result, samplename)
             }
+        },
+        pickUpload() {
+            this.$refs.uploadInput && this.$refs.uploadInput.click()
+        },
+        onUploadSelect(e) {
+            this.handleUploadFiles(Array.from(e.target.files || []))
+            e.target.value = '' // allow re-selecting the same file
+        },
+        onUploadDrop(e) {
+            this.uploadDragOver = false
+            const files = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : []
+            this.handleUploadFiles(files)
+        },
+        handleUploadFiles(files) {
+            if (!files || !files.length) return
+            const added = []
+            files.forEach((file) => {
+                added.push(path.parse(file.name).name)
+                this.onFileSelected(file)
+            })
+            this.uploadRecent = added
         },
         addData(val){
             const $this  = this
@@ -1466,14 +1578,34 @@
         close () {
             console.log('Dialog closed')
         },
+        isLocal(item){
+            const o = item && item.origin ? item.origin : 'server'
+            return o === 'upload' || o === 'demo'
+        },
+        sourceLabel(origin){
+            const o = origin || 'server'
+            if (o === 'upload') return 'Uploaded'
+            if (o === 'demo') return 'Demo'
+            return 'Listened'
+        },
+        sourceIcon(origin){
+            const o = origin || 'server'
+            if (o === 'upload') return 'mdi-tray-arrow-up'
+            if (o === 'demo') return 'mdi-flask-outline'
+            return 'mdi-server-network'
+        },
+        sourceTooltip(origin){
+            const o = origin || 'server'
+            if (o === 'upload') return 'Kraken2 report you uploaded — held locally in the browser'
+            if (o === 'demo') return 'Bundled demo report — held locally in the browser'
+            return 'Live sample watched from a local server directory'
+        },
         deleteRow(sample){
             console.log(sample, "deleted!")
-            if (this.offlineMode){
-                // delete ht esample from samplesheet AND delet it from selectedsamplesAll
-                // let index = this.samplesheet.findIndex(x => x.sample === sample)
-                // if (index > -1){
-                //     this.samplesheet.splice(index, 1)
-                // }
+            // Uploaded/demo reports live only in the browser — always remove them
+            // locally and never round-trip to the backend, even when online.
+            const item = this.selectedsamplesAll.find(x => x.sample === sample)
+            if (this.offlineMode || this.isLocal(item)){
                 let index2 = this.selectedsamplesAll.findIndex(x => x.sample === sample)
                 if (index2 > -1){
                     this.selectedsamplesAll.splice(index2, 1)
@@ -1503,7 +1635,7 @@
             // get the index in selectedsamplesAll where sample == item
             let editedIndex = this.samplesheet.findIndex(x => x.sample === item)
             if (editedIndex > -1){
-                this.editedItem = Object.assign({}, this.samplesheet[editedIndex])
+                this.editedItem = Object.assign({ lat: null, lon: null }, this.samplesheet[editedIndex])
             }
             this.toggleDemuxRun = false
             this.editedIndex = editedIndex
@@ -1531,6 +1663,8 @@
             } else {
                 this.editedItem.searchPatternBC = null
             }
+            // watch on ⇒ keep watching the directory for new reads in real time
+            this.$set(this.editedItem, 'watch', this.editedItem.watch !== false)
             // this.editedItem.searchPatternBC = this.searchPatternBC
             // remove file:// from the front of the path_1 or path_2
             if (this.editedItem.path_1 && this.editedItem.path_1.startsWith('file://')){
@@ -1547,6 +1681,16 @@
                 this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
             }
             this.$emit("updateEntry", this.editedItem)
+            // propagate lat/long to sample metadata so it shows on Map / Metadata tabs
+            if (this.editedItem.sample &&
+                (this.editedItem.lat !== undefined && this.editedItem.lat !== null && this.editedItem.lat !== '' ||
+                 this.editedItem.lon !== undefined && this.editedItem.lon !== null && this.editedItem.lon !== '')) {
+                this.$emit("updateMeta", {
+                    sample: this.editedItem.sample,
+                    lat: this.editedItem.lat === '' || this.editedItem.lat === undefined ? null : parseFloat(this.editedItem.lat),
+                    lon: this.editedItem.lon === '' || this.editedItem.lon === undefined ? null : parseFloat(this.editedItem.lon)
+                })
+            }
             this.dialog = null
             this.closeItem()
         },
@@ -1560,6 +1704,103 @@
 code {
     white-space: pre-wrap;
 }
+/* ===== Kraken2 report upload drop box ===== */
+.mtx-upbox {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin: 10px 0 4px;
+    padding: 16px 18px;
+    background: linear-gradient(180deg, #f9fcff 0%, #f1f7fc 100%);
+    border: 2px dashed #bcd0e2;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.mtx-upbox:hover {
+    border-color: #1e6b97;
+    background: #f4faff;
+}
+.mtx-upbox--over {
+    border-color: #1e6b97;
+    background: #eaf4fc;
+    box-shadow: 0 0 0 3px rgba(30, 107, 151, 0.18);
+}
+.mtx-upbox-icon {
+    flex: none;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    background: #ffffff;
+    border: 1px solid #dce8f2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(20, 56, 84, .08);
+}
+.mtx-upbox-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.mtx-upbox-text strong { font-size: 14px; color: #274766; }
+.mtx-upbox-text span { font-size: 12.5px; color: #5b6573; }
+.mtx-upbox-text span u { color: #1e6b97; }
+.mtx-upbox-text small { font-size: 11px; color: #93a6b6; line-height: 1.3; }
+.mtx-upbox-recent {
+    flex-basis: 100%;
+    font-size: 11px;
+    color: #15803d;
+    background: #ecfdf3;
+    border: 1px solid #d1fadf;
+    border-radius: 8px;
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+}
+.mtx-upbox-input { display: none; }
+/* ===== sample source tags ===== */
+.mtx-src-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 1px 8px;
+    letter-spacing: .02em;
+    white-space: nowrap;
+}
+.mtx-src-tag--server { background: #e0f2fe; color: #075985; }
+.mtx-src-tag--upload { background: #ede9fe; color: #5b21b6; }
+.mtx-src-tag--demo   { background: #dcfce7; color: #166534; }
+
+/* ===== delete affordances ===== */
+.mtx-del-server:hover { color: #b91c1c !important; }
+.mtx-del-local {
+    color: #b91c1c !important;
+    transition: transform .12s ease, background .12s ease;
+}
+.mtx-del-local:hover {
+    transform: scale(1.12);
+    background: #fee2e2 !important;
+    border-radius: 50%;
+}
+/* ===== redesigned add-sample dialog ===== */
+.mtx-add-card { border-radius: 14px; }
+.mtx-add-title { display: flex; align-items: center; padding: 14px 16px; }
+.mtx-add-body { padding: 18px 20px 8px; }
+.mtx-sec-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    font-weight: 700; color: #5b6573; margin: 10px 0 8px;
+}
+.mtx-opt { font-weight: 500; text-transform: none; letter-spacing: 0; color: #9aa7b4; font-style: italic; margin-left: 4px; }
+.mtx-hint { font-size: 12px; color: #8a97a4; line-height: 1.4; }
+.mtx-mode-toggle { width: 100%; }
+.mtx-mode-toggle .v-btn { flex: 1; text-transform: none; }
+.mtx-watch { background: #f7fbf9 !important; border-color: #d7e8e1 !important; }
 .truncate-text .tooltip-content {
   display: inline-block;
     width: 950px; /* Adjust the width as necessary */

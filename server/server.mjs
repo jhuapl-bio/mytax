@@ -58,18 +58,10 @@ export  class Orchestrator {
                 fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20210629")
             },
             {
-                url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20240605.tar.gz",
-                decompress: true,
-                final: 'k2_pluspfp_08gb_20240605', 
-                nested: true,
-                key: 'pluspf8',
-                fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20240605")
-            },
-            {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20250714.tar.gz",
                 decompress: true,
                 final: 'k2_pluspfp_08gb_20250714',
-                nested: true,
+                nested: false,
                 key: 'pluspf8',
                 fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20250714")
             },
