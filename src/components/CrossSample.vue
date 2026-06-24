@@ -282,10 +282,13 @@ export default {
       Object.values(this.sampleData).forEach((rows) => {
         if (rows) rows.forEach((r) => r.rank_code && r.taxid !== -1 && present.add(r.rank_code))
       })
+      // Always keep Species in the list so the rank selector never loses it
+      present.add('S')
       const found = RANKS.filter((r) => present.has(r))
       if (found.length) this.ranks = found
+      // Always default to Species
       if (this.ranks.indexOf(this.rank) === -1) {
-        this.rank = this.ranks.indexOf('S') > -1 ? 'S' : this.ranks[this.ranks.length - 1]
+        this.rank = 'S'
       }
     },
     setSort(f) {

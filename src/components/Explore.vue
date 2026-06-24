@@ -337,7 +337,7 @@ export default {
     },
 
     // --- panels ---
-    mkPanel(sample, type, rank) { return { id: ++this.pidSeq, sample, type, rank } },
+    mkPanel(sample, type, rank) { return { id: ++this.pidSeq, sample, type, rank, page: 0 } },
     addPanel(sample) {
       this.addMenuOpen = false
       if (!sample) return
@@ -394,6 +394,25 @@ export default {
         }))
     },
 
+    // all taxa at a rank (no topN slice) — used for paginated panels
+    topTaxaAll(sample, rank) {
+      const rows = (this.sampleData && this.sampleData[sample]) || []
+      return rows
+        .filter(r => r.rank_code === rank && r.taxid !== -1)
+        .filter(r => this.organismMatches(r.target))
+        .filter(r => !this.linkPanels || !this.selectedOrganism || r.target === this.selectedOrganism)
+        .sort((a, b) => b.num_fragments_clade - a.num_fragments_clade)
+        .map(r => ({
+          name: r.target,
+          common: this.commonGroup(sample, r),
+          group: this.commonGroup(sample, r) || r.target,
+          reads: r.num_fragments_clade,
+          pct: r.value,
+          taxid: r.taxid,
+          rank: r.rank_code
+        }))
+    },
+
     // --- redraw orchestration ---
     redraw() {
       clearTimeout(this.redrawTimer)
@@ -404,7 +423,7 @@ export default {
         })
       }, 60)
     },
-    drawPanelSoon(p) { this.$nextTick(() => this.drawPanel(p)) },
+    drawPanelSoon(p) { this.$set(p, 'page', 0); this.$nextTick(() => this.drawPanel(p)) },
 
     // draw one per-sample card according to its selected plot type
     drawSampleCard(sample) {
@@ -695,16 +714,50 @@ export default {
         this.drawSunburstInto(el, sample)
         return
       }
-      const data = this.topTaxa(sample, p.rank, this.topN)
+      if (p.type === 'table') {
+        const data = this.topTaxa(sample, p.rank, this.topN)
+        d3.select(el).selectAll('*').remove()
+        if (!data.length) {
+          d3.select(el).append('div').attr('class', 'mtx-nodata')
+            .text('No taxa at ' + this.rankLabel(p.rank) + ' rank for ' + sample)
+          return
+        }
+        this.drawTable(el, data)
+        return
+      }
+      // lollipop and bar: paginated
+      const allData = this.topTaxaAll(sample, p.rank)
       d3.select(el).selectAll('*').remove()
-      if (!data.length) {
+      if (!allData.length) {
         d3.select(el).append('div').attr('class', 'mtx-nodata')
           .text('No taxa at ' + this.rankLabel(p.rank) + ' rank for ' + sample)
         return
       }
+      const totalPages = Math.max(1, Math.ceil(allData.length / this.topN))
+      const page = Math.min(p.page || 0, totalPages - 1)
+      if (p.page !== page) this.$set(p, 'page', page)
+      const data = allData.slice(page * this.topN, (page + 1) * this.topN)
       if (p.type === 'lollipop') this.drawLollipop(el, data)
-      else if (p.type === 'bar') this.drawBar(el, data)
-      else this.drawTable(el, data)
+      else this.drawBar(el, data)
+      // Append pagination nav
+      if (totalPages > 1) {
+        const nav = document.createElement('div')
+        nav.className = 'mtx-pg-nav'
+        const prev = document.createElement('button')
+        prev.textContent = '‹'
+        prev.disabled = page === 0
+        prev.addEventListener('click', () => { this.$set(p, 'page', page - 1); this.drawPanel(p) })
+        const info = document.createElement('span')
+        info.textContent = `${page + 1} / ${totalPages}`
+        const next = document.createElement('button')
+        next.textContent = '›'
+        next.disabled = page >= totalPages - 1
+        next.addEventListener('click', () => { this.$set(p, 'page', page + 1); this.drawPanel(p) })
+        nav.appendChild(prev)
+        nav.appendChild(info)
+        nav.appendChild(next)
+        el.appendChild(nav)
+      }
     },
     drawLollipop(el, data) {
       const w = el.clientWidth || 420, rowH = 22, m = { l: 150, r: 56, t: 8, b: 8 }
@@ -960,6 +1013,13 @@ export default {
 .mtx-explore >>> .mtx-grp { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--c) 18%, #fff); color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 35%, #fff); text-transform: capitalize; }
 .mtx-explore >>> .mtx-mini { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--c-soft); margin-right: 6px; vertical-align: middle; overflow: hidden; }
 .mtx-explore >>> .mtx-mini i { display: block; height: 100%; background: var(--c-navy); }
+
+/* pagination */
+.mtx-explore >>> .mtx-pg-nav { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 0 2px; }
+.mtx-explore >>> .mtx-pg-nav button { background: none; border: 1px solid #ccd6e0; border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 14px; color: #33485c; line-height: 1.4; }
+.mtx-explore >>> .mtx-pg-nav button:disabled { opacity: 0.35; cursor: default; }
+.mtx-explore >>> .mtx-pg-nav button:not(:disabled):hover { background: #eef3f7; }
+.mtx-explore >>> .mtx-pg-nav span { font-size: 11px; color: #6b8299; min-width: 40px; text-align: center; }
 
 /* blank */
 .mtx-blank { text-align: center; color: var(--c-sub); padding: 80px 20px; }

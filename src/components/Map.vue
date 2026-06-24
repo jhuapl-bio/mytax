@@ -50,13 +50,26 @@
           <div class="mtx-dock-body">
             <div class="mtx-dock-plot-ttl">{{ dockTitle }}</div>
             <div v-show="dockTab === 'bar'" ref="dockBar" class="mtx-dock-plot"></div>
+            <div v-show="dockTab === 'bar'" class="mtx-pg-nav">
+              <button :disabled="dockPage.bar === 0" @click="dockPage = { ...dockPage, bar: dockPage.bar - 1 }; $nextTick(renderDock)">‹</button>
+              <span>{{ dockPage.bar + 1 }} / {{ barTotalPages }}</span>
+              <button :disabled="dockPage.bar >= barTotalPages - 1" @click="dockPage = { ...dockPage, bar: dockPage.bar + 1 }; $nextTick(renderDock)">›</button>
+            </div>
             <div v-show="dockTab === 'heat'" ref="dockHeat" class="mtx-dock-plot"></div>
+            <div v-show="dockTab === 'heat'" class="mtx-pg-nav">
+              <button :disabled="dockPage.heat === 0" @click="dockPage = { ...dockPage, heat: dockPage.heat - 1 }; $nextTick(renderDock)">‹</button>
+              <span>{{ dockPage.heat + 1 }} / {{ heatTotalPages }}</span>
+              <button :disabled="dockPage.heat >= heatTotalPages - 1" @click="dockPage = { ...dockPage, heat: dockPage.heat + 1 }; $nextTick(renderDock)">›</button>
+            </div>
             <div v-show="dockTab === 'donut'" ref="dockDonut" class="mtx-dock-plot mtx-dock-plot-donut"></div>
           </div>
 
-          <div class="mtx-dock-rank" v-if="dockTab !== 'donut'">
+          <div class="mtx-dock-rank">
             <label>Rank</label>
-            <select v-model="dockRank">
+            <select v-if="dockTab !== 'donut'" v-model="dockRank">
+              <option v-for="r in availableRanks" :key="r" :value="r">{{ rankLabel(r) }}</option>
+            </select>
+            <select v-else v-model="donutRank">
               <option v-for="r in availableRanks" :key="r" :value="r">{{ rankLabel(r) }}</option>
             </select>
           </div>
@@ -103,6 +116,9 @@ export default {
       selectedSample: null,
       dockTab: 'bar',
       dockRank: 'S',
+      donutRank: 'G',
+      dockPageSize: 10,
+      dockPage: { bar: 0, heat: 0 },
       dockTabs: [
         { id: 'bar', label: 'Top hits' },
         { id: 'heat', label: 'Heatmap' },
@@ -163,14 +179,26 @@ export default {
     availableRanks() {
       if (!this.active) return ['S']
       const present = new Set(this.active.rows.filter(r => r.taxid !== -1).map(r => r.rank_code))
+      // Always keep Species in the list
+      present.add('S')
       const found = RANKS.filter(r => present.has(r))
       return found.length ? found : ['S']
+    },
+    barTotalPages() {
+      if (!this.active) return 1
+      const n = this.active.rows.filter(r => r.rank_code === this.dockRank && r.taxid !== -1 && r.num_fragments_clade > 0).length
+      return Math.max(1, Math.ceil(n / this.dockPageSize))
+    },
+    heatTotalPages() {
+      if (!this.active) return 1
+      const n = this.active.rows.filter(r => r.rank_code === this.dockRank && r.taxid !== -1 && r.num_fragments_clade > 0).length
+      return Math.max(1, Math.ceil(n / this.dockPageSize))
     },
     dockTitle() {
       const rl = this.rankLabel(this.dockRank)
       if (this.dockTab === 'bar') return `Top ${rl} by reads`
       if (this.dockTab === 'heat') return `${rl} abundance heatmap`
-      return 'Domain composition'
+      return `${this.rankLabel(this.donutRank)} composition`
     }
   },
   watch: {
@@ -181,14 +209,20 @@ export default {
       }
     },
     selectedSample() {
-      // keep the rank selector valid for the newly selected sample
-      if (this.availableRanks.indexOf(this.dockRank) === -1) {
-        this.dockRank = this.availableRanks.indexOf('S') > -1 ? 'S' : this.availableRanks[this.availableRanks.length - 1]
+      // Always default to Species for bar/heat tabs; keep donutRank at Genus unless unavailable
+      this.dockRank = 'S'
+      if (this.availableRanks.indexOf(this.donutRank) === -1) {
+        this.donutRank = this.availableRanks.indexOf('G') > -1 ? 'G' : this.availableRanks[this.availableRanks.length - 1]
       }
+      this.dockPage = { bar: 0, heat: 0 }
       this.$nextTick(this.renderDock)
     },
     dockTab() { this.$nextTick(this.renderDock) },
-    dockRank() { this.$nextTick(this.renderDock) }
+    dockRank() {
+      this.dockPage = { bar: 0, heat: 0 }
+      this.$nextTick(this.renderDock)
+    },
+    donutRank() { this.$nextTick(this.renderDock) }
   },
   mounted() {
     this.$nextTick(() => {
@@ -283,12 +317,15 @@ export default {
     rankLabel(code) {
       return ({ D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }[code]) || code
     },
-    topRows(n) {
+    topRows(n, page = 0) {
       if (!this.active) return []
-      return this.active.rows
+      const sorted = this.active.rows
         .filter(r => r.rank_code === this.dockRank && r.taxid !== -1 && r.num_fragments_clade > 0)
         .sort((a, b) => b.num_fragments_clade - a.num_fragments_clade)
-        .slice(0, n)
+      if (page !== undefined && n !== undefined) {
+        return sorted.slice(page * n, (page + 1) * n)
+      }
+      return sorted.slice(0, n)
     },
     renderDock() {
       if (!this.active) return
@@ -300,7 +337,7 @@ export default {
       const host = this.$refs.dockBar
       if (!host) return
       host.innerHTML = ''
-      const data = this.topRows(10)
+      const data = this.topRows(this.dockPageSize, this.dockPage.bar)
       if (!data.length) { host.innerHTML = '<div class="mtx-dock-empty">No taxa at this rank.</div>'; return }
       const W = host.clientWidth || 300
       const rowH = 22, m = { t: 6, r: 46, b: 6, l: 4 }
@@ -326,7 +363,7 @@ export default {
       const host = this.$refs.dockHeat
       if (!host) return
       host.innerHTML = ''
-      const data = this.topRows(15)
+      const data = this.topRows(this.dockPageSize, this.dockPage.heat)
       if (!data.length) { host.innerHTML = '<div class="mtx-dock-empty">No taxa at this rank.</div>'; return }
       const W = host.clientWidth || 300
       const cellH = 20, m = { t: 4, r: 8, b: 4, l: 4 }
@@ -353,8 +390,18 @@ export default {
       const host = this.$refs.dockDonut
       if (!host) return
       host.innerHTML = ''
-      const groups = (this.active.groups || []).slice(0, 8)
-      if (!groups.length) { host.innerHTML = '<div class="mtx-dock-empty">No composition data.</div>'; return }
+      // Compute composition at the selected donutRank (default Genus)
+      const rows = this.active.rows.filter(r => r.rank_code === this.donutRank && r.taxid !== -1)
+      const totals = {}
+      rows.forEach(r => {
+        totals[r.target] = (totals[r.target] || 0) + r.num_fragments_clade
+      })
+      const gtot = d3.sum(Object.values(totals)) || 1
+      const groups = Object.entries(totals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([name, v]) => ({ name, pct: (v / gtot) * 100, color: this.groupColor(name) }))
+      if (!groups.length) { host.innerHTML = '<div class="mtx-dock-empty">No composition data at this rank.</div>'; return }
       const W = host.clientWidth || 300
       const size = Math.min(W, 200), r = size / 2, ir = r * 0.58
       const H = size + 8
@@ -437,6 +484,11 @@ export default {
 .mtx-dock-tab:hover { color: #1e6b97; }
 .mtx-dock-tab.active { color: #0e3f6a; border-bottom-color: #1e6b97; }
 .mtx-dock-body { padding: 8px 12px; border-top: 1px solid #eef3f7; margin-top: -1px; }
+.mtx-pg-nav { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 4px 0 2px; }
+.mtx-pg-nav button { background: none; border: 1px solid #ccd6e0; border-radius: 4px; padding: 1px 7px; cursor: pointer; font-size: 14px; color: #33485c; line-height: 1.4; }
+.mtx-pg-nav button:disabled { opacity: 0.35; cursor: default; }
+.mtx-pg-nav button:not(:disabled):hover { background: #eef3f7; }
+.mtx-pg-nav span { font-size: 11px; color: #6b8299; min-width: 40px; text-align: center; }
 .mtx-dock-plot-ttl { font-size: 11px; color: #5a6b7b; font-weight: 600; margin-bottom: 6px; }
 .mtx-dock-plot { min-height: 40px; }
 .mtx-dock-plot-donut { display: flex; flex-direction: column; align-items: center; }
