@@ -174,7 +174,10 @@
                     <div class="mtx-upbox-text">
                         <strong>Add a Kraken2 report</strong>
                         <span><u>Click to browse</u> or drop .report / .txt files here</span>
-                        <small>From your own Kraken2 runs — also available via the drop card pinned top-right</small>
+                        <small v-if="!hasSamples" class="mtx-upbox-blurb">
+                            No samples loaded yet — start here by adding your own Kraken2 report.
+                        </small>
+                        <small v-else>From your own Kraken2 runs.</small>
                     </div>
                     <div v-if="uploadRecent.length" class="mtx-upbox-recent">
                         <v-icon x-small color="#15803d" class="mr-1">mdi-check-circle</v-icon>
@@ -1088,6 +1091,11 @@
     },
     
     computed: {
+        hasSamples() {
+            // any sample currently watched / loaded (server, demo, or uploaded)
+            if (this.selectedsamplesAll && this.selectedsamplesAll.length > 0) return true
+            return !!(this.selectedsamples && Object.keys(this.selectedsamples).length > 0)
+        },
         headers() {
             if (this.offlineMode) {
                 return [
@@ -1750,6 +1758,10 @@ code {
 .mtx-upbox-text span { font-size: 12.5px; color: #5b6573; }
 .mtx-upbox-text span u { color: #1e6b97; }
 .mtx-upbox-text small { font-size: 11px; color: #93a6b6; line-height: 1.3; }
+.mtx-upbox-text small.mtx-upbox-blurb {
+    color: #1e6b97;
+    font-weight: 600;
+}
 .mtx-upbox-recent {
     flex-basis: 100%;
     font-size: 11px;

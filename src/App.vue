@@ -553,10 +553,6 @@
         </v-row>
       </v-main>
 
-      <!-- Always-available, selectable K2 report drop zone, pinned top-right -->
-      <div class="mtx-dropzone-pin" :class="{ 'mtx-dropzone-pin--offset': !isOnline }">
-        <DropZone @importData="importData" />
-      </div>
 
   </v-app>
 </template>
@@ -572,7 +568,6 @@ import CrossSample from "@/components/CrossSample"
 import DataTableTab from "@/components/DataTableTab"
 import Metadata from "@/components/Metadata"
 import AddRun from "@/components/AddRun"
-import DropZone from "@/components/DropZone"
 import demoSamples from "@/assets/demoData"
 import _ from 'lodash'
 import { io } from "socket.io-client";
@@ -584,7 +579,6 @@ export default {
       Plates,
       Samplesheet,
       AddRun,
-      DropZone,
       Heatmap,
       Explore,
       Map,
@@ -2161,19 +2155,6 @@ th, td {
   font-size: 11.5px;
   color: #a16207;
   max-width: 720px;
-}
-
-/* --- pinned drop zone --- */
-.mtx-dropzone-pin {
-  position: fixed;
-  top: 92px;
-  right: 22px;
-  z-index: 7;
-  transition: top 0.18s ease;
-}
-/* Drop below the offline banner so it doesn't cover the "Load demo data" button */
-.mtx-dropzone-pin--offset {
-  top: 184px;
 }
 
 /* --- sample source legend (left panel) --- */
