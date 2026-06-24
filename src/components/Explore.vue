@@ -40,12 +40,6 @@
             </option>
           </select>
         </label>
-        <label class="mtx-field">
-          <span>Top <InfoIcon text="Maximum number of top taxa shown per panel, ranked by read count. Raise this to see more diversity; lower it to keep charts readable." /></span>
-          <select v-model.number="topN" class="mtx-select">
-            <option v-for="n in [5, 10, 12, 15, 20, 30]" :key="n" :value="n">{{ n }}</option>
-          </select>
-        </label>
         <label class="mtx-field mtx-field-search">
           <span>Search Organisms <InfoIcon text="Filter all panels to taxa whose name contains this text. Leave blank to show all taxa at the selected rank." /></span>
           <input
@@ -119,9 +113,9 @@
         <div class="mtx-sunburst-body">
           <div class="mtx-sunburst" :ref="'sb-' + safe(s)"></div>
           <div class="mtx-legend" v-if="viewOf(s) === 'sunburst'">
-            <div class="mtx-legend-title">Major groups</div>
+            <div class="mtx-legend-title">{{ rankLabel(primaryRank) }}</div>
             <ul>
-              <li v-for="g in legends[s] || []" :key="g.name" class="mtx-legend-click" @click="legendZoom(s, g)">
+              <li v-for="g in pagedLegend(s)" :key="g.name" class="mtx-legend-click" @click="legendZoom(s, g)">
                 <span class="mtx-swatch" :style="{ background: g.color }"></span>
                 <span class="mtx-legend-name">{{ g.name }}</span>
                 <span class="mtx-legend-pct">{{ g.pct.toFixed(1) }}%</span>
@@ -130,6 +124,11 @@
                 building…
               </li>
             </ul>
+            <div class="mtx-pg-nav mtx-legend-nav" v-if="legendTotalPages(s) > 1">
+              <button :disabled="(legendPage[s] || 0) === 0" @click="stepLegend(s, -1)">‹</button>
+              <span>{{ (legendPage[s] || 0) + 1 }} / {{ legendTotalPages(s) }}</span>
+              <button :disabled="(legendPage[s] || 0) >= legendTotalPages(s) - 1" @click="stepLegend(s, 1)">›</button>
+            </div>
           </div>
         </div>
       </section>
@@ -181,10 +180,13 @@ import commonNames from '@/assets/taxon_common_names.json'
 import InfoIcon from '@/components/InfoIcon.vue'
 
 // Standard Kraken2 rank hierarchy (primary ranks shown as panel choices)
-const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S']
+// Subspecies are rolled up to one canonical 'S1' rank upstream, so only a single
+// "Subspecies" choice is offered here.
+const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S', 'S1']
 const RANK_LABELS = {
   R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class',
-  O: 'Order', F: 'Family', G: 'Genus', S: 'Species'
+  O: 'Order', F: 'Family', G: 'Genus', S: 'Species',
+  S1: 'Subspecies', S2: 'Subspecies', S3: 'Subspecies'
 }
 const GROUP_PALETTE = d3.schemeTableau10.concat(d3.schemeSet3)
 
@@ -219,7 +221,10 @@ export default {
     return {
       focusSample: null,
       primaryRank: 'G',
-      topN: 12,
+      pageSize: 12,                // rows per page for paginated lollipop/bar/table
+      legendPageSize: 8,           // rows per page for the sunburst legend
+      cardPage: {},                // { sample: pageIndex } for per-sample card charts
+      legendPage: {},              // { sample: pageIndex } for per-sample card legend
       panels: [],
       seeded: false,
       legends: {},                 // { sample: [ {name,pct,color} ] }
@@ -259,8 +264,7 @@ export default {
       handler() { this.onData() }
     },
     primaryRank() { this.redraw() },
-    topN() { this.redraw() },
-    globalSearch() { this.redraw() },
+    globalSearch() { this.cardPage = {}; this.redraw() },
     selectedOrganism() { this.redraw() },
     linkPanels(v) {
       if (!v) this.selectedOrganism = ''
@@ -277,6 +281,21 @@ export default {
   methods: {
     safe(s) { return (s || '').replace(/[^A-Za-z0-9_-]/g, '_') },
     rankLabel(code) { return RANK_LABELS[code] || code },
+    // per-sample card legend pagination
+    legendTotalPages(s) {
+      const n = (this.legends[s] || []).length
+      return Math.max(1, Math.ceil(n / this.legendPageSize))
+    },
+    pagedLegend(s) {
+      const list = this.legends[s] || []
+      const page = Math.min(this.legendPage[s] || 0, this.legendTotalPages(s) - 1)
+      return list.slice(page * this.legendPageSize, (page + 1) * this.legendPageSize)
+    },
+    stepLegend(s, dir) {
+      const cur = this.legendPage[s] || 0
+      const next = Math.min(Math.max(0, cur + dir), this.legendTotalPages(s) - 1)
+      this.$set(this.legendPage, s, next)
+    },
     closeAddMenu() { this.addMenuOpen = false },
     organismMatches(name) {
       const q = (this.globalSearch || '').trim().toLowerCase()
@@ -431,18 +450,55 @@ export default {
       const el = Array.isArray(host) ? host[0] : host
       if (!el) return
       const type = this.viewOf(sample)
-      if (type === 'sunburst') { this.drawSunburstInto(el, sample); return }
-      this.$delete(this.sunburstApi, sample)
-      const data = this.topTaxa(sample, this.primaryRank, this.topN)
-      d3.select(el).selectAll('*').remove()
-      if (!data.length) {
-        d3.select(el).append('div').attr('class', 'mtx-nodata')
-          .text('No taxa at ' + this.rankLabel(this.primaryRank) + ' rank yet')
+      if (type === 'sunburst') {
+        // the global Rank drives this card's legend; dial still zooms on click
+        this.drawSunburstInto(el, sample, { legendRank: this.primaryRank })
         return
       }
+      this.$delete(this.sunburstApi, sample)
+      this.drawPaginated(
+        el, sample, this.primaryRank, type,
+        this.cardPage[sample] || 0,
+        (n) => { this.$set(this.cardPage, sample, n); this.drawSampleCard(sample) },
+        'No taxa at ' + this.rankLabel(this.primaryRank) + ' rank yet'
+      )
+    },
+
+    // Draw a paginated lollipop/bar/table into `el`. `page` is the current page,
+    // `setPage(n)` persists+redraws. Search/link filters are applied upstream in
+    // topTaxaAll, so this just slices the full ranked list by pageSize.
+    drawPaginated(el, sample, rank, type, page, setPage, emptyMsg) {
+      const allData = this.topTaxaAll(sample, rank)
+      d3.select(el).selectAll('*').remove()
+      if (!allData.length) {
+        d3.select(el).append('div').attr('class', 'mtx-nodata')
+          .text(emptyMsg || ('No taxa at ' + this.rankLabel(rank) + ' rank for ' + sample))
+        return
+      }
+      const totalPages = Math.max(1, Math.ceil(allData.length / this.pageSize))
+      const pg = Math.min(page || 0, totalPages - 1)
+      if (pg !== page) { setPage(pg); return }
+      const data = allData.slice(pg * this.pageSize, (pg + 1) * this.pageSize)
       if (type === 'lollipop') this.drawLollipop(el, data)
       else if (type === 'bar') this.drawBar(el, data)
       else if (type === 'table') this.drawTable(el, data)
+      if (totalPages > 1) this.appendPageNav(el, pg, totalPages, setPage)
+    },
+
+    // Shared prev / "n / total" / next nav used by paginated charts.
+    appendPageNav(el, page, totalPages, setPage) {
+      const nav = document.createElement('div')
+      nav.className = 'mtx-pg-nav'
+      const prev = document.createElement('button')
+      prev.textContent = '‹'; prev.disabled = page === 0
+      prev.addEventListener('click', () => setPage(page - 1))
+      const info = document.createElement('span')
+      info.textContent = `${page + 1} / ${totalPages}`
+      const next = document.createElement('button')
+      next.textContent = '›'; next.disabled = page >= totalPages - 1
+      next.addEventListener('click', () => setPage(page + 1))
+      nav.appendChild(prev); nav.appendChild(info); nav.appendChild(next)
+      el.appendChild(nav)
     },
 
     // ============ ROBUST TREE BUILD (depth-stack, no stratify) ============
@@ -510,15 +566,29 @@ export default {
     // Click a slice to zoom: the clicked node expands to the full circle and its
     // subtree fills the rings (the classic zoomable sunburst). The current focus
     // is persisted per-sample in this.sbFocus so streaming redraws keep the zoom.
-    drawSunburstInto(el, sample) {
+    drawSunburstInto(el, sample, opts = {}) {
+      const legendRank = opts.legendRank || null
+      const inlineLegend = !!opts.inlineLegend
       d3.select(el).selectAll('*').remove()
+
+      // Panels render an in-card legend to the RIGHT of the dial; the per-sample
+      // cards keep using the Vue-template legend (this.legends).
+      let chartEl = el
+      let legendEl = null
+      if (inlineLegend) {
+        const wrap = document.createElement('div'); wrap.className = 'mtx-sb-wrap'
+        chartEl = document.createElement('div'); chartEl.className = 'mtx-sb-chart'
+        legendEl = document.createElement('div'); legendEl.className = 'mtx-sb-legend'
+        wrap.appendChild(chartEl); wrap.appendChild(legendEl); el.appendChild(wrap)
+      }
+
       const root = this.buildHierarchy(sample)
       if (!root || !root.value) {
-        d3.select(el).append('div').attr('class', 'mtx-nodata').text('building…')
+        d3.select(chartEl).append('div').attr('class', 'mtx-nodata').text('building…')
         return
       }
 
-      const size = Math.min(el.clientWidth || 360, 360) || 320
+      const size = Math.min(chartEl.clientWidth || el.clientWidth || 360, 360) || 320
       const rings = (root.height || 1) + 1
       const ringUnit = (size / 2) / rings
       d3.partition().size([2 * Math.PI, rings])(root)
@@ -529,6 +599,34 @@ export default {
       if (focTaxid != null) {
         const hit = root.descendants().find(d => d.data.data && d.data.data.taxid === focTaxid)
         if (hit) focus = hit
+      }
+
+      // map any node to its top-level group colour key
+      const groupOf = d => {
+        let cur = d
+        while (cur.depth > 1 && cur.parent) cur = cur.parent
+        const gdata = cur.data.data
+        return this.commonGroup(sample, gdata) || gdata.target || 'other'
+      }
+
+      // legend refresh: rank-driven for panels, focus-children for the cards.
+      // This lets the panel's Rank dropdown change ONLY the legend; the dial
+      // itself re-frames solely on a slice click.
+      const refreshLegend = (f) => {
+        if (legendRank) {
+          const items = this.rankLegendData(sample, legendRank)
+          if (inlineLegend) this.renderInlineLegend(legendEl, sample, items, this.rankLabel(legendRank))
+          else this.$set(this.legends, sample, items)
+        } else {
+          this.buildLegend(sample, root, f)
+        }
+      }
+
+      // Lowest/leaf slice in focus → render a full-circle pie for that taxon and
+      // surface its full detail as the legend, instead of an empty/stuck dial.
+      if (focus !== root && (!focus.children || !focus.children.length)) {
+        this.renderLeafPie(el, chartEl, legendEl, inlineLegend, sample, focus, root, opts, groupOf, size)
+        return
       }
 
       // project every node into the frame where `p` fills the whole circle
@@ -547,20 +645,13 @@ export default {
         .innerRadius(d => d.y0 * ringUnit)
         .outerRadius(d => Math.max(d.y0 * ringUnit, d.y1 * ringUnit - 1))
 
-      const groupOf = d => {
-        let cur = d
-        while (cur.depth > 1 && cur.parent) cur = cur.parent
-        const data = cur.data.data
-        return this.commonGroup(sample, data) || data.target || 'other'
-      }
-
-      const svg = d3.select(el).append('svg')
+      const svg = d3.select(chartEl).append('svg')
         .attr('viewBox', [-size / 2, -size / 2, size, size])
         .attr('width', '100%')
         .style('max-width', size + 'px')
         .style('font', '10px Inter, system-ui, sans-serif')
       const g = svg.append('g')
-      const tip = d3.select(el).append('div').attr('class', 'mtx-tip').style('opacity', 0)
+      const tip = d3.select(chartEl).append('div').attr('class', 'mtx-tip').style('opacity', 0)
       const self = this
 
       const center = g.append('g').style('cursor', focus === root ? 'default' : 'zoom-out')
@@ -593,8 +684,14 @@ export default {
         .on('click', (ev, d) => {
           ev.stopPropagation()
           if (!d.children || !d.children.length) {
-            const leafName = d && d.data && d.data.data ? d.data.data.target : ''
-            this.setSelectedOrganism(leafName)
+            // lowest slice → render its full-circle pie directly from the current
+            // hierarchy node. (Rebuilding under a selected-organism filter can
+            // collapse to <2 rows — e.g. depth gaps after subspecies rollup — which
+            // is what produced the stuck "building…" state.)
+            const dn = d && d.data && d.data.data
+            self.$set(self.sbFocus, sample, dn ? dn.taxid : null)
+            d3.select(chartEl).selectAll('*').remove()
+            self.renderLeafPie(el, chartEl, legendEl, inlineLegend, sample, d, root, opts, groupOf, size)
             return
           }
           // Zoom this sunburst locally
@@ -638,7 +735,7 @@ export default {
         const tx = (focus && focus !== root && focus.data && focus.data.data) ? focus.data.data.taxid : null
         self.$set(self.sbFocus, sample, tx)
         updateCenter(focus)
-        this.buildLegend(sample, root, focus)
+        refreshLegend(focus)
       }
 
       this.$set(this.sunburstApi, sample, {
@@ -665,7 +762,127 @@ export default {
       })
 
       updateCenter(focus)
-      this.buildLegend(sample, root, focus)
+      refreshLegend(focus)
+    },
+
+    // Build legend rows from ALL taxa at a given rank (panel Rank dropdown).
+    // No top-10 cap — the legend itself paginates.
+    rankLegendData(sample, rank) {
+      const all = this.topTaxaAll(sample, rank)
+      return all.map(t => ({
+        name: t.group || t.name,
+        taxid: t.taxid,
+        pct: t.pct != null ? +t.pct : 0,
+        reads: t.reads,
+        color: this.groupColor(t.group || t.name)
+      }))
+    },
+
+    // Render an in-panel legend (right of the dial), paginated. Items may carry a
+    // `sub` detail line (used by the leaf/pie view to show full taxon info). The
+    // current page is stored on the element so nav clicks don't trigger a full
+    // panel redraw.
+    renderInlineLegend(legendEl, sample, items, titleText) {
+      if (!legendEl) return
+      const size = this.legendPageSize || 8
+      const list = items || []
+      const totalPages = Math.max(1, Math.ceil(list.length / size))
+      if (legendEl._page == null) legendEl._page = 0
+      if (legendEl._page > totalPages - 1) legendEl._page = totalPages - 1
+      const page = legendEl._page
+      legendEl.innerHTML = ''
+      const title = document.createElement('div')
+      title.className = 'mtx-legend-title'
+      title.textContent = titleText || 'Groups'
+      legendEl.appendChild(title)
+      if (!list.length) {
+        const empty = document.createElement('div')
+        empty.className = 'mtx-legend-empty'
+        empty.textContent = 'No taxa at this rank'
+        legendEl.appendChild(empty)
+        return
+      }
+      const ul = document.createElement('ul')
+      list.slice(page * size, (page + 1) * size).forEach(g => {
+        const li = document.createElement('li')
+        li.className = 'mtx-legend-click'
+        const sw = document.createElement('span')
+        sw.className = 'mtx-legend-swatch'
+        sw.style.background = g.color
+        const nm = document.createElement('span')
+        nm.className = 'mtx-legend-name'
+        nm.textContent = g.name
+        const pc = document.createElement('span')
+        pc.className = 'mtx-legend-pct'
+        pc.textContent = (g.pct != null ? g.pct.toFixed(1) : '0.0') + '%'
+        li.appendChild(sw); li.appendChild(nm); li.appendChild(pc)
+        if (g.sub) {
+          const sub = document.createElement('span')
+          sub.className = 'mtx-legend-sub'
+          sub.textContent = g.sub
+          li.appendChild(sub)
+        }
+        li.addEventListener('click', () => { if (g.name) this.setSelectedOrganism(g.name) })
+        ul.appendChild(li)
+      })
+      legendEl.appendChild(ul)
+      if (totalPages > 1) {
+        const nav = document.createElement('div')
+        nav.className = 'mtx-pg-nav mtx-legend-nav'
+        const prev = document.createElement('button')
+        prev.textContent = '‹'; prev.disabled = page === 0
+        prev.addEventListener('click', () => { legendEl._page = page - 1; this.renderInlineLegend(legendEl, sample, items, titleText) })
+        const info = document.createElement('span')
+        info.textContent = `${page + 1} / ${totalPages}`
+        const next = document.createElement('button')
+        next.textContent = '›'; next.disabled = page >= totalPages - 1
+        next.addEventListener('click', () => { legendEl._page = page + 1; this.renderInlineLegend(legendEl, sample, items, titleText) })
+        nav.appendChild(prev); nav.appendChild(info); nav.appendChild(next)
+        legendEl.appendChild(nav)
+      }
+    },
+
+    // Full-circle pie for a single (deepest) taxon + its full info as the legend.
+    renderLeafPie(el, chartEl, legendEl, inlineLegend, sample, leaf, root, opts, groupOf, size) {
+      const data = leaf.data.data
+      const color = this.groupColor(groupOf(leaf))
+      const sz = Math.min(chartEl.clientWidth || size || 320, 360) || 320
+      const svg = d3.select(chartEl).append('svg')
+        .attr('viewBox', [-sz / 2, -sz / 2, sz, sz])
+        .attr('width', '100%')
+        .style('max-width', sz + 'px')
+        .style('font', '10px Inter, system-ui, sans-serif')
+      const g = svg.append('g')
+      g.append('circle').attr('r', sz / 2 - 2).attr('fill', color).attr('fill-opacity', 0.92)
+      g.append('circle').attr('r', sz * 0.22).attr('fill', '#fff')
+      g.append('text').attr('text-anchor', 'middle').attr('dy', '-0.15em')
+        .style('font-size', '11px').style('font-weight', '700').style('fill', '#274766')
+        .text(this.trunc(data.target, 16))
+      g.append('text').attr('text-anchor', 'middle').attr('dy', '1.15em')
+        .style('font-size', '10px').style('fill', '#5b7088')
+        .text((+data.value).toFixed(2) + '%')
+      // transparent overlay → click anywhere to zoom back out to the parent
+      g.append('circle').attr('r', sz / 2 - 2).attr('fill', 'transparent')
+        .style('cursor', 'zoom-out')
+        .on('click', () => {
+          const parent = leaf.parent
+          const tx = (parent && parent !== root && parent.data && parent.data.data) ? parent.data.data.taxid : null
+          this.$set(this.sbFocus, sample, tx)
+          this.drawSunburstInto(el, sample, opts)
+        })
+
+      const cn = this.commonGroup(sample, data)
+      const item = {
+        name: data.target,
+        taxid: data.taxid,
+        pct: +data.value,
+        reads: +data.num_fragments_clade,
+        color,
+        sub: `${RANK_LABELS[data.rank_code] || data.rank_code}` +
+          `${cn ? ' · ' + cn : ''} · ${(+data.num_fragments_clade).toLocaleString()} reads · taxid ${data.taxid}`
+      }
+      if (inlineLegend) this.renderInlineLegend(legendEl, sample, [item], 'Selected taxon')
+      else this.$set(this.legends, sample, [item])
     },
 
     buildLegend(sample, part, focusNode) {
@@ -693,7 +910,7 @@ export default {
 
       const total = d3.sum(Object.values(totals).map(v => v.value)) || 1
       const legend = Object.entries(totals)
-        .sort((a, b) => b[1].value - a[1].value).slice(0, 10)
+        .sort((a, b) => b[1].value - a[1].value)
         .map(([name, v]) => ({
           name,
           taxid: v.taxid,
@@ -711,53 +928,16 @@ export default {
       const sample = p.sample || this.focusSample
       if (!sample) return
       if (p.type === 'sunburst') {
-        this.drawSunburstInto(el, sample)
+        // panel Rank dropdown drives the legend; the dial reframes on slice click
+        this.drawSunburstInto(el, sample, { legendRank: p.rank, inlineLegend: true })
         return
       }
-      if (p.type === 'table') {
-        const data = this.topTaxa(sample, p.rank, this.topN)
-        d3.select(el).selectAll('*').remove()
-        if (!data.length) {
-          d3.select(el).append('div').attr('class', 'mtx-nodata')
-            .text('No taxa at ' + this.rankLabel(p.rank) + ' rank for ' + sample)
-          return
-        }
-        this.drawTable(el, data)
-        return
-      }
-      // lollipop and bar: paginated
-      const allData = this.topTaxaAll(sample, p.rank)
-      d3.select(el).selectAll('*').remove()
-      if (!allData.length) {
-        d3.select(el).append('div').attr('class', 'mtx-nodata')
-          .text('No taxa at ' + this.rankLabel(p.rank) + ' rank for ' + sample)
-        return
-      }
-      const totalPages = Math.max(1, Math.ceil(allData.length / this.topN))
-      const page = Math.min(p.page || 0, totalPages - 1)
-      if (p.page !== page) this.$set(p, 'page', page)
-      const data = allData.slice(page * this.topN, (page + 1) * this.topN)
-      if (p.type === 'lollipop') this.drawLollipop(el, data)
-      else this.drawBar(el, data)
-      // Append pagination nav
-      if (totalPages > 1) {
-        const nav = document.createElement('div')
-        nav.className = 'mtx-pg-nav'
-        const prev = document.createElement('button')
-        prev.textContent = '‹'
-        prev.disabled = page === 0
-        prev.addEventListener('click', () => { this.$set(p, 'page', page - 1); this.drawPanel(p) })
-        const info = document.createElement('span')
-        info.textContent = `${page + 1} / ${totalPages}`
-        const next = document.createElement('button')
-        next.textContent = '›'
-        next.disabled = page >= totalPages - 1
-        next.addEventListener('click', () => { this.$set(p, 'page', page + 1); this.drawPanel(p) })
-        nav.appendChild(prev)
-        nav.appendChild(info)
-        nav.appendChild(next)
-        el.appendChild(nav)
-      }
+      // lollipop / bar / table: all paginated with a fixed page size
+      this.drawPaginated(
+        el, sample, p.rank, p.type,
+        p.page || 0,
+        (n) => { this.$set(p, 'page', n); this.drawPanel(p) }
+      )
     },
     drawLollipop(el, data) {
       const w = el.clientWidth || 420, rowH = 22, m = { l: 150, r: 56, t: 8, b: 8 }
@@ -988,6 +1168,15 @@ export default {
 .mtx-legend-name { flex: 1; text-transform: capitalize; }
 .mtx-legend-pct { color: var(--c-sub); font-variant-numeric: tabular-nums; font-size: 12px; }
 
+/* ---- in-panel sunburst legend (right of the dial) ---- */
+.mtx-sb-wrap { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; width: 100%; }
+.mtx-sb-chart { position: relative; flex: 1 1 220px; min-width: 200px; display: flex; justify-content: center; }
+.mtx-sb-legend { flex: 1 1 170px; min-width: 150px; }
+.mtx-sb-legend ul { list-style: none; margin: 0; padding: 0; }
+.mtx-sb-legend li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 3px 6px; font-size: 13px; }
+.mtx-sb-legend .mtx-legend-sub { flex: 1 1 100%; font-size: 11px; color: var(--c-sub); line-height: 1.3; margin-top: 1px; }
+.mtx-legend-swatch { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; }
+
 .mtx-panel-body { padding: 12px 14px; min-height: 60px; }
 .mtx-nodata { color: var(--c-sub); font-size: 13px; font-style: italic; padding: 18px 4px; text-align: center; }
 
@@ -1020,6 +1209,7 @@ export default {
 .mtx-explore >>> .mtx-pg-nav button:disabled { opacity: 0.35; cursor: default; }
 .mtx-explore >>> .mtx-pg-nav button:not(:disabled):hover { background: #eef3f7; }
 .mtx-explore >>> .mtx-pg-nav span { font-size: 11px; color: #6b8299; min-width: 40px; text-align: center; }
+.mtx-explore >>> .mtx-legend-nav { justify-content: flex-start; margin-top: 6px; border-top: 1px solid #eef2f6; padding-top: 6px; }
 
 /* blank */
 .mtx-blank { text-align: center; color: var(--c-sub); padding: 80px 20px; }

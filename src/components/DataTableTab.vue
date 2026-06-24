@@ -49,7 +49,7 @@
 
 <script>
 import commonNames from '@/assets/taxon_common_names.json'
-const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', U: 'Unclassified' }
+const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', S1: 'Subspecies', S2: 'Subspecies', S3: 'Subspecies', U: 'Unclassified' }
 
 export default {
   name: 'DataTableTab',
@@ -68,7 +68,7 @@ export default {
         { key: 'num_fragments_clade', label: 'Reads', num: true },
         { key: 'value', label: '%', num: true }
       ],
-      rankChoices: ['D', 'K', 'P', 'C', 'O', 'F', 'G', 'S'].map(c => ({ code: c, label: RANK_LABELS[c] }))
+      rankChoices: ['D', 'K', 'P', 'C', 'O', 'F', 'G', 'S', 'S1'].map(c => ({ code: c, label: RANK_LABELS[c] }))
     }
   },
   computed: {

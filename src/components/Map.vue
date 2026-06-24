@@ -30,9 +30,23 @@
             <span class="mtx-dock-dot" :style="{ background: active.color }"></span>
             <div class="mtx-dock-title">
               <strong>{{ active.sample }}</strong>
-              <span class="mtx-dock-coord">{{ fmt(active.lat) }}, {{ fmt(active.lon) }}</span>
+              <span class="mtx-dock-coord">
+                {{ fmt(active.lat) }}, {{ fmt(active.lon) }}
+                <template v-if="groupMembers.length > 1"> · {{ groupMembers.length }} samples here</template>
+              </span>
             </div>
-            <button class="mtx-dock-close" @click="selectedSample = null" title="Close">×</button>
+            <button class="mtx-dock-close" @click="closeDock" title="Close">×</button>
+          </div>
+
+          <!-- When several samples share a location, the segmented dot expands
+               into one chip per sample so you can inspect each in turn. -->
+          <div v-if="groupMembers.length > 1" class="mtx-dock-chips">
+            <button v-for="m in groupMembers" :key="m.sample"
+                    :class="['mtx-dock-chip', { active: m.sample === selectedSample }]"
+                    @click="selectedSample = m.sample">
+              <span class="mtx-dock-chip-dot" :style="{ background: m.color }"></span>
+              {{ m.sample }}
+            </button>
           </div>
 
           <div class="mtx-dock-kpis">
@@ -113,7 +127,10 @@ export default {
       map: null,
       markersLayer: null,
       tileLayer: null,
+      mapZoom: 2,
+      clusterPx: 38,        // screen-pixel radius for merging nearby dots
       selectedSample: null,
+      selectedGroup: [],    // all samples at the clicked location
       dockTab: 'bar',
       dockRank: 'S',
       donutRank: 'G',
@@ -175,6 +192,15 @@ export default {
     active() {
       if (!this.selectedSample) return null
       return this.placed.find(p => p.sample === this.selectedSample) || null
+    },
+    groupMembers() {
+      // The set of samples sharing the active location (for the dock chips).
+      if (this.selectedGroup.length) {
+        return this.selectedGroup
+          .map(s => this.placed.find(p => p.sample === s))
+          .filter(Boolean)
+      }
+      return this.active ? [this.active] : []
     },
     availableRanks() {
       if (!this.active) return ['S']
@@ -259,6 +285,10 @@ export default {
       }).addTo(this.map)
 
       this.markersLayer = L.layerGroup().addTo(this.map)
+
+      // Re-cluster whenever the projection changes (zoom merges/splits dots).
+      this.map.on('zoomend moveend', this.recluster)
+      this.mapZoom = this.map.getZoom()
     },
     popupHtml(p) {
       const topGroups = (p.groups || []).slice(0, 3).map((g) => `${g.name} ${g.pct.toFixed(1)}%`).join(', ')
@@ -274,45 +304,134 @@ export default {
         </div>
       `
     },
+    // Fit the viewport to all placed samples, then draw clustered markers.
+    // Called on mount and whenever the underlying sample set changes.
     renderLeafletData() {
       if (!this.map || !this.markersLayer) return
-
-      this.markersLayer.clearLayers()
       if (!this.placed.length) {
+        this.markersLayer.clearLayers()
         this.map.setView([20, 0], 2)
         return
       }
+      const bounds = this.placed.map(p => [p.lat, p.lon])
+      if (bounds.length === 1) {
+        this.map.setView(bounds[0], 6)
+      } else {
+        this.map.fitBounds(bounds, { padding: [44, 44], maxZoom: 12 })
+      }
+      this.recluster()
+    },
+    // Group samples by location, merge nearby groups by on-screen distance at
+    // the current zoom, and render each result as one segmented dot. Re-runs on
+    // every zoom/pan so dots split apart as you zoom in and merge as you zoom out.
+    recluster() {
+      if (!this.map || !this.markersLayer) return
+      this.markersLayer.clearLayers()
+      const placed = this.placed
+      if (!placed.length) return
+      this.mapZoom = this.map.getZoom()
 
-      const bounds = []
-      this.placed.forEach((p) => {
-        const marker = L.circleMarker([p.lat, p.lon], {
-          radius: p.r,
-          stroke: true,
-          color: '#ffffff',
-          weight: 1.4,
-          fillColor: p.color,
-          fillOpacity: 0.88
-        })
+      // 1) collapse exactly co-located samples into stacks (one per coordinate)
+      const byCoord = new Map()
+      placed.forEach((p) => {
+        const key = p.lat.toFixed(5) + ',' + p.lon.toFixed(5)
+        let st = byCoord.get(key)
+        if (!st) { st = { lat: p.lat, lon: p.lon, members: [] }; byCoord.set(key, st) }
+        st.members.push(p)
+      })
+      const stacks = Array.from(byCoord.values())
 
-        marker.bindPopup(this.popupHtml(p), { maxWidth: 300 })
-        marker.bindTooltip(p.sample, {
-          direction: 'top',
-          offset: [0, -6],
-          opacity: 0.9
+      // 2) greedily merge stacks whose screen positions fall within clusterPx
+      const proj = stacks.map(s => ({ s, pt: this.map.latLngToLayerPoint([s.lat, s.lon]) }))
+      const used = new Array(proj.length).fill(false)
+      const clusters = []
+      for (let i = 0; i < proj.length; i++) {
+        if (used[i]) continue
+        used[i] = true
+        const grp = [proj[i]]
+        for (let j = i + 1; j < proj.length; j++) {
+          if (used[j]) continue
+          if (proj[i].pt.distanceTo(proj[j].pt) <= this.clusterPx) { used[j] = true; grp.push(proj[j]) }
+        }
+        clusters.push(grp)
+      }
+
+      // 3) one segmented marker per cluster
+      const maxZoom = this.map.getMaxZoom() || 19
+      clusters.forEach((grp) => {
+        const stackList = grp.map(g => g.s)
+        const members = stackList.reduce((acc, s) => acc.concat(s.members), [])
+        const distinctCoords = stackList.length
+        const isCluster = distinctCoords > 1
+        const lat = d3.mean(stackList, s => s.lat)
+        const lon = d3.mean(stackList, s => s.lon)
+
+        const marker = L.marker([lat, lon], { icon: this.segIcon(members, isCluster) })
+        marker.bindTooltip(this.clusterTip(members, isCluster), {
+          direction: 'top', offset: [0, -6], opacity: 0.92
         })
         marker.on('click', () => {
-          this.selectedSample = p.sample
+          if (isCluster && this.mapZoom < maxZoom) {
+            // zoom in to break the merged dot back into its locations
+            const b = L.latLngBounds(stackList.map(s => [s.lat, s.lon]))
+            this.map.flyToBounds(b.pad(0.5), { maxZoom: Math.min(maxZoom, this.mapZoom + 3) })
+          } else {
+            this.openGroup(members)
+          }
         })
-
         marker.addTo(this.markersLayer)
-        bounds.push([p.lat, p.lon])
       })
-
-      if (bounds.length === 1) {
-        this.map.setView(bounds[0], 4)
+    },
+    // Build an SVG divIcon: a filled dot for a lone sample, or a donut split
+    // into one wedge per sample (with the total count in the hole) otherwise.
+    segIcon(members, isCluster) {
+      const count = members.length
+      let R
+      if (count === 1 && !isCluster) {
+        R = Math.max(6, members[0].r || 8)
       } else {
-        this.map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 })
+        R = 13 + Math.min(16, (count - 1) * 2.4)
       }
+      const pad = 3
+      const size = Math.ceil(2 * R + pad * 2)
+      const c = size / 2
+      let inner
+      if (count === 1 && !isCluster) {
+        const m = members[0]
+        inner = `<circle cx="${c}" cy="${c}" r="${R}" fill="${m.color}" stroke="#fff" stroke-width="1.6"/>`
+      } else {
+        const ir = R * 0.5
+        const pie = d3.pie().sort(null).value(() => 1)(members)
+        const arc = d3.arc().innerRadius(ir).outerRadius(R)
+        const wedges = pie.map(d =>
+          `<path d="${arc(d)}" fill="${d.data.color}" stroke="#fff" stroke-width="1.4"/>`).join('')
+        const label =
+          `<circle cx="0" cy="0" r="${ir - 0.5}" fill="#ffffff" fill-opacity="0.94"/>` +
+          `<text x="0" y="0" text-anchor="middle" dominant-baseline="central" ` +
+          `font-family="Inter, system-ui, sans-serif" font-size="${Math.max(10, ir * 0.95).toFixed(1)}" ` +
+          `font-weight="700" fill="#274766">${count}</text>`
+        inner = `<g transform="translate(${c},${c})">${wedges}${label}</g>`
+      }
+      const svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" ` +
+        `xmlns="http://www.w3.org/2000/svg" style="overflow:visible">${inner}</svg>`
+      return L.divIcon({ className: 'mtx-seg-icon', html: svg, iconSize: [size, size], iconAnchor: [c, c] })
+    },
+    clusterTip(members, isCluster) {
+      if (members.length === 1) {
+        const p = members[0]
+        return `${p.sample} · ${p.reads.toLocaleString()} reads` + (p.top ? ` · ${p.top}` : '')
+      }
+      const names = members.map(m => m.sample).join(', ')
+      const action = isCluster ? 'click to zoom in' : 'click to inspect'
+      return `${members.length} samples: ${names} (${action})`
+    },
+    openGroup(members) {
+      this.selectedGroup = members.map(m => m.sample)
+      this.selectedSample = members[0].sample
+    },
+    closeDock() {
+      this.selectedSample = null
+      this.selectedGroup = []
     },
     rankLabel(code) {
       return ({ D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }[code]) || code
@@ -506,6 +625,21 @@ export default {
   .mtx-map-stage { flex-direction: column; }
   .mtx-dock { flex-basis: auto; width: 100%; }
 }
+
+/* segmented dot / cluster markers (divIcon) */
+.mtx-map ::v-deep .mtx-seg-icon,
+.mtx-map ::v-deep .leaflet-div-icon { background: transparent; border: none; }
+.mtx-map ::v-deep .mtx-seg-icon { cursor: pointer; filter: drop-shadow(0 2px 3px rgba(20,56,84,.28)); }
+.mtx-map ::v-deep .mtx-seg-icon svg { transition: transform .12s ease; }
+.mtx-map ::v-deep .mtx-seg-icon:hover svg { transform: scale(1.08); }
+
+/* per-location sample chips in the dock */
+.mtx-dock-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px 2px; }
+.mtx-dock-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid #d3e0ec; background: #f4f8fb; color: #33485c; font-size: 11px; font-weight: 600; cursor: pointer; }
+.mtx-dock-chip:hover { background: #e9f2fa; }
+.mtx-dock-chip.active { background: #0e3f6a; border-color: #0e3f6a; color: #fff; }
+.mtx-dock-chip-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255,255,255,.7); }
 
 .mtx-map ::v-deep .leaflet-control-attribution { font-size: 10px; }
 .mtx-map ::v-deep .leaflet-popup-content { margin: 8px 10px; }

@@ -202,7 +202,11 @@
                 <v-icon x-small class="mr-1">mdi-database</v-icon>
                 <span>Reference database</span>
               </div>
-              <div class="mtx-sec-body mtx-row-end">
+              <div v-if="!isOnline" class="mtx-db-offline-note">
+                <v-icon x-small class="mr-1" color="#b45309">mdi-cloud-off-outline</v-icon>
+                Offline — databases require a backend connection
+              </div>
+              <div class="mtx-sec-body mtx-row-end" v-else>
                 <v-select
                   v-model="database"
                   :items="databases"
@@ -433,10 +437,10 @@
             <v-select
               label="Tax Rank Codes"
               v-model="defaults" multiple
-              :items="defaultsList"
-              item-text="value"
+              :items="rankItems"
+              item-text="text"
               @change="filter"
-              item-value="value" 
+              item-value="value"
               menu-props="auto"
               persistent-hint 
               
@@ -601,6 +605,12 @@ export default {
       isConnected() {
         return !!(this.socket && this.socket.connected);
       },
+      // Rank selector items: show a friendly label for the canonical subspecies
+      // code (S1 -> "Subspecies") while keeping the raw code as the stored value.
+      rankItems() {
+        const LABELS = { S1: 'Subspecies' }
+        return this.defaultsList.map(c => ({ text: LABELS[c] || c, value: c }))
+      },
       statusClass() {
         if (this.isOnline) return 'connected'
         if (this.isConnecting) return 'connecting'
@@ -744,8 +754,8 @@ export default {
             nodeCountMax: 0,
             selectAll: false,
             
-            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1','S2','S3', 'S4'],
-            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1','S2','S3', 'S4'],
+            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1'],
+            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1'],
             depthRange: [0,100],
             maxDepth: 100,
             samplesheetdata: [],
@@ -1526,7 +1536,8 @@ export default {
             let sample = obj.sample
             let data = $this.filterData(_.cloneDeep(obj.fullData))
             data = $this.parseData(data)
-            obj.data = data 
+            data = $this.rollupSubspecies(data)
+            obj.data = data
             return obj
           })
         },
@@ -1678,11 +1689,95 @@ export default {
           
         },
         
+        rollupSubspecies(data) {
+          // Collapse an arbitrarily deep subspecies chain (S1, S2, S3, ... Sn — any
+          // "S" followed by digits) so that only the terminal (deepest) node survives
+          // per species path. Intermediate nodes are removed; the survivor is
+          // reparented to its nearest non-subspecies ancestor (S or higher) AND
+          // relabelled to the single canonical subspecies rank 'S1'. This is the LCA
+          // "after S": no matter whether a hit bottoms out at S1 or S5, every tab can
+          // group and select it under one "Subspecies" entry, and the deepest node is
+          // the one that remains visible.
+          const isSub = (c) => /^S\d+$/.test(c)        // S1..Sn, but NOT plain 'S'
+          const hasSub = data.some(d => isSub(d.rank_code))
+          if (!hasSub) return data
+
+          // index by taxid
+          const byTaxid = {}
+          data.forEach(d => { byTaxid[d.taxid] = d })
+
+          // build children map
+          const childrenOf = {}
+          data.forEach(d => {
+            if (d.parenttaxid != null) {
+              if (!childrenOf[d.parenttaxid]) childrenOf[d.parenttaxid] = []
+              childrenOf[d.parenttaxid].push(d)
+            }
+          })
+
+          // a subspecies node is terminal if none of its present children are also subspecies
+          function isTerminalSub(item) {
+            if (!isSub(item.rank_code)) return false
+            const kids = childrenOf[item.taxid] || []
+            return !kids.some(k => isSub(k.rank_code))
+          }
+
+          // walk parenttaxid upward until we reach an S (or non-sub) ancestor present in data
+          function nearestSpeciesAncestor(taxid) {
+            let pid = taxid
+            while (pid != null && byTaxid[pid] && isSub(byTaxid[pid].rank_code)) {
+              pid = byTaxid[pid].parenttaxid
+            }
+            return pid
+          }
+
+          // collect non-terminal subspecies to remove
+          const toRemove = new Set()
+          data.forEach(d => {
+            if (isSub(d.rank_code) && !isTerminalSub(d)) {
+              toRemove.add(d.taxid)
+            }
+          })
+
+          // reparent terminal nodes to their nearest species ancestor and collapse
+          // every sub-level (S1..Sn) onto the canonical 'S1' rank so the exact-match
+          // rank filters in the tabs all land on one code.
+          data.forEach(d => {
+            if (isTerminalSub(d)) {
+              const pid = nearestSpeciesAncestor(d.parenttaxid)
+              d.parenttaxid = pid
+              if (byTaxid[pid]) {
+                d.source = byTaxid[pid].target
+                // Re-seat the survivor directly beneath its species ancestor in the
+                // indentation depth too. Views that build their tree from `depth`
+                // (e.g. the Explore sunburst) otherwise keep the original deep
+                // indentation of S2/S3/S4/S5; with the intermediate ranks removed
+                // that leaves a gap, so only the first survivor lands under the
+                // species and the rest fall through to the root.
+                d.depth = (Number(byTaxid[pid].depth) || 0) + 1
+              }
+              if (d.rank_code !== 'S1') {
+                d.orig_rank_code = d.rank_code
+                d.rank_code = 'S1'
+              }
+            }
+          })
+
+          return data.filter(d => !toRemove.has(d.taxid))
+        },
+
         filterData(d){
           let data = _.cloneDeep(d)
+          // Treat every sub-rank (S1..Sn) as one "subspecies" class gated by the
+          // single canonical 'S1' toggle. This lets raw deep sub-ranks (S2..Sn)
+          // survive long enough for rollupSubspecies to collapse them, while still
+          // honouring the user hiding/showing subspecies from the global selector.
+          const isSub = (c) => /^S\d+$/.test(c)
+          const subOn = this.defaults.indexOf('S1') > -1
           data = data.filter((f)=>{
-            let v = ( f.taxid == -1 || this.defaults.indexOf(f.rank_code) > -1 && f.depth <= this.depthRange[1] && f.depth >= this.depthRange[0] && this.minPercent <= f.value/100 )
-            return  v
+            if (f.taxid == -1) return true
+            const rankOk = isSub(f.rank_code) ? subOn : this.defaults.indexOf(f.rank_code) > -1
+            return rankOk && f.depth <= this.depthRange[1] && f.depth >= this.depthRange[0] && this.minPercent <= f.value/100
           })
           return data
         },
@@ -1823,9 +1918,13 @@ export default {
             // this.fullData[sample] = data
             data = this.filterData(data)
             data = this.parseData(data)
+            data = this.rollupSubspecies(data)
             Object.keys(uniques).forEach((f)=>{
-              if (this.defaultsList.indexOf(f)==-1){
-                this.defaultsList.push(f)
+              // collapse any raw sub-rank (S1..Sn) to the canonical 'S1' so the
+              // global selector shows a single "Subspecies" entry, not S2/S3/S4.
+              const code = /^S\d+$/.test(f) ? 'S1' : f
+              if (this.defaultsList.indexOf(code)==-1){
+                this.defaultsList.push(code)
               }
             })
             this.defaults = this.defaultsList
@@ -2155,6 +2254,20 @@ th, td {
   font-size: 11.5px;
   color: #a16207;
   max-width: 720px;
+}
+
+/* --- Database offline note --- */
+.mtx-db-offline-note {
+  display: flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #92400e;
+  background: linear-gradient(120deg, #fff8ed, #fef3c7);
+  border: 1px solid #fcd9a0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
 }
 
 /* --- sample source legend (left panel) --- */

@@ -87,7 +87,7 @@
 <script>
 import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
-const RANK_LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }
+const RANK_LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', S1: 'Subspecies', S2: 'Subspecies 2', S3: 'Subspecies 3' }
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
 
 // ---- shared floating tooltip (singleton appended to <body>) ----
@@ -171,7 +171,7 @@ export default {
           sample, reads,
           topName: top ? top.target : null,
           topCommon: top ? this.group(top, map) : null,
-          ranks: ['D', 'P', 'C', 'O', 'F', 'G', 'S'].map(code => ({
+          ranks: ['D', 'P', 'C', 'O', 'F', 'G', 'S', 'S1'].map(code => ({
             code, label: RANK_LABELS[code],
             count: rows.filter(r => r.rank_code === code && r.taxid !== -1).length
           })),
