@@ -671,7 +671,7 @@
           .call(y_axis);
 
           y.selectAll('text') // select all the text elements
-          .style("font-size", '12px')
+          .style("font-size", '9px')
           .style('fill', '#5a6b7b')
           .style("cursor", (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) ? 'pointer' : 'default')
 

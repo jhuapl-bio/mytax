@@ -12,7 +12,7 @@ import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
 import { storage } from './storage.mjs';
 import  { broadcastToAllActiveConnections } from './messenger.mjs';
-import { resolveSilhouette, resolveSvg } from './phylopic.mjs';
+import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 // App and server
@@ -50,68 +50,79 @@ app.get('/ws', (req, res) => {
     res.status(200).send("Welcome to Mytax Version 2");
 });
 
-// PhyloPic silhouette proxy: resolve a taxon scientific name to a hosted
-// silhouette URL server-side (avoids browser CORS against api.phylopic.org).
-// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
-app.get('/phylopic', async (req, res) => {
-    // Permissive CORS so the dev frontend (e.g. :8080) can call this endpoint.
+// PhyloPic image index: serve the prebuilt { build, map } of taxon name ->
+// source-file URL. Built server-side (no browser CORS) and cached by build.
+// The frontend tries this first; if it isn't ready yet (202) or the backend is
+// down, the frontend builds the same index directly against the PhyloPic API.
+app.get('/phylopic/index', (req, res) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET');
-    try {
-        const name = String(req.query.name || '').trim();
-        if (!name) {
-            res.status(400).json({ error: 'missing name' });
-            return;
-        }
-        const lineage = String(req.query.lineage || '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const result = await resolveSilhouette(name, lineage);
-        // Let browsers/CDNs cache the (small) JSON lookup for a day.
-        res.header('Cache-Control', 'public, max-age=86400');
-        res.status(200).json({ name, result: result || null });
-    } catch (err) {
-        logger.error(`phylopic resolve error: ${err && err.message ? err.message : err}`);
-        res.status(200).json({ name: req.query.name || null, result: null });
+    const idx = getCachedIndex();
+    if (idx) {
+        res.header('Cache-Control', 'public, max-age=3600');
+        res.status(200).json(idx);
+        return;
     }
+    ensureIndexBuilding();
+    res.status(202).json({ building: true });
 });
 
-// PhyloPic SVG stream: resolve a taxon name and send the silhouette's SVG
-// markup straight to the frontend (rendered inline). The SVG is fetched in
-// memory server-side and never written to disk.
-// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
+// PhyloPic SVG proxy: the frontend tries THIS first to load an individual
+// silhouette (the name -> svg-URL map is bundled with the app). Fetching
+// server-side avoids browser CORS and gives us clean inline <svg> markup. If
+// this endpoint is unreachable (backend down) or fails, the frontend falls back
+// to fetching the same URL directly from images.phylopic.org.
+//
+// SSRF guard: only proxy hosts on phylopic.org (images/api), nothing else.
+const PHYLOPIC_SVG_HOSTS = new Set([
+    'images.phylopic.org',
+    'api.phylopic.org',
+]);
+
 app.get('/phylopic/svg', async (req, res) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET');
-    res.header('Access-Control-Expose-Headers', 'X-Phylopic-Attribution, X-Phylopic-Page');
+
+    const raw = req.query.url;
+    let target;
     try {
-        const name = String(req.query.name || '').trim();
-        if (!name) {
-            res.status(400).send('missing name');
+        target = new URL(String(raw || ''));
+    } catch (e) {
+        res.status(400).json({ error: 'invalid url' });
+        return;
+    }
+    if (target.protocol !== 'https:' || !PHYLOPIC_SVG_HOSTS.has(target.hostname)) {
+        res.status(400).json({ error: 'disallowed host' });
+        return;
+    }
+
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let upstream;
+        try {
+            upstream = await fetch(target.href, { redirect: 'follow', signal: ctrl.signal });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!upstream.ok) {
+            res.status(502).json({ error: `upstream ${upstream.status}` });
             return;
         }
-        const lineage = String(req.query.lineage || '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const resolved = await resolveSvg(name, lineage);
-        if (!resolved || !resolved.svg) {
-            res.status(404).send('');
-            return;
-        }
-        if (resolved.attribution) {
-            res.header('X-Phylopic-Attribution', encodeURIComponent(resolved.attribution));
-        }
-        if (resolved.pageUrl) res.header('X-Phylopic-Page', resolved.pageUrl);
+        const ct = (upstream.headers.get('content-type') || '').toLowerCase();
+        const body = await upstream.text();
+        const isSvg = ct.includes('svg') || ct.includes('xml') || /^\s*(<\?xml|<svg[\s>])/i.test(body);
+        res.header('Content-Type', isSvg ? 'image/svg+xml; charset=utf-8' : (ct || 'application/octet-stream'));
         res.header('Cache-Control', 'public, max-age=86400');
-        res.type('image/svg+xml').status(200).send(resolved.svg);
-    } catch (err) {
-        logger.error(`phylopic svg error: ${err && err.message ? err.message : err}`);
-        res.status(404).send('');
+        res.status(200).send(body);
+    } catch (e) {
+        res.status(502).json({ error: 'fetch failed' });
     }
 });
 
+// Warm the PhyloPic index in the background at startup so it's ready when the
+// frontend asks (best-effort; failures are swallowed).
+ensureIndexBuilding();
 
 logger.info(`Orchestrator creation...`)
 storage.orchestrator = new Orchestrator(); 

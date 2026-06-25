@@ -58,6 +58,31 @@ npm run build
 npm run lint
 ```
 
+### PhyloPic taxon silhouettes (local index)
+
+Taxon silhouettes are resolved entirely in the frontend from a prebuilt index
+committed at `src/assets/phylopic-index.json` (no backend, no per-load API
+fan-out). Each taxon title maps to `{ sourceFile, vectorFile, thumbnail, source }`
+from the PhyloPic image's `_links`. The app renders the clean SVG `vectorFile`
+first, falling back to `sourceFile` then the PNG `thumbnail`; source images load
+lazily per tab and are cached by href.
+
+Regenerate it whenever PhyloPic publishes a new `build` number:
+
+```
+npm run build:phylopic
+# or: node scripts/build-phylopic-index.mjs
+```
+
+This pages all of PhyloPic (`/images?...&embed_items=true`, with a per-image
+detail fetch as a fallback when file links aren't embedded) and overwrites
+`src/assets/phylopic-index.json`. By default it keeps every title. To restrict
+to real NCBI taxa, add `--filter --names /path/to/names.dmp` (classes default to
+scientific name, genbank common name, common name, synonym; override with
+`--classes "<comma,list>"`). Other options: `--out <path>`, `--concurrency <n>`.
+Requires Node 18+ and network access to `api.phylopic.org` (only this build step
+needs it).
+
 ### Customize configuration
 See [Configuration Reference](https://cli.vuejs.org/config/).
 

@@ -17,8 +17,8 @@
   >
     <span v-if="svg" class="mtx-phylopic-svg" v-html="svg"></span>
     <img
-      v-else-if="pngUrl"
-      :src="pngUrl"
+      v-else-if="imgUrl"
+      :src="imgUrl"
       class="mtx-phylopic-img"
       :alt="name + ' silhouette'"
       loading="lazy"
@@ -41,16 +41,13 @@ export default {
     size: { type: Number, default: 22 },
   },
   data() {
-    return { svg: null, pngUrl: null, attribution: null, loading: false }
+    return { svg: null, imgUrl: null, loading: false }
   },
   computed: {
     titleText() {
-      if (this.svg || this.pngUrl) {
-        return this.attribution
-          ? `${this.name} — silhouette by ${this.attribution} (PhyloPic)`
-          : `${this.name} — silhouette via PhyloPic`
-      }
-      return this.name
+      return (this.svg || this.imgUrl)
+        ? `${this.name} — silhouette via PhyloPic`
+        : this.name
     },
   },
   watch: {
@@ -65,8 +62,7 @@ export default {
       const name = this.name
       if (!name) {
         this.svg = null
-        this.pngUrl = null
-        this.attribution = null
+        this.imgUrl = null
         return
       }
       this.loading = true
@@ -74,19 +70,17 @@ export default {
       // Guard against a race where the prop changed while we awaited.
       if (this.name !== name) return
       this.loading = false
-      if (hit && (hit.svg || hit.pngUrl)) {
+      if (hit && (hit.svg || hit.imgUrl)) {
         this.svg = hit.svg || null
-        this.pngUrl = hit.svg ? null : (hit.pngUrl || null)
-        this.attribution = hit.attribution
+        this.imgUrl = hit.svg ? null : (hit.imgUrl || null)
       } else {
         this.svg = null
-        this.pngUrl = null
-        this.attribution = null
+        this.imgUrl = null
       }
     },
     onImgError() {
-      // PNG fallback also failed — show the neutral placeholder.
-      this.pngUrl = null
+      // The source image failed to load — show the neutral placeholder.
+      this.imgUrl = null
     },
   },
 }
