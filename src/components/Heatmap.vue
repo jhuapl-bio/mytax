@@ -60,13 +60,11 @@ export default {
       selectedTaxid: 0,
       selectedAttribute: 'G',
       legendPlacement: 'bottom',
-      // Subspecies are rolled up to the single canonical 'S1' rank upstream, so the
-      // selector offers one "Subspecies" option rather than S1/S2/S3.
       ranks: [
         { text: 'Domain', value: 'D' }, { text: 'Phylum', value: 'P' },
         { text: 'Class', value: 'C' }, { text: 'Order', value: 'O' },
         { text: 'Family', value: 'F' }, { text: 'Genus', value: 'G' },
-        { text: 'Species', value: 'S' }, { text: 'Subspecies', value: 'S1' }
+        { text: 'Species', value: 'S' }, { text: 'Subspecies (S1)', value: 'S1' }
       ]
     }
   },
@@ -83,19 +81,23 @@ export default {
       deep: true,
       immediate: true,
       handler(val) {
-        // keep the rank list in sync with what's actually present in the data.
-        // Any rolled-up sub-rank is normalised to the canonical 'S1' ("Subspecies").
+        // Keep the rank list in sync with what's present in the data, preserving
+        // distinct subspecies depth ranks (S1, S2, S3, ...).
         if (!val) return
         const present = new Set()
         Object.values(val).forEach((rows) => {
           if (rows) rows.forEach((r) => {
-            if (r.rank_code) present.add(/^S\d+$/.test(r.rank_code) ? 'S1' : r.rank_code)
+            if (r.rank_code) present.add(String(r.rank_code))
           })
         })
-        const LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', S1: 'Subspecies' }
-        const order = ['D', 'P', 'C', 'O', 'F', 'G', 'S', 'S1']
-        const found = order.filter((r) => present.has(r))
-        if (found.length) this.ranks = found.map((c) => ({ text: LABELS[c], value: c }))
+        const rankLabel = (code) => /^S\d+$/.test(code)
+          ? `Subspecies (${code})`
+          : ({ D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }[code] || code)
+        const base = ['D', 'P', 'C', 'O', 'F', 'G', 'S'].filter((r) => present.has(r))
+        const subs = Array.from(present).filter((r) => /^S\d+$/.test(r))
+          .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+        const found = [...base, ...subs]
+        if (found.length) this.ranks = found.map((c) => ({ text: rankLabel(c), value: c }))
         if (this.ranks.findIndex((r) => r.value === this.selectedAttribute) === -1) {
           this.selectedAttribute = present.has('G')
             ? 'G'

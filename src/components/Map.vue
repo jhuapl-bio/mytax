@@ -112,7 +112,7 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
-const RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
+const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 
 export default {
   name: 'Map',
@@ -160,7 +160,8 @@ export default {
         const species = rows.filter(r => r.rank_code === 'S' && r.taxid !== -1)
           .sort((a, b) => b.num_fragments_clade - a.num_fragments_clade)
         // rank coverage (distinct taxa per rank)
-        const ranks = RANKS.map(code => ({
+        const presentRanks = Array.from(new Set(rows.filter(r => r.taxid !== -1).map(r => r.rank_code)))
+        const ranks = this.sortRankCodes(presentRanks).map(code => ({
           code, count: rows.filter(r => r.rank_code === code && r.taxid !== -1).length
         }))
         // domain-level composition
@@ -207,7 +208,7 @@ export default {
       const present = new Set(this.active.rows.filter(r => r.taxid !== -1).map(r => r.rank_code))
       // Always keep Species in the list
       present.add('S')
-      const found = RANKS.filter(r => present.has(r))
+      const found = this.sortRankCodes(Array.from(present))
       return found.length ? found : ['S']
     },
     barTotalPages() {
@@ -434,7 +435,24 @@ export default {
       this.selectedGroup = []
     },
     rankLabel(code) {
+      if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
       return ({ D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }[code]) || code
+    },
+    sortRankCodes(codes) {
+      const uniq = Array.from(new Set((codes || []).filter(Boolean)))
+      return uniq.sort((a, b) => {
+        const as = /^S\d+$/.test(a)
+        const bs = /^S\d+$/.test(b)
+        if (as && bs) return Number(a.slice(1)) - Number(b.slice(1))
+        if (as) return 1
+        if (bs) return -1
+        const ia = BASE_RANKS.indexOf(a)
+        const ib = BASE_RANKS.indexOf(b)
+        if (ia > -1 && ib > -1) return ia - ib
+        if (ia > -1) return -1
+        if (ib > -1) return 1
+        return String(a).localeCompare(String(b))
+      })
     },
     topRows(n, page = 0) {
       if (!this.active) return []

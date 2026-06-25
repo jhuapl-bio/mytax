@@ -87,7 +87,7 @@
 <script>
 import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
-const RANK_LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', S1: 'Subspecies', S2: 'Subspecies 2', S3: 'Subspecies 3' }
+const RANK_LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
 
 // ---- shared floating tooltip (singleton appended to <body>) ----
@@ -171,16 +171,28 @@ export default {
           sample, reads,
           topName: top ? top.target : null,
           topCommon: top ? this.group(top, map) : null,
-          ranks: ['D', 'P', 'C', 'O', 'F', 'G', 'S', 'S1'].map(code => ({
-            code, label: RANK_LABELS[code],
-            count: rows.filter(r => r.rank_code === code && r.taxid !== -1).length
-          })),
+          ranks: this.rankCoverage(rows),
           groups
         }
       })
     }
   },
   methods: {
+    rankLabel(code) {
+      if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
+      return RANK_LABELS[code] || code
+    },
+    rankCoverage(rows) {
+      const present = new Set((rows || []).filter(r => r.taxid !== -1).map(r => r.rank_code))
+      const base = ['D', 'P', 'C', 'O', 'F', 'G', 'S'].filter((c) => present.has(c))
+      const subs = Array.from(present).filter((c) => /^S\d+$/.test(c))
+        .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      return [...base, ...subs].map((code) => ({
+        code,
+        label: this.rankLabel(code),
+        count: rows.filter(r => r.rank_code === code && r.taxid !== -1).length
+      }))
+    },
     group(row, map) {
       let cur = row, g = 0
       while (cur && g++ < 60) {

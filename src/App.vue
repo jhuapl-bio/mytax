@@ -605,11 +605,10 @@ export default {
       isConnected() {
         return !!(this.socket && this.socket.connected);
       },
-      // Rank selector items: show a friendly label for the canonical subspecies
-      // code (S1 -> "Subspecies") while keeping the raw code as the stored value.
+      // Rank selector items with explicit subspecies depth labels (S1, S2, ...).
       rankItems() {
-        const LABELS = { S1: 'Subspecies' }
-        return this.defaultsList.map(c => ({ text: LABELS[c] || c, value: c }))
+        return this.sortRankCodes(this.defaultsList)
+          .map(c => ({ text: this.rankLabel(c), value: c }))
       },
       statusClass() {
         if (this.isOnline) return 'connected'
@@ -754,15 +753,15 @@ export default {
             nodeCountMax: 0,
             selectAll: false,
             
-            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1'],
-            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1'],
+            defaults: ['K','R', 'R1', "U", 'P', "G", 'D', 'D1', 'O','C','S','F', 'F1', 'F2', 'S1', 'S2', 'S3', 'S4', 'S5'],
+            defaultsList: ['U','K', 'P', 'D','D1','G', 'O','C','S','F', "F2", "F1", 'S1', 'S2', 'S3', 'S4', 'S5'],
             depthRange: [0,100],
             maxDepth: 100,
             samplesheetdata: [],
             samplesheet: null,
             reportSavePath: null,
             minDepth: 0,
-            minPercent: 0.008, 
+            minPercent: 0,
             jsondata: null, 
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
@@ -1648,6 +1647,34 @@ export default {
             }
             this.socket.emit(message.type, message);
         },
+        rankLabel(code) {
+          if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
+          const labels = {
+            U: 'Unclassified', R: 'Root', R1: 'Root 1',
+            D: 'Domain', D1: 'Subdomain', K: 'Kingdom',
+            P: 'Phylum', C: 'Class', O: 'Order',
+            F: 'Family', F1: 'Subfamily', F2: 'Tribe',
+            G: 'Genus', G1: 'Subgenus', S: 'Species'
+          }
+          return labels[code] || code
+        },
+        sortRankCodes(codes) {
+          const baseOrder = ['U', 'R', 'R1', 'D', 'D1', 'K', 'P', 'C', 'O', 'F', 'F1', 'F2', 'G', 'G1', 'S']
+          const uniq = Array.from(new Set((codes || []).filter(Boolean)))
+          return uniq.sort((a, b) => {
+            const as = /^S\d+$/.test(a)
+            const bs = /^S\d+$/.test(b)
+            if (as && bs) return Number(a.slice(1)) - Number(b.slice(1))
+            if (as) return 1
+            if (bs) return -1
+            const ia = baseOrder.indexOf(a)
+            const ib = baseOrder.indexOf(b)
+            if (ia > -1 && ib > -1) return ia - ib
+            if (ia > -1) return -1
+            if (ib > -1) return 1
+            return String(a).localeCompare(String(b))
+          })
+        },
         parseData(data){
           function find_latest(obj, found){
             if (found-1 <= -1 ){
@@ -1690,93 +1717,15 @@ export default {
         },
         
         rollupSubspecies(data) {
-          // Collapse an arbitrarily deep subspecies chain (S1, S2, S3, ... Sn — any
-          // "S" followed by digits) so that only the terminal (deepest) node survives
-          // per species path. Intermediate nodes are removed; the survivor is
-          // reparented to its nearest non-subspecies ancestor (S or higher) AND
-          // relabelled to the single canonical subspecies rank 'S1'. This is the LCA
-          // "after S": no matter whether a hit bottoms out at S1 or S5, every tab can
-          // group and select it under one "Subspecies" entry, and the deepest node is
-          // the one that remains visible.
-          const isSub = (c) => /^S\d+$/.test(c)        // S1..Sn, but NOT plain 'S'
-          const hasSub = data.some(d => isSub(d.rank_code))
-          if (!hasSub) return data
-
-          // index by taxid
-          const byTaxid = {}
-          data.forEach(d => { byTaxid[d.taxid] = d })
-
-          // build children map
-          const childrenOf = {}
-          data.forEach(d => {
-            if (d.parenttaxid != null) {
-              if (!childrenOf[d.parenttaxid]) childrenOf[d.parenttaxid] = []
-              childrenOf[d.parenttaxid].push(d)
-            }
-          })
-
-          // a subspecies node is terminal if none of its present children are also subspecies
-          function isTerminalSub(item) {
-            if (!isSub(item.rank_code)) return false
-            const kids = childrenOf[item.taxid] || []
-            return !kids.some(k => isSub(k.rank_code))
-          }
-
-          // walk parenttaxid upward until we reach an S (or non-sub) ancestor present in data
-          function nearestSpeciesAncestor(taxid) {
-            let pid = taxid
-            while (pid != null && byTaxid[pid] && isSub(byTaxid[pid].rank_code)) {
-              pid = byTaxid[pid].parenttaxid
-            }
-            return pid
-          }
-
-          // collect non-terminal subspecies to remove
-          const toRemove = new Set()
-          data.forEach(d => {
-            if (isSub(d.rank_code) && !isTerminalSub(d)) {
-              toRemove.add(d.taxid)
-            }
-          })
-
-          // reparent terminal nodes to their nearest species ancestor and collapse
-          // every sub-level (S1..Sn) onto the canonical 'S1' rank so the exact-match
-          // rank filters in the tabs all land on one code.
-          data.forEach(d => {
-            if (isTerminalSub(d)) {
-              const pid = nearestSpeciesAncestor(d.parenttaxid)
-              d.parenttaxid = pid
-              if (byTaxid[pid]) {
-                d.source = byTaxid[pid].target
-                // Re-seat the survivor directly beneath its species ancestor in the
-                // indentation depth too. Views that build their tree from `depth`
-                // (e.g. the Explore sunburst) otherwise keep the original deep
-                // indentation of S2/S3/S4/S5; with the intermediate ranks removed
-                // that leaves a gap, so only the first survivor lands under the
-                // species and the rest fall through to the root.
-                d.depth = (Number(byTaxid[pid].depth) || 0) + 1
-              }
-              if (d.rank_code !== 'S1') {
-                d.orig_rank_code = d.rank_code
-                d.rank_code = 'S1'
-              }
-            }
-          })
-
-          return data.filter(d => !toRemove.has(d.taxid))
+          // Keep all subspecies depths (S1, S2, S3, ...) as distinct ranks.
+          return data
         },
 
         filterData(d){
           let data = _.cloneDeep(d)
-          // Treat every sub-rank (S1..Sn) as one "subspecies" class gated by the
-          // single canonical 'S1' toggle. This lets raw deep sub-ranks (S2..Sn)
-          // survive long enough for rollupSubspecies to collapse them, while still
-          // honouring the user hiding/showing subspecies from the global selector.
-          const isSub = (c) => /^S\d+$/.test(c)
-          const subOn = this.defaults.indexOf('S1') > -1
           data = data.filter((f)=>{
             if (f.taxid == -1) return true
-            const rankOk = isSub(f.rank_code) ? subOn : this.defaults.indexOf(f.rank_code) > -1
+            const rankOk = this.defaults.indexOf(f.rank_code) > -1
             return rankOk && f.depth <= this.depthRange[1] && f.depth >= this.depthRange[0] && this.minPercent <= f.value/100
           })
           return data
@@ -1915,22 +1864,21 @@ export default {
           if (data && data.length > 0){
             // this.fullsize[sample] = fullsize
             data.unshift(base)
-            // this.fullData[sample] = data
-            data = this.filterData(data)
-            data = this.parseData(data)
-            data = this.rollupSubspecies(data)
+            const fullData = _.cloneDeep(data)
             Object.keys(uniques).forEach((f)=>{
-              // collapse any raw sub-rank (S1..Sn) to the canonical 'S1' so the
-              // global selector shows a single "Subspecies" entry, not S2/S3/S4.
-              const code = /^S\d+$/.test(f) ? 'S1' : f
+              const code = f
               if (this.defaultsList.indexOf(code)==-1){
                 this.defaultsList.push(code)
               }
             })
-            this.defaults = this.defaultsList
+            this.defaultsList = this.sortRankCodes(this.defaultsList)
+            this.defaults = this.defaultsList.slice()
+            data = this.filterData(_.cloneDeep(fullData))
+            data = this.parseData(data)
+            data = this.rollupSubspecies(data)
             let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
             if (index > -1){
-              this.$set(this.selectedsamplesAll[index], 'fullData', data)
+              this.$set(this.selectedsamplesAll[index], 'fullData', fullData)
               this.$set(this.selectedsamplesAll[index], 'data', data)
             }
             return data 

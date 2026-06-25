@@ -12,14 +12,20 @@
     <!-- ============ control bar ============ -->
     <div class="mtx-bar">
       <div class="mtx-bar-group">
-        <span class="mtx-bar-label">Samples</span>
+        <div class="mtx-bar-label-row">
+          <span class="mtx-bar-label">Samples</span>
+          <div class="mtx-chip-actions" v-if="availableSamples.length">
+            <button class="mtx-chip-action" @click="showAllSamples">Show all</button>
+            <button class="mtx-chip-action" @click="hideAllSamples">Hide all</button>
+          </div>
+        </div>
         <div class="mtx-chips">
           <button
             v-for="s in availableSamples"
             :key="s"
             class="mtx-chip"
-            :class="{ active: s === focusSample }"
-            @click="setFocus(s)"
+            :class="{ active: isSampleVisible(s), focused: s === focusSample && isSampleVisible(s) }"
+            @click="toggleSampleVisibility(s)"
           >
             <span class="mtx-chip-dot" :class="{ live: isLive(s) }"></span>
             {{ s }}
@@ -83,12 +89,14 @@
     </div>
 
     <!-- ============ sunbursts: one per sample ============ -->
-    <div class="mtx-section-label" v-if="availableSamples.length">
-      Taxonomic sunbursts · one per sample
+    <div class="mtx-section-label mtx-section-label-row" v-if="visibleSamples.length">
+      <span>Taxonomic sunbursts · one per sample</span>
+      <button class="mtx-btn ghost sm" @click="resetAllSunbursts"
+        title="Reset every sunburst back to its root (un-zoom all)">⟲ Reset all</button>
     </div>
-    <div class="mtx-grid mtx-sb-grid" v-if="availableSamples.length">
+    <div class="mtx-grid mtx-sb-grid" v-if="visibleSamples.length">
       <section
-        v-for="s in availableSamples"
+        v-for="s in visibleSamples"
         :key="'sb-card-' + s"
         class="mtx-card mtx-sunburst-card"
         :class="{ focused: s === focusSample }"
@@ -105,6 +113,8 @@
               title="Plot type for this sample">
               <option v-for="t in panelTypes" :key="t.type" :value="t.type">{{ t.label }}</option>
             </select>
+            <button class="mtx-btn ghost" v-if="viewOf(s) === 'sunburst'" @click="resetSunburst(s)"
+              :title="'Reset ' + s + ' sunburst to root'">⟲</button>
             <button class="mtx-btn ghost" @click="setFocus(s)" :title="'Focus ' + s">
               {{ s === focusSample ? '★' : '☆' }}
             </button>
@@ -113,9 +123,9 @@
         <div class="mtx-sunburst-body">
           <div class="mtx-sunburst" :ref="'sb-' + safe(s)"></div>
           <div class="mtx-legend" v-if="viewOf(s) === 'sunburst'">
-            <div class="mtx-legend-title">{{ rankLabel(primaryRank) }}</div>
+            <div class="mtx-legend-title">{{ legendTitle[s] || rankLabel(primaryRank) }}</div>
             <ul>
-              <li v-for="g in pagedLegend(s)" :key="g.name" class="mtx-legend-click" @click="legendZoom(s, g)">
+              <li v-for="g in pagedLegend(s)" :key="g.taxid != null ? String(g.taxid) : g.name" class="mtx-legend-click" @click="legendZoom(s, g)">
                 <span class="mtx-swatch" :style="{ background: g.color }"></span>
                 <span class="mtx-legend-name">{{ g.name }}</span>
                 <span class="mtx-legend-pct">{{ g.pct.toFixed(1) }}%</span>
@@ -166,7 +176,11 @@
     </div>
 
     <!-- empty state -->
-    <div class="mtx-blank" v-if="!availableSamples.length">
+    <div class="mtx-blank" v-if="availableSamples.length && !visibleSamples.length">
+      <div class="mtx-blank-art">◷</div>
+      <p>All sample plots are currently hidden. Re-enable a sample chip or click Show all.</p>
+    </div>
+    <div class="mtx-blank" v-else-if="!availableSamples.length">
       <div class="mtx-blank-art">◷</div>
       <p>Waiting for sample data. As reports are generated and streamed in,
         each sample gets its own sunburst here and panels populate automatically.</p>
@@ -179,14 +193,11 @@ import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
 import InfoIcon from '@/components/InfoIcon.vue'
 
-// Standard Kraken2 rank hierarchy (primary ranks shown as panel choices)
-// Subspecies are rolled up to one canonical 'S1' rank upstream, so only a single
-// "Subspecies" choice is offered here.
-const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S', 'S1']
+// Standard Kraken2 rank hierarchy.
+const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S']
 const RANK_LABELS = {
   R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class',
-  O: 'Order', F: 'Family', G: 'Genus', S: 'Species',
-  S1: 'Subspecies', S2: 'Subspecies', S3: 'Subspecies'
+  O: 'Order', F: 'Family', G: 'Genus', S: 'Species'
 }
 const GROUP_PALETTE = d3.schemeTableau10.concat(d3.schemeSet3)
 
@@ -234,7 +245,11 @@ export default {
       groupColor: d3.scaleOrdinal(GROUP_PALETTE),
       pidSeq: 0,
       redrawTimer: null,
+      resizeObs: null,
+      lastGridWidth: 0,
       liveStamp: {},
+      liveNow: Date.now(),
+      liveTimer: null,
       addMenuOpen: false,
       globalSearch: '',
       linkPanels: true,
@@ -244,15 +259,33 @@ export default {
         { type: 'bar', label: 'Bar chart', icon: '📊', hint: 'read counts' },
         { type: 'table', label: 'Table', icon: '▦', hint: 'taxa + groups' },
         { type: 'sunburst', label: 'Sunburst', icon: '◍', hint: 'full hierarchy' }
-      ]
+      ],
+      hiddenSamples: [],
+      legendTitle: {}              // { sample: legend heading text }
     }
   },
   computed: {
     availableSamples() {
       return Object.keys(this.sampleData || {}).filter(s => (this.sampleData[s] || []).length)
     },
+    visibleSamples() {
+      return this.availableSamples.filter(s => this.hiddenSamples.indexOf(s) === -1)
+    },
     rankChoices() {
-      return RANK_ORDER.filter(c => c !== 'R').map(c => ({ code: c, label: RANK_LABELS[c] }))
+      const present = new Set()
+      Object.values(this.sampleData || {}).forEach((rows) => {
+        ;(rows || []).forEach((r) => {
+          if (r && r.rank_code && r.taxid !== -1) present.add(String(r.rank_code))
+        })
+      })
+      const base = RANK_ORDER.filter(c => c !== 'R' && present.has(c))
+      const subs = Array.from(present)
+        .filter(c => /^S\d+$/.test(c))
+        .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      const merged = [...base, ...subs]
+      const fallback = RANK_ORDER.filter(c => c !== 'R')
+      const ordered = merged.length ? merged : fallback
+      return ordered.map(c => ({ code: c, label: this.rankLabel(c) }))
     },
     focusRows() {
       return (this.sampleData && this.sampleData[this.focusSample]) || []
@@ -273,14 +306,98 @@ export default {
   },
   mounted() {
     this.onData()
+    this.liveTimer = setInterval(() => {
+      this.liveNow = Date.now()
+    }, 1000)
     window.addEventListener('resize', this.redraw)
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObs = new ResizeObserver((entries) => {
+        const w = Math.round(entries[0].contentRect.width)
+        if (Math.abs(w - this.lastGridWidth) > 8) {
+          this.lastGridWidth = w
+          this.redraw()
+        }
+      })
+      this.$nextTick(() => { if (this.$el) this.resizeObs.observe(this.$el) })
+    }
   },
   beforeDestroy() {
+    if (this.liveTimer) {
+      clearInterval(this.liveTimer)
+      this.liveTimer = null
+    }
+    if (this.resizeObs) {
+      this.resizeObs.disconnect()
+      this.resizeObs = null
+    }
     window.removeEventListener('resize', this.redraw)
   },
   methods: {
     safe(s) { return (s || '').replace(/[^A-Za-z0-9_-]/g, '_') },
-    rankLabel(code) { return RANK_LABELS[code] || code },
+    isSampleVisible(sample) {
+      return this.hiddenSamples.indexOf(sample) === -1
+    },
+    ensureFocusSample() {
+      if (!this.visibleSamples.length) {
+        this.focusSample = null
+        return
+      }
+      if (!this.focusSample || !this.visibleSamples.includes(this.focusSample)) {
+        this.focusSample = this.visibleSamples[0]
+      }
+    },
+    toggleSampleVisibility(sample) {
+      const idx = this.hiddenSamples.indexOf(sample)
+      if (idx > -1) this.hiddenSamples.splice(idx, 1)
+      else this.hiddenSamples.push(sample)
+      this.ensureFocusSample()
+      this.redraw()
+    },
+    showAllSamples() {
+      this.hiddenSamples = []
+      this.ensureFocusSample()
+      this.redraw()
+    },
+    hideAllSamples() {
+      this.hiddenSamples = this.availableSamples.slice()
+      this.ensureFocusSample()
+      this.redraw()
+    },
+    isSubRank(code) { return /^S\d+$/.test(String(code || '')) },
+    rankLabel(code) {
+      if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
+      return RANK_LABELS[code] || code
+    },
+    subspeciesPath(sample, row) {
+      if (!row || !this.isSubRank(row.rank_code)) return row ? row.target : ''
+      const map = this._taxMap(sample)
+      const parts = []
+      let cur = row
+      let guard = 0
+      while (cur && guard++ < 80) {
+        if (this.isSubRank(cur.rank_code)) parts.push(`${cur.rank_code} ${cur.target}`)
+        if (cur.parenttaxid == null) break
+        const parent = map[String(cur.parenttaxid)]
+        if (!parent) break
+        cur = parent
+        if (!this.isSubRank(cur.rank_code) && parts.length) break
+      }
+      return parts.reverse().join(' > ') || `${row.rank_code} ${row.target}`
+    },
+    legendNameForRow(sample, row) {
+      if (!row) return 'other'
+      return this.displayTaxonName(sample, row)
+    },
+    displayTaxonName(sample, row) {
+      if (!row) return ''
+      if (this.isSubRank(row.rank_code)) return this.subspeciesPath(sample, row)
+      return row.target
+    },
+    rankMatches(rowRank, selectedRank) {
+      const rr = String(rowRank || '')
+      const sr = String(selectedRank || '')
+      return rr === sr
+    },
     // per-sample card legend pagination
     legendTotalPages(s) {
       const n = (this.legends[s] || []).length
@@ -322,23 +439,54 @@ export default {
     },
 
     // --- live / totals ---
+    sampleLiveSignature(rows) {
+      const list = rows || []
+      const len = list.length
+      if (!len) return '0|0|0|0|0'
+      let sum = 0
+      for (let i = 0; i < len; i += 1) {
+        const r = list[i] || {}
+        sum += (+r.num_fragments_clade || 0)
+        sum += (+r.num_fragments_assigned || 0)
+      }
+      const first = list[0] || {}
+      const last = list[len - 1] || {}
+      return [
+        len,
+        sum,
+        +first.num_fragments_clade || 0,
+        +last.num_fragments_clade || 0,
+        +last.value || 0
+      ].join('|')
+    },
     onData() {
       const avail = this.availableSamples
+      this.hiddenSamples = this.hiddenSamples.filter(s => avail.includes(s))
       avail.forEach(s => {
-        const sig = (this.sampleData[s] || []).length
+        const sig = this.sampleLiveSignature(this.sampleData[s] || [])
         if (this.liveStamp[s] !== sig) {
           this.$set(this.liveStamp, s, sig)
           this.$set(this.liveStamp, '_t_' + s, Date.now())
         }
       })
-      if (!this.focusSample && avail.length) this.focusSample = avail[0]
-      if (this.focusSample && !avail.includes(this.focusSample) && avail.length) {
-        this.focusSample = avail[0]
+      this.ensureFocusSample()
+      avail.forEach((s) => {
+        this.$set(this.legendTitle, s, this.rankLabel(this.primaryRank))
+      })
+      const validRanks = this.rankChoices.map(r => r.code)
+      const fallbackRank = validRanks.includes('G') ? 'G' : (validRanks[0] || 'S')
+      if (validRanks.length && !validRanks.includes(this.primaryRank)) {
+        this.primaryRank = fallbackRank
       }
+      this.panels.forEach((p) => {
+        if (validRanks.length && !validRanks.includes(p.rank)) {
+          this.$set(p, 'rank', fallbackRank)
+        }
+      })
       this.redraw()
     },
     isLive(s) {
-      return Date.now() - (this.liveStamp['_t_' + s] || 0) < 4000
+      return this.liveNow - (this.liveStamp['_t_' + s] || 0) < 4000
     },
     sampleReadTotal(s) {
       const rows = (this.sampleData && this.sampleData[s]) || []
@@ -397,39 +545,49 @@ export default {
     topTaxa(sample, rank, n) {
       const rows = (this.sampleData && this.sampleData[sample]) || []
       return rows
-        .filter(r => r.rank_code === rank && r.taxid !== -1)
+        .filter(r => this.rankMatches(r.rank_code, rank) && r.taxid !== -1)
         .filter(r => this.organismMatches(r.target))
         .filter(r => !this.linkPanels || !this.selectedOrganism || r.target === this.selectedOrganism)
         .sort((a, b) => b.num_fragments_clade - a.num_fragments_clade)
         .slice(0, n)
-        .map(r => ({
+        .map(r => {
+          const common = this.commonGroup(sample, r)
+          const displayName = this.displayTaxonName(sample, r)
+          return {
           name: r.target,
-          common: this.commonGroup(sample, r),
-          group: this.commonGroup(sample, r) || r.target,
+          displayName,
+          common,
+          group: this.isSubRank(r.rank_code) ? displayName : (common || r.target),
           reads: r.num_fragments_clade,
           pct: r.value,
           taxid: r.taxid,
           rank: r.rank_code
-        }))
+        }})
     },
 
     // all taxa at a rank (no topN slice) — used for paginated panels
-    topTaxaAll(sample, rank) {
+    topTaxaAll(sample, rank, opts = {}) {
       const rows = (this.sampleData && this.sampleData[sample]) || []
+      const withinTaxids = opts.withinTaxids || null
       return rows
-        .filter(r => r.rank_code === rank && r.taxid !== -1)
+        .filter(r => this.rankMatches(r.rank_code, rank) && r.taxid !== -1)
+        .filter(r => !withinTaxids || withinTaxids.has(String(r.taxid)))
         .filter(r => this.organismMatches(r.target))
         .filter(r => !this.linkPanels || !this.selectedOrganism || r.target === this.selectedOrganism)
         .sort((a, b) => b.num_fragments_clade - a.num_fragments_clade)
-        .map(r => ({
+        .map(r => {
+          const common = this.commonGroup(sample, r)
+          const displayName = this.displayTaxonName(sample, r)
+          return {
           name: r.target,
-          common: this.commonGroup(sample, r),
-          group: this.commonGroup(sample, r) || r.target,
+          displayName,
+          common,
+          group: this.isSubRank(r.rank_code) ? displayName : (common || r.target),
           reads: r.num_fragments_clade,
           pct: r.value,
           taxid: r.taxid,
           rank: r.rank_code
-        }))
+        }})
     },
 
     // --- redraw orchestration ---
@@ -437,7 +595,10 @@ export default {
       clearTimeout(this.redrawTimer)
       this.redrawTimer = setTimeout(() => {
         this.$nextTick(() => {
-          this.availableSamples.forEach(s => this.drawSampleCard(s))
+          this.visibleSamples.forEach(s => this.drawSampleCard(s))
+          Object.keys(this.sunburstApi).forEach((s) => {
+            if (!this.visibleSamples.includes(s)) this.$delete(this.sunburstApi, s)
+          })
           this.panels.forEach(p => this.drawPanel(p))
         })
       }, 60)
@@ -479,16 +640,27 @@ export default {
       const pg = Math.min(page || 0, totalPages - 1)
       if (pg !== page) { setPage(pg); return }
       const data = allData.slice(pg * this.pageSize, (pg + 1) * this.pageSize)
-      if (type === 'lollipop') this.drawLollipop(el, data)
-      else if (type === 'bar') this.drawBar(el, data)
-      else if (type === 'table') this.drawTable(el, data)
-      if (totalPages > 1) this.appendPageNav(el, pg, totalPages, setPage)
+      // Wrap nav + chart in a column so the pagination is always a full-width
+      // block ABOVE the chart/table — the parent card container is a centred
+      // flex row, which otherwise pushed the pager to the left of the plot.
+      const wrap = document.createElement('div')
+      wrap.className = 'mtx-paginated'
+      el.appendChild(wrap)
+      if (totalPages > 1) this.appendPageNav(wrap, pg, totalPages, setPage, { top: true })
+      const chartHost = document.createElement('div')
+      chartHost.className = 'mtx-paginated-chart'
+      wrap.appendChild(chartHost)
+      if (type === 'table') this.drawTable(chartHost, data)
+      else if (type === 'lollipop') this.drawLollipop(chartHost, data)
+      else if (type === 'bar') this.drawBar(chartHost, data)
     },
 
     // Shared prev / "n / total" / next nav used by paginated charts.
-    appendPageNav(el, page, totalPages, setPage) {
+    appendPageNav(el, page, totalPages, setPage, opts = {}) {
       const nav = document.createElement('div')
-      nav.className = 'mtx-pg-nav'
+      nav.className = 'mtx-pg-nav' +
+        (opts.top ? ' mtx-pg-nav-top' : '') +
+        (opts.topRight ? ' mtx-pg-nav-top-right' : '')
       const prev = document.createElement('button')
       prev.textContent = '‹'; prev.disabled = page === 0
       prev.addEventListener('click', () => setPage(page - 1))
@@ -498,13 +670,43 @@ export default {
       next.textContent = '›'; next.disabled = page >= totalPages - 1
       next.addEventListener('click', () => setPage(page + 1))
       nav.appendChild(prev); nav.appendChild(info); nav.appendChild(next)
-      el.appendChild(nav)
+      if ((opts.top || opts.topRight) && el.firstChild) {
+        el.insertBefore(nav, el.firstChild)
+      } else {
+        el.appendChild(nav)
+      }
     },
 
     // ============ ROBUST TREE BUILD (depth-stack, no stratify) ============
     // Returns a d3.hierarchy root or null. Works even if intermediate ranks
     // are missing from a partial report, because parents are resolved by the
     // nearest shallower row rather than by taxid links.
+    // Deepest structural ring that actually carries content. A level counts as
+    // populated if more than one node sits at it (real branching) or it holds a
+    // meaningful share of the reads. Returns ring count = deepest populated
+    // depth + 1, so ringUnit = (radius / this) makes the populated rings fill
+    // the dial while lone deep lineages get clamped to the rim. Falls back to
+    // the full depth when nothing stands out.
+    effectiveRings(root, fullRings) {
+      const byDepth = {}
+      let rootReads = 0
+      root.each(d => {
+        (byDepth[d.depth] || (byDepth[d.depth] = [])).push(d)
+        const r = d.data && d.data.data ? +d.data.data.num_fragments_clade || 0 : 0
+        if (r > rootReads) rootReads = r
+      })
+      const floor = rootReads * 0.005 // 0.5% of the largest clade
+      let deepest = 0
+      Object.keys(byDepth).forEach(k => {
+        const lvl = +k
+        const nodes = byDepth[k]
+        let reads = 0
+        nodes.forEach(n => { reads += (n.data && n.data.data ? +n.data.data.num_fragments_clade || 0 : 0) })
+        if ((nodes.length > 1 || reads >= floor) && lvl > deepest) deepest = lvl
+      })
+      return Math.max(2, Math.min(fullRings, deepest + 1))
+    },
+
     buildHierarchy(sample) {
       const rowsAll = (this.sampleData[sample] || []).filter(r => r && r.target)
       let rows = rowsAll
@@ -533,21 +735,24 @@ export default {
       }
       if (rows.length < 2) return null
       const root = { data: { target: sample, rank_code: 'R', taxid: -1, num_fragments_clade: 0, value: 100 }, children: [] }
-      const stack = [root]          // stack[k] = current open node at relative level k
-      let minDepth = Infinity
-      rows.forEach(r => { if (r.taxid !== -1 && r.depth < minDepth) minDepth = r.depth })
-      if (!isFinite(minDepth)) minDepth = 0
+      // Depth-stack keyed by each row's actual indentation depth. A row's parent
+      // is the most recent earlier row with a strictly smaller depth. This is
+      // independent of how many spaces each level is indented — the report
+      // indents subspecies (S1..S5) by 2 spaces per level, so a fixed "+1 per
+      // row" level index left holes in the stack and made every sibling after
+      // the first fall back to the root (detached arms). Comparing real depths
+      // fixes that and also tolerates skipped/partial ranks.
+      const stack = [{ node: root, depth: -Infinity }]
 
       rows.forEach(r => {
         if (r.taxid === -1) return            // skip synthetic base row
-        const level = Math.max(1, (r.depth - minDepth) + 1)
+        const depth = Number(r.depth) || 0
         const node = { data: r, children: [] }
-        // trim stack to the parent level
-        while (stack.length > level) stack.pop()
-        const parent = stack[stack.length - 1] || root
+        // pop any open nodes that are not ancestors of this row
+        while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop()
+        const parent = stack[stack.length - 1].node
         parent.children.push(node)
-        stack[level] = node
-        stack.length = level + 1
+        stack.push({ node, depth })
       })
 
       try {
@@ -562,6 +767,23 @@ export default {
     // ============ ZOOMABLE SUNBURST ============
     // back-compat alias (called by other code paths)
     drawSunburst(sample) { this.drawSampleCard(sample) },
+
+    // Reset a single sunburst back to its root (un-zoom). Uses the live API for
+    // an animated transition when available; otherwise clears the persisted
+    // focus and redraws (e.g. when the card is currently showing a leaf pie).
+    resetSunburst(sample) {
+      const api = this.sunburstApi[sample]
+      this.$set(this.sbFocus, sample, null)
+      if (api && typeof api.reset === 'function') {
+        api.reset()
+      } else {
+        this.drawSampleCard(sample)
+      }
+    },
+    // Reset every visible sunburst panel to its root.
+    resetAllSunbursts() {
+      this.visibleSamples.forEach(s => this.resetSunburst(s))
+    },
 
     // Click a slice to zoom: the clicked node expands to the full circle and its
     // subtree fills the rings (the classic zoomable sunburst). The current focus
@@ -588,9 +810,24 @@ export default {
         return
       }
 
-      const size = Math.min(chartEl.clientWidth || el.clientWidth || 360, 360) || 320
+      const minDial = inlineLegend ? 260 : 320
+      const availDial = Math.max(chartEl.clientWidth || el.clientWidth || 0, minDial)
+      const maxDial = inlineLegend ? 960 : 1400
+      const size = Math.min(maxDial, availDial)
+      // `rings` is the true depth of the tree; the partition is laid out over it
+      // so every node keeps its correct structural ring index.
       const rings = (root.height || 1) + 1
-      const ringUnit = (size / 2) / rings
+      // But we size the rings off the deepest *populated* level, not the deepest
+      // node. Kraken taxonomy frequently contains a single freak lineage that
+      // descends many extra ranks (e.g. one strain trailing out to indentation
+      // depth 62 while all the real species sit near depth 10). Dividing the
+      // radius by that inflated depth crushes the meaningful rings into the
+      // centre and makes the dial look "zoomed out". Capping at the populated
+      // depth lets the real content fill the SVG; rarer deeper nodes are clamped
+      // to the rim instead of shrinking everything.
+      const effRings = this.effectiveRings(root, rings)
+      const ringUnit = (size / 2) / effRings
+      const rMax = size / 2
       d3.partition().size([2 * Math.PI, rings])(root)
 
       // resolve persisted focus (by taxid) → default to root
@@ -603,20 +840,27 @@ export default {
 
       // map any node to its top-level group colour key
       const groupOf = d => {
-        let cur = d
-        while (cur.depth > 1 && cur.parent) cur = cur.parent
-        const gdata = cur.data.data
-        return this.commonGroup(sample, gdata) || gdata.target || 'other'
+        const gdata = d && d.data ? d.data.data : null
+        return this.legendNameForRow(sample, gdata)
       }
 
-      // legend refresh: rank-driven for panels, focus-children for the cards.
-      // This lets the panel's Rank dropdown change ONLY the legend; the dial
-      // itself re-frames solely on a slice click.
+      // Legend semantics:
+      // - At root: strictly show the selected rank (never substitute another rank).
+      // - After slice click (non-root focus): show direct children one level down.
       const refreshLegend = (f) => {
         if (legendRank) {
-          const items = this.rankLegendData(sample, legendRank)
-          if (inlineLegend) this.renderInlineLegend(legendEl, sample, items, this.rankLabel(legendRank))
-          else this.$set(this.legends, sample, items)
+          const useChildren = !!(f && f !== root)
+          const merged = useChildren
+            ? this.focusLegendData(sample, root, f)
+            : this.rankLegendData(sample, legendRank, f)
+          const title = useChildren ? 'Current level' : this.rankLabel(legendRank)
+          if (inlineLegend) {
+            this.renderInlineLegend(legendEl, sample, merged, title)
+          } else {
+            this.$set(this.legends, sample, merged)
+            this.$set(this.legendTitle, sample, title)
+            this.$set(this.legendPage, sample, 0)
+          }
         } else {
           this.buildLegend(sample, root, f)
         }
@@ -642,13 +886,15 @@ export default {
       const arc = d3.arc()
         .startAngle(d => d.x0).endAngle(d => d.x1)
         .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005)).padRadius(ringUnit * 1.5)
-        .innerRadius(d => d.y0 * ringUnit)
-        .outerRadius(d => Math.max(d.y0 * ringUnit, d.y1 * ringUnit - 1))
+        .innerRadius(d => Math.min(rMax, d.y0 * ringUnit))
+        .outerRadius(d => Math.min(rMax, Math.max(d.y0 * ringUnit, d.y1 * ringUnit - 1)))
 
       const svg = d3.select(chartEl).append('svg')
         .attr('viewBox', [-size / 2, -size / 2, size, size])
-        .attr('width', '100%')
-        .style('max-width', size + 'px')
+        .attr('preserveAspectRatio', 'xMidYMid meet')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('display', 'block')
         .style('font', '10px Inter, system-ui, sans-serif')
       const g = svg.append('g')
       const tip = d3.select(chartEl).append('div').attr('class', 'mtx-tip').style('opacity', 0)
@@ -673,11 +919,12 @@ export default {
         .on('mousemove', (ev, d) => {
           const data = d.data.data
           const cn = this.commonGroup(sample, data)
+          const label = this.displayTaxonName(sample, data)
           tip.style('opacity', 1)
             .style('left', (ev.offsetX + 14) + 'px')
             .style('top', (ev.offsetY + 8) + 'px')
-            .html(`<b>${data.target}</b>${cn ? ' <i>(' + cn + ')</i>' : ''}<br>` +
-              `${RANK_LABELS[data.rank_code] || data.rank_code} · taxid ${data.taxid}<br>` +
+            .html(`<b>${label}</b>${cn ? ' <i>(' + cn + ')</i>' : ''}<br>` +
+              `${this.rankLabel(data.rank_code)} · taxid ${data.taxid}<br>` +
               `${(+data.num_fragments_clade).toLocaleString()} reads · ${data.value}%`)
         })
         .on('mouseleave', () => tip.style('opacity', 0))
@@ -699,7 +946,7 @@ export default {
           // Propagate to all other loaded sunbursts by group/target name
           const nodeData = d.data && d.data.data
           if (nodeData) {
-            const zoomName = this.commonGroup(sample, nodeData) || nodeData.target
+            const zoomName = this.legendNameForRow(sample, nodeData)
             Object.keys(self.sunburstApi).forEach(s => {
               if (s === sample) return
               const api = self.sunburstApi[s]
@@ -739,6 +986,7 @@ export default {
       }
 
       this.$set(this.sunburstApi, sample, {
+        reset: () => zoomTo(root),
         zoomTaxid: (taxid) => {
           const hit = root.descendants().find(d => d.data && d.data.data && d.data.data.taxid === taxid)
           if (hit) zoomTo(hit)
@@ -748,7 +996,7 @@ export default {
           const hit = root.descendants().find(d => {
             if (!d.data || !d.data.data) return false
             const data = d.data.data
-            const grp = this.commonGroup(sample, data) || data.target
+            const grp = this.legendNameForRow(sample, data)
             return grp === name
           })
           if (hit) zoomTo(hit)
@@ -767,14 +1015,22 @@ export default {
 
     // Build legend rows from ALL taxa at a given rank (panel Rank dropdown).
     // No top-10 cap — the legend itself paginates.
-    rankLegendData(sample, rank) {
-      const all = this.topTaxaAll(sample, rank)
+    rankLegendData(sample, rank, focusNode = null) {
+      let withinTaxids = null
+      if (focusNode && typeof focusNode.descendants === 'function') {
+        withinTaxids = new Set(
+          focusNode.descendants()
+            .map(d => (d && d.data && d.data.data && d.data.data.taxid != null) ? String(d.data.data.taxid) : null)
+            .filter(v => v != null)
+        )
+      }
+      const all = this.topTaxaAll(sample, rank, { withinTaxids })
       return all.map(t => ({
-        name: t.group || t.name,
+        name: t.displayName || t.name,
         taxid: t.taxid,
         pct: t.pct != null ? +t.pct : 0,
         reads: t.reads,
-        color: this.groupColor(t.group || t.name)
+        color: this.groupColor(t.displayName || t.name)
       }))
     },
 
@@ -846,11 +1102,14 @@ export default {
     renderLeafPie(el, chartEl, legendEl, inlineLegend, sample, leaf, root, opts, groupOf, size) {
       const data = leaf.data.data
       const color = this.groupColor(groupOf(leaf))
-      const sz = Math.min(chartEl.clientWidth || size || 320, 360) || 320
+      const avail = chartEl.clientWidth || size || 320
+      const sz = Math.max(240, Math.min(avail, 720))
       const svg = d3.select(chartEl).append('svg')
         .attr('viewBox', [-sz / 2, -sz / 2, sz, sz])
-        .attr('width', '100%')
-        .style('max-width', sz + 'px')
+        .attr('preserveAspectRatio', 'xMidYMid meet')
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('display', 'block')
         .style('font', '10px Inter, system-ui, sans-serif')
       const g = svg.append('g')
       g.append('circle').attr('r', sz / 2 - 2).attr('fill', color).attr('fill-opacity', 0.92)
@@ -873,50 +1132,45 @@ export default {
 
       const cn = this.commonGroup(sample, data)
       const item = {
-        name: data.target,
+        name: this.legendNameForRow(sample, data),
         taxid: data.taxid,
         pct: +data.value,
         reads: +data.num_fragments_clade,
         color,
-        sub: `${RANK_LABELS[data.rank_code] || data.rank_code}` +
+        sub: `${this.rankLabel(data.rank_code)}` +
           `${cn ? ' · ' + cn : ''} · ${(+data.num_fragments_clade).toLocaleString()} reads · taxid ${data.taxid}`
       }
       if (inlineLegend) this.renderInlineLegend(legendEl, sample, [item], 'Selected taxon')
       else this.$set(this.legends, sample, [item])
     },
 
-    buildLegend(sample, part, focusNode) {
+    focusLegendData(sample, part, focusNode) {
       const focus = focusNode || part
       const baseNode = (focus && focus.children && focus.children.length)
         ? focus
         : ((focus && focus.parent && focus.parent.children && focus.parent.children.length) ? focus.parent : part)
+      const kids = (baseNode.children || [])
+      if (!kids.length) return []
 
-      const totals = {}
-      ;(baseNode.children || []).forEach(d => {
-        const data = d.data ? d.data.data : null
-        const name = data
-          ? (this.commonGroup(sample, data) || data.target)
-          : ((d.data && d.data.name) ? d.data.name : 'other')
-        if (!totals[name]) {
-          totals[name] = { value: 0, taxid: (data && data.taxid != null) ? data.taxid : null }
-        }
-        totals[name].value += (d.value || 0)
-      })
+      const total = d3.sum(kids.map(k => k.value || 0)) || 1
+      return kids
+        .map((d) => {
+          const data = d.data ? d.data.data : null
+          const name = data
+            ? this.displayTaxonName(sample, data)
+            : ((d.data && d.data.name) ? d.data.name : 'other')
+          return {
+            name,
+            taxid: (data && data.taxid != null) ? data.taxid : null,
+            pct: ((d.value || 0) / total) * 100,
+            color: this.groupColor(name)
+          }
+        })
+        .sort((a, b) => b.pct - a.pct)
+    },
 
-      if (!Object.keys(totals).length) {
-        this.$set(this.legends, sample, [])
-        return
-      }
-
-      const total = d3.sum(Object.values(totals).map(v => v.value)) || 1
-      const legend = Object.entries(totals)
-        .sort((a, b) => b[1].value - a[1].value)
-        .map(([name, v]) => ({
-          name,
-          taxid: v.taxid,
-          pct: (v.value / total) * 100,
-          color: this.groupColor(name)
-        }))
+    buildLegend(sample, part, focusNode) {
+      const legend = this.focusLegendData(sample, part, focusNode)
       this.$set(this.legends, sample, legend)
     },
 
@@ -959,26 +1213,37 @@ export default {
       rows.append('title').text(d => `${d.name}${d.common ? ' (' + d.common + ')' : ''} — ${d.reads.toLocaleString()} reads (${d.pct}%)`)
       rows.style('cursor', 'pointer').on('click', (ev, d) => this.setSelectedOrganism(d.name))
     },
+    // Horizontal bar chart: taxa on the y axis, read counts on the x axis, so
+    // bars grow left → right (one row per taxon).
     drawBar(el, data) {
-      const w = el.clientWidth || 420, h = 240, m = { l: 40, r: 12, t: 10, b: 64 }
-      const x = d3.scaleBand().domain(data.map(d => d.name)).range([m.l, w - m.r]).padding(0.25)
-      const y = d3.scaleLinear().domain([0, d3.max(data, d => d.reads)]).nice().range([h - m.b, m.t])
+      const w = el.clientWidth || 420, rowH = 24, m = { l: 150, r: 60, t: 8, b: 26 }
+      const h = data.length * rowH + m.t + m.b
+      const sel = d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism)
+      const x = d3.scaleLinear().domain([0, d3.max(data, d => d.reads) || 1]).nice().range([0, w - m.l - m.r])
+      const y = d3.scaleBand().domain(data.map(d => d.name)).range([m.t, h - m.b]).padding(0.22)
       const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', [0, 0, w, h])
-        .style('font', '10px Inter, system-ui, sans-serif')
-      svg.append('g').selectAll('rect').data(data).join('rect')
-        .attr('x', d => x(d.name)).attr('y', d => y(d.reads))
-        .attr('width', x.bandwidth()).attr('height', d => y(0) - y(d.reads))
-        .attr('rx', 3).attr('fill', d => this.groupColor(d.group))
-        .attr('stroke', d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism) ? '#f97316' : 'none')
-        .attr('stroke-width', d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism) ? 2 : 0)
+        .style('font', '11px Inter, system-ui, sans-serif')
+      const g = svg.append('g').attr('transform', `translate(${m.l},0)`)
+      const rows = g.selectAll('g.mtx-barrow').data(data).join('g').attr('class', 'mtx-barrow')
+      rows.append('rect')
+        .attr('x', 0).attr('y', d => y(d.name)).attr('height', y.bandwidth())
+        .attr('width', d => Math.max(0, x(d.reads))).attr('rx', 3)
+        .attr('fill', d => this.groupColor(d.group))
+        .attr('stroke', d => sel(d) ? '#f97316' : 'none')
+        .attr('stroke-width', d => sel(d) ? 2 : 0)
         .style('cursor', 'pointer')
         .on('click', (ev, d) => this.setSelectedOrganism(d.name))
-        .append('title').text(d => `${d.name}${d.common ? ' (' + d.common + ')' : ''} — ${d.reads.toLocaleString()} (${d.pct}%)`)
-      svg.append('g').attr('transform', `translate(0,${h - m.b})`).call(d3.axisBottom(x).tickSize(0))
-        .selectAll('text').attr('transform', 'rotate(-40)').attr('text-anchor', 'end').attr('dx', '-0.4em').attr('dy', '0.6em')
-        .text(d => this.trunc(d, 14)).attr('class', 'mtx-tick')
-      svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(this.kf))
-        .attr('class', 'mtx-axis')
+        .append('title').text(d => `${d.name}${d.common ? ' (' + d.common + ')' : ''} — ${d.reads.toLocaleString()} reads (${d.pct}%)`)
+      // taxon labels (y axis)
+      rows.append('text').attr('x', -10).attr('y', d => y(d.name) + y.bandwidth() / 2)
+        .attr('dy', '0.32em').attr('text-anchor', 'end').attr('class', 'mtx-tick')
+        .text(d => this.trunc(d.name, 22))
+      // value labels at the end of each bar
+      rows.append('text').attr('x', d => x(d.reads) + 6).attr('y', d => y(d.name) + y.bandwidth() / 2)
+        .attr('dy', '0.32em').attr('class', 'mtx-val').text(d => this.kf(d.reads))
+      // x axis (reads)
+      svg.append('g').attr('transform', `translate(${m.l},${h - m.b})`)
+        .call(d3.axisBottom(x).ticks(4).tickFormat(this.kf)).attr('class', 'mtx-axis')
     },
     drawTable(el, data) {
       const total = d3.sum(data, d => d.reads) || 1
@@ -1035,6 +1300,7 @@ export default {
 .mtx-bar-group { display: flex; flex-direction: column; gap: 8px; }
 .mtx-bar-controls { flex-direction: row; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
 .mtx-bar-label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--c-sub); font-weight: 600; }
+.mtx-bar-label-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .mtx-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .mtx-chip {
   display: inline-flex; align-items: center; gap: 7px;
@@ -1043,12 +1309,26 @@ export default {
   transition: all .15s ease;
 }
 .mtx-chip:hover { border-color: #9fb6cd; }
-.mtx-chip.active { background: var(--c-navy); color: #fff; border-color: var(--c-navy); }
+.mtx-chip.active { background: #f2f7fd; border-color: #8aa7c4; color: #264968; }
+.mtx-chip.focused { box-shadow: 0 0 0 2px rgba(39,71,102,.18); }
+.mtx-chip:not(.active) { opacity: .55; }
 .mtx-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: #c2ccd6; }
 .mtx-chip-dot.live { background: #2a9d8f; box-shadow: 0 0 0 0 rgba(42,157,143,.6); animation: mtxpulse 1.6s infinite; }
-.mtx-chip.active .mtx-chip-count { color: #cfe0ee; }
+.mtx-chip.active .mtx-chip-count { color: #395b79; }
 .mtx-chip-count { font-size: 11px; color: var(--c-sub); font-variant-numeric: tabular-nums; }
 .mtx-empty-chip { color: var(--c-sub); font-size: 13px; font-style: italic; }
+.mtx-chip-actions { display: inline-flex; align-items: center; gap: 6px; }
+.mtx-chip-action {
+  border: 1px solid #cfd8e3;
+  border-radius: 999px;
+  background: #fff;
+  color: #46617a;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.mtx-chip-action:hover { border-color: #8ea7bf; background: #f5f9fd; }
 
 .mtx-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--c-sub); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .mtx-field-search { min-width: 250px; }
@@ -1128,6 +1408,12 @@ export default {
   font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700;
   color: var(--c-sub); margin: 6px 2px 10px;
 }
+.mtx-section-label-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.mtx-section-label-row .mtx-btn.sm {
+  font-size: 11px; padding: 3px 9px; text-transform: none; letter-spacing: 0;
+}
 
 /* ---- grid + cards ---- */
 .mtx-grid {
@@ -1155,9 +1441,9 @@ export default {
 .mtx-card-actions { display: flex; align-items: center; gap: 6px; }
 .mtx-pill { font-size: 11px; background: var(--c-soft); color: var(--c-navy); padding: 3px 9px; border-radius: 999px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-.mtx-sunburst-body { display: flex; flex-wrap: wrap; gap: 18px; padding: 16px; align-items: center; }
-.mtx-sunburst { position: relative; flex: 1 1 220px; min-width: 200px; display: flex; justify-content: center; }
-.mtx-legend { flex: 1 1 160px; min-width: 150px; }
+.mtx-sunburst-body { display: flex; flex-direction: column; gap: 18px; padding: 16px; align-items: stretch; }
+.mtx-sunburst { position: relative; width: 100%; aspect-ratio: 1 / 1; display: flex; justify-content: center; align-items: center; }
+.mtx-legend { width: 100%; }
 .mtx-legend-title { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--c-sub); font-weight: 700; margin-bottom: 8px; }
 .mtx-legend ul { list-style: none; margin: 0; padding: 0; }
 .mtx-legend li { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
@@ -1170,8 +1456,8 @@ export default {
 
 /* ---- in-panel sunburst legend (right of the dial) ---- */
 .mtx-sb-wrap { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; width: 100%; }
-.mtx-sb-chart { position: relative; flex: 1 1 220px; min-width: 200px; display: flex; justify-content: center; }
-.mtx-sb-legend { flex: 1 1 170px; min-width: 150px; }
+.mtx-sb-chart { position: relative; flex: 1 1 320px; min-width: 280px; display: flex; justify-content: center; }
+.mtx-sb-legend { flex: 0 1 240px; min-width: 210px; }
 .mtx-sb-legend ul { list-style: none; margin: 0; padding: 0; }
 .mtx-sb-legend li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 3px 6px; font-size: 13px; }
 .mtx-sb-legend .mtx-legend-sub { flex: 1 1 100%; font-size: 11px; color: var(--c-sub); line-height: 1.3; margin-top: 1px; }
@@ -1179,6 +1465,17 @@ export default {
 
 .mtx-panel-body { padding: 12px 14px; min-height: 60px; }
 .mtx-nodata { color: var(--c-sub); font-size: 13px; font-style: italic; padding: 18px 4px; text-align: center; }
+
+.mtx-sunburst,
+.mtx-sb-chart {
+  aspect-ratio: 1 / 1;
+}
+.mtx-sunburst svg,
+.mtx-sb-chart svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 
 /* svg helpers */
 .mtx-explore >>> .mtx-tick { fill: var(--c-ink); }
@@ -1210,6 +1507,17 @@ export default {
 .mtx-explore >>> .mtx-pg-nav button:not(:disabled):hover { background: #eef3f7; }
 .mtx-explore >>> .mtx-pg-nav span { font-size: 11px; color: #6b8299; min-width: 40px; text-align: center; }
 .mtx-explore >>> .mtx-legend-nav { justify-content: flex-start; margin-top: 6px; border-top: 1px solid #eef2f6; padding-top: 6px; }
+.mtx-explore >>> .mtx-pg-nav-top-right { justify-content: flex-end; padding: 0 0 6px; }
+.mtx-explore >>> .mtx-pg-nav-top {
+  justify-content: flex-end;
+  width: 100%;
+  padding: 0 2px 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #eef2f6;
+}
+/* column wrapper: pagination is a full-width block above the chart/table */
+.mtx-explore >>> .mtx-paginated { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.mtx-explore >>> .mtx-paginated-chart { width: 100%; }
 
 /* blank */
 .mtx-blank { text-align: center; color: var(--c-sub); padding: 80px 20px; }
@@ -1220,5 +1528,10 @@ export default {
   0% { box-shadow: 0 0 0 0 rgba(42,157,143,.5); }
   70% { box-shadow: 0 0 0 7px rgba(42,157,143,0); }
   100% { box-shadow: 0 0 0 0 rgba(42,157,143,0); }
+}
+
+@media (max-width: 1024px) {
+  .mtx-sb-chart { flex-basis: 260px; min-width: 220px; }
+  .mtx-sb-legend { min-width: 180px; }
 }
 </style>

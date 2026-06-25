@@ -28,7 +28,7 @@
         <tbody>
           <tr v-for="(r, i) in pageRows" :key="i">
             <td>{{ r.sample }}</td>
-            <td><span class="mtx-sci">{{ r.target }}</span></td>
+            <td><span class="mtx-sci">{{ r.displayTarget }}</span></td>
             <td><span v-if="r.common" class="mtx-grp">{{ r.common }}</span><span v-else>—</span></td>
             <td>{{ r.rankLabel }}</td>
             <td class="n">{{ r.taxid }}</td>
@@ -49,7 +49,7 @@
 
 <script>
 import commonNames from '@/assets/taxon_common_names.json'
-const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', S1: 'Subspecies', S2: 'Subspecies', S3: 'Subspecies', U: 'Unclassified' }
+const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', U: 'Unclassified' }
 
 export default {
   name: 'DataTableTab',
@@ -67,12 +67,18 @@ export default {
         { key: 'taxid', label: 'TaxID', num: true },
         { key: 'num_fragments_clade', label: 'Reads', num: true },
         { key: 'value', label: '%', num: true }
-      ],
-      rankChoices: ['D', 'K', 'P', 'C', 'O', 'F', 'G', 'S', 'S1'].map(c => ({ code: c, label: RANK_LABELS[c] }))
+      ]
     }
   },
   computed: {
     sampleCount() { return Object.keys(this.sampleData || {}).length },
+    rankChoices() {
+      const present = new Set(this.rows.map(r => r.rank_code))
+      const base = ['D', 'K', 'P', 'C', 'O', 'F', 'G', 'S'].filter((c) => present.has(c))
+      const subs = Array.from(present).filter((c) => /^S\d+$/.test(c))
+        .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      return [...base, ...subs].map((code) => ({ code, label: this.rankLabel(code) }))
+    },
     rows() {
       const out = []
       Object.entries(this.sampleData || {}).forEach(([sample, list]) => {
@@ -82,7 +88,8 @@ export default {
           out.push({
             sample, target: r.target, taxid: r.taxid, value: r.value,
             num_fragments_clade: r.num_fragments_clade, rank_code: r.rank_code,
-            rankLabel: RANK_LABELS[r.rank_code] || r.rank_code,
+            displayTarget: this.displayTarget(r, map),
+            rankLabel: this.rankLabel(r.rank_code),
             common: this.commonGroup(r, map)
           })
         })
@@ -94,7 +101,7 @@ export default {
       if (this.rank) r = r.filter(x => x.rank_code === this.rank)
       if (this.search) {
         const q = this.search.toLowerCase()
-        r = r.filter(x => (x.target + ' ' + x.sample + ' ' + (x.common || '')).toLowerCase().includes(q))
+        r = r.filter(x => (x.target + ' ' + x.displayTarget + ' ' + x.sample + ' ' + (x.common || '')).toLowerCase().includes(q))
       }
       const k = this.sort.key, d = this.sort.dir
       return r.slice().sort((a, b) => {
@@ -108,6 +115,29 @@ export default {
   },
   watch: { search() { this.page = 0 }, rank() { this.page = 0 } },
   methods: {
+    isSubRank(code) { return /^S\d+$/.test(String(code || '')) },
+    rankLabel(code) {
+      if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
+      return RANK_LABELS[code] || code
+    },
+    subspeciesPath(row, map) {
+      if (!row || !this.isSubRank(row.rank_code)) return row ? row.target : ''
+      const parts = []
+      let cur = row
+      let guard = 0
+      while (cur && guard++ < 80) {
+        if (this.isSubRank(cur.rank_code)) parts.push(`${cur.rank_code} ${cur.target}`)
+        if (cur.parenttaxid == null) break
+        const parent = map[String(cur.parenttaxid)]
+        if (!parent) break
+        cur = parent
+        if (!this.isSubRank(cur.rank_code) && parts.length) break
+      }
+      return parts.reverse().join(' > ') || `${row.rank_code} ${row.target}`
+    },
+    displayTarget(row, map) {
+      return this.isSubRank(row.rank_code) ? this.subspeciesPath(row, map) : row.target
+    },
     commonGroup(row, map) {
       let cur = row, g = 0
       while (cur && g++ < 60) {

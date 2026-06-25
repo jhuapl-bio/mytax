@@ -143,7 +143,7 @@
 <script>
 import * as d3 from 'd3'
 
-const RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
+const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
 const CAT_COLOR = { core: '#1e6b97', shared: '#5aa9c9', unique: '#f0a35e' }
 
@@ -161,7 +161,7 @@ export default {
       query: '',
       sortField: 'nSamples',
       sortDir: 'desc',
-      ranks: RANKS.slice(),
+      ranks: BASE_RANKS.slice(),
       prevOptions: [0, 10, 25, 50, 75],
       subTabs: [
         { id: 'table', label: 'Frequency table' },
@@ -267,6 +267,7 @@ export default {
   },
   methods: {
     rankLabel(code) {
+      if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
       return ({ D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }[code]) || code
     },
     category(n) {
@@ -284,7 +285,10 @@ export default {
       })
       // Always keep Species in the list so the rank selector never loses it
       present.add('S')
-      const found = RANKS.filter((r) => present.has(r))
+      const base = BASE_RANKS.filter((r) => present.has(r))
+      const subs = Array.from(present).filter((r) => /^S\d+$/.test(r))
+        .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+      const found = [...base, ...subs]
       if (found.length) this.ranks = found
       // Always default to Species
       if (this.ranks.indexOf(this.rank) === -1) {

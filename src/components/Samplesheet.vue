@@ -157,7 +157,33 @@
                         </template>
                     </v-data-table> 
                 </div>
-                <span>Jobs in Queue: {{ queueLength }}</span>
+                <!-- ===== compact queue summary (always visible in drawer) ===== -->
+                <div class="mtx-queue-summary" v-if="!offlineMode">
+                    <div class="mtx-queue-summary-head">
+                        <span class="mtx-queue-title">Job queue</span>
+                        <span class="mtx-queue-total">{{ jobStats.total }} job{{ jobStats.total === 1 ? '' : 's' }}</span>
+                    </div>
+                    <div class="mtx-queue-chips">
+                        <span class="mtx-qchip running" v-if="jobStats.running">{{ jobStats.running }} running</span>
+                        <span class="mtx-qchip queued" v-if="jobStats.queued">{{ jobStats.queued }} queued</span>
+                        <span class="mtx-qchip error" v-if="jobStats.error">{{ jobStats.error }} error</span>
+                        <span class="mtx-qchip done" v-if="jobStats.finished">{{ jobStats.finished }} done</span>
+                        <span class="mtx-qchip paused" v-if="jobStats.paused">{{ jobStats.paused }} paused</span>
+                        <span class="mtx-qchip empty" v-if="!jobStats.total">No jobs yet</span>
+                    </div>
+                    <div class="mtx-queue-actions">
+                        <v-btn x-small depressed color="primary" @click="dialogAllJobs = true">
+                            <v-icon x-small left>mdi-format-list-checks</v-icon>View all jobs
+                        </v-btn>
+                        <v-btn x-small depressed :color="paused ? 'success' : 'grey lighten-2'" @click="paused = !paused">
+                            <v-icon x-small left>{{ paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>{{ paused ? 'Resume' : 'Pause' }}
+                        </v-btn>
+                        <v-btn x-small depressed color="orange darken-1" dark v-if="jobStats.running" @click="cancelAllRunning">
+                            <v-icon x-small left>mdi-cancel</v-icon>Cancel running
+                        </v-btn>
+                    </div>
+                </div>
+                <span v-else>Jobs in Queue: {{ queueLength }}</span>
                 <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
                 <div
                     class="mtx-upbox"
@@ -950,6 +976,83 @@
             </template>
             </v-data-iterator> 
         </v-dialog>
+        <!-- ===== consolidated full-width job queue ===== -->
+        <v-dialog v-model="dialogAllJobs" max-width="1100" scrollable>
+            <v-card>
+                <v-toolbar dark color="blue darken-3" dense flat>
+                    <v-icon left>mdi-format-list-checks</v-icon>
+                    <v-toolbar-title>Job queue — {{ jobStats.total }} job{{ jobStats.total === 1 ? '' : 's' }}</v-toolbar-title>
+                    <v-spacer></v-spacer>
+                    <v-btn icon @click="dialogAllJobs = false"><v-icon>mdi-close</v-icon></v-btn>
+                </v-toolbar>
+
+                <div class="mtx-jobs-toolbar">
+                    <div class="mtx-jobs-filters">
+                        <span class="mtx-jobfilter" :class="{ active: jobFilter==='all' }" @click="jobFilter='all'">All <b>{{ jobStats.total }}</b></span>
+                        <span class="mtx-jobfilter running" :class="{ active: jobFilter==='running' }" @click="jobFilter='running'">Running <b>{{ jobStats.running }}</b></span>
+                        <span class="mtx-jobfilter queued" :class="{ active: jobFilter==='queued' }" @click="jobFilter='queued'">Queued <b>{{ jobStats.queued }}</b></span>
+                        <span class="mtx-jobfilter error" :class="{ active: jobFilter==='error' }" @click="jobFilter='error'">Error <b>{{ jobStats.error }}</b></span>
+                        <span class="mtx-jobfilter done" :class="{ active: jobFilter==='done' }" @click="jobFilter='done'">Done <b>{{ jobStats.finished }}</b></span>
+                    </div>
+                    <v-spacer></v-spacer>
+                    <div class="mtx-jobs-bulk">
+                        <v-btn small depressed :color="paused ? 'success' : 'grey lighten-2'" @click="paused = !paused">
+                            <v-icon small left>{{ paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>{{ paused ? 'Resume queue' : 'Pause queue' }}
+                        </v-btn>
+                        <v-btn small depressed color="orange darken-1" dark :disabled="!jobStats.running" @click="cancelAllRunning">
+                            <v-icon small left>mdi-cancel</v-icon>Cancel all running
+                        </v-btn>
+                        <v-btn small depressed color="blue" dark :disabled="!jobStats.error" @click="rerunFailed">
+                            <v-icon small left>mdi-replay</v-icon>Rerun failed
+                        </v-btn>
+                    </div>
+                </div>
+
+                <v-card-text class="pa-0" style="height: 70vh;">
+                    <v-data-table
+                        :headers="jobHeaders"
+                        :items="filteredJobs"
+                        :items-per-page="25"
+                        :footer-props="{ 'items-per-page-options': [25, 50, 100, -1] }"
+                        dense
+                        class="mtx-jobs-table"
+                    >
+                        <template v-slot:item._sample="{ item }">
+                            <span class="mtx-job-sample">{{ item._sample }}</span>
+                        </template>
+                        <template v-slot:item.name="{ item }">
+                            {{ item.name || (item.sample && item.sample.demux ? 'Demux' : 'Classify') }}
+                            <span class="mtx-job-idx">#{{ item.index }}</span>
+                        </template>
+                        <template v-slot:item._state="{ item }">
+                            <span class="mtx-job-state" :class="item._state">
+                                <v-progress-circular v-if="item._state==='running'" indeterminate size="13" width="2" color="blue" class="mr-1"></v-progress-circular>
+                                <v-icon v-else x-small :color="stateColor(item._state)" class="mr-1">{{ stateIcon(item._state) }}</v-icon>
+                                {{ stateLabel(item._state) }}
+                            </span>
+                        </template>
+                        <template v-slot:item.filepath="{ item }">
+                            <span class="mtx-job-file" :title="item.filepath">{{ item.filepath }}</span>
+                        </template>
+                        <template v-slot:item.actions="{ item }">
+                            <v-btn icon x-small :disabled="!item.status.running" @click="cancelJob(item.index, item._sample)" title="Cancel job">
+                                <v-icon x-small>mdi-cancel</v-icon>
+                            </v-btn>
+                            <v-btn icon x-small :disabled="item.status.running" @click="start(item.index, item._sample)" title="Rerun job">
+                                <v-icon x-small>mdi-play-circle</v-icon>
+                            </v-btn>
+                            <v-btn icon x-small @click="reviewJob(item)" title="Review command & logs">
+                                <v-icon x-small>mdi-text-box-search</v-icon>
+                            </v-btn>
+                        </template>
+                        <template v-slot:no-data>
+                            <div class="pa-6 grey--text">No jobs match this filter.</div>
+                        </template>
+                    </v-data-table>
+                </v-card-text>
+            </v-card>
+        </v-dialog>
+
         <v-snackbar
             v-model="snack"
             :timeout="3000"
@@ -1142,6 +1245,32 @@
         queueSample(){
             return this.selectedQueueSample ? this.queueList[this.selectedQueueSample] : []
         },
+        // Flatten every sample's job list into one array so the whole queue can be
+        // seen at once, each tagged with its sample (the queueList key) and a
+        // single derived state.
+        allJobs(){
+            const out = []
+            const ql = this.queueList || {}
+            Object.keys(ql).forEach((sample) => {
+                (ql[sample] || []).forEach((job) => {
+                    out.push(Object.assign({}, job, { _sample: sample, _state: this.jobState(job) }))
+                })
+            })
+            return out
+        },
+        // Counts per state for the summary chips / filters.
+        jobStats(){
+            const c = { running: 0, queued: 0, error: 0, done: 0, historical: 0, paused: 0, preload: 0, total: 0 }
+            this.allJobs.forEach((j) => { c[j._state] = (c[j._state] || 0) + 1; c.total += 1 })
+            c.finished = c.done + c.historical
+            return c
+        },
+        filteredJobs(){
+            const f = this.jobFilter
+            if (!f || f === 'all') return this.allJobs
+            if (f === 'done') return this.allJobs.filter(j => j._state === 'done' || j._state === 'historical')
+            return this.allJobs.filter(j => j._state === f)
+        },
         
         icon () {
             if (this.selectedAllSamples) return 'mdi-checkbox-marked'
@@ -1202,6 +1331,15 @@
           dialogAdvanced: false,
           dialogQueue: false,
           dialogLogs: false,
+          dialogAllJobs: false,
+          jobFilter: 'all',
+          jobHeaders: [
+            { text: 'Sample', value: '_sample' },
+            { text: 'Job', value: 'name' },
+            { text: 'Status', value: '_state' },
+            { text: 'File', value: 'filepath' },
+            { text: 'Actions', value: 'actions', sortable: false },
+          ],
           attributes: [
             'run',
             'database', 
@@ -1552,6 +1690,41 @@
             if (this.offlineMode) return;
             this.$emit("sendMessage", {type: "cancel",  run: this.selectedRun,  index:index, sample: sample   });
         },
+        // Derive one status string from a job's status flags.
+        jobState(job){
+            const s = (job && job.status) || {}
+            if (s.running) return 'running'
+            if (s.error || (s.code != null && s.code !== 0 && !s.success)) return 'error'
+            if (s.success) return s.historical ? 'historical' : 'done'
+            if (s.paused) return 'paused'
+            if (s.preload) return 'preload'
+            return 'queued'
+        },
+        stateLabel(st){
+            return ({ running: 'Running', queued: 'Queued', error: 'Error', done: 'Done',
+                historical: 'Done (cached)', paused: 'Paused', preload: 'Preloaded' })[st] || st
+        },
+        stateColor(st){
+            return ({ running: 'blue', queued: 'grey', error: 'orange darken-1', done: 'green',
+                historical: 'green', paused: 'amber darken-2', preload: 'blue-grey' })[st] || 'grey'
+        },
+        stateIcon(st){
+            return ({ running: 'mdi-progress-clock', queued: 'mdi-tray-full', error: 'mdi-alert-box',
+                done: 'mdi-check-circle', historical: 'mdi-history', paused: 'mdi-pause-circle',
+                preload: 'mdi-file' })[st] || 'mdi-help-circle'
+        },
+        reviewJob(job){
+            this.selectedQueueJob = job
+            this.dialogQueue = true
+        },
+        cancelAllRunning(){
+            if (this.offlineMode) return;
+            this.allJobs.filter(j => j._state === 'running').forEach(j => this.cancelJob(j.index, j._sample))
+        },
+        rerunFailed(){
+            if (this.offlineMode) return;
+            this.allJobs.filter(j => j._state === 'error').forEach(j => this.start(j.index, j._sample))
+        },
         forceRestart(){
             if (this.offlineMode) return;
             this.$emit("sendMessage", {
@@ -1711,6 +1884,60 @@
 <style scoped>
 code {
     white-space: pre-wrap;
+}
+/* ===== compact queue summary (drawer) ===== */
+.mtx-queue-summary {
+    margin: 10px 4px 4px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+.mtx-queue-summary-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 6px;
+}
+.mtx-queue-title { font-size: 12px; font-weight: 700; letter-spacing: .03em; color: #334155; text-transform: uppercase; }
+.mtx-queue-total { font-size: 11px; color: #64748b; }
+.mtx-queue-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.mtx-qchip {
+    font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    background: #e2e8f0; color: #334155; line-height: 1.5;
+}
+.mtx-qchip.running { background: #dbeafe; color: #1d4ed8; }
+.mtx-qchip.queued  { background: #e2e8f0; color: #475569; }
+.mtx-qchip.error   { background: #ffedd5; color: #c2410c; }
+.mtx-qchip.done    { background: #dcfce7; color: #15803d; }
+.mtx-qchip.paused  { background: #fef3c7; color: #b45309; }
+.mtx-qchip.empty   { background: transparent; color: #94a3b8; font-weight: 500; padding-left: 0; }
+.mtx-queue-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ===== full-width jobs dialog ===== */
+.mtx-jobs-toolbar {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid #e2e8f0; background: #f8fafc;
+}
+.mtx-jobs-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.mtx-jobfilter {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+    background: #eef2f7; color: #475569; border: 1px solid transparent; user-select: none;
+}
+.mtx-jobfilter b { font-weight: 700; margin-left: 3px; }
+.mtx-jobfilter:hover { border-color: #cbd5e1; }
+.mtx-jobfilter.active { background: #1d4ed8; color: #fff; }
+.mtx-jobfilter.running.active { background: #2563eb; }
+.mtx-jobfilter.error.active   { background: #ea580c; }
+.mtx-jobfilter.done.active    { background: #16a34a; }
+.mtx-jobs-bulk { display: flex; flex-wrap: wrap; gap: 6px; }
+.mtx-job-sample { font-weight: 600; color: #1e293b; }
+.mtx-job-idx { font-size: 10px; color: #94a3b8; margin-left: 4px; }
+.mtx-job-state { display: inline-flex; align-items: center; font-size: 12px; font-weight: 600; }
+.mtx-job-state.error { color: #c2410c; }
+.mtx-job-state.running { color: #1d4ed8; }
+.mtx-job-state.done, .mtx-job-state.historical { color: #15803d; }
+.mtx-job-file {
+    display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; vertical-align: middle; font-size: 11.5px; color: #64748b;
 }
 /* ===== Kraken2 report upload drop box ===== */
 .mtx-upbox {

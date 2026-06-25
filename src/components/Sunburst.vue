@@ -21,13 +21,13 @@
 
 
 <template>
-  <v-container  style="padding-top: 10px;   " :ref="'boxContainer'">
+  <v-container style="padding-top: 10px;" ref="boxContainer">
     <v-row>
-      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0; pb-0"  style="padding-top: 10px; padding-bottom: 100px;   ">
-        <div :id="`sunburstDiv-${samplenameparsed}`">
+      <v-col :cols="12" :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0 pb-0" style="padding-top: 10px; padding-bottom: 100px;">
+        <div :id="`sunburstDiv-${samplenameparsed}`" class="sunburst-panel">
         </div>
       </v-col>
-      <v-col  :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0; pt-0 text-center">
+      <v-col :cols="12" :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0 pt-0 text-center">
         
         <div :id="`legend_text-${samplenameparsed}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
           <h5>Legend</h5>
@@ -38,7 +38,7 @@
             <span>Color is Relative to +/- Max Abundance at a Given Rank</span>
           </div>
         </div>
-        <div :id="`legend_wrapper-${samplenameparsed}` "
+        <div :id="`legend_wrapper-${samplenameparsed}`"
               style="position:relative; background: none; padding-bottom: 100px; background-opacity: 0.5; width: 100%; max-height: 200px; overflow-y:auto;overflow-x:auto">
         </div>  
       </v-col>
@@ -174,6 +174,7 @@
         calculateAbu: true,
         zoomed: null,
         radius: 0,
+        radialDomainMax: 1,
         maxRanks: 0,
         read_type: null,
         boundsLegendDeviation: {lower: -1, upper: 1},
@@ -409,12 +410,12 @@
         const svg = this.svg
         // const taxValues = this.taxValues
         const maxRadius = this.maxRadius
-        const pieHeight = this.height;
         // const focusOn = this.focusOn
         const x = this.x
         const y = this.y
         svg
-          .attr('viewBox', `${-maxRadius} ${-pieHeight / 2} ${maxRadius * 2} ${pieHeight}`)
+          .attr('viewBox', `${-maxRadius} ${-maxRadius} ${maxRadius * 2} ${maxRadius * 2}`)
+          .attr('preserveAspectRatio', 'xMidYMid meet')
         const radius = this.width / this.maxRanks
         this.radius = radius
         const middleArcLine = d => {
@@ -463,7 +464,7 @@
           .duration(750)
           .tween('scale', () => {
             const xd = d3.interpolate(x.domain(), [0,1]),
-              yd = d3.interpolate(y.domain(), [0, 1]);
+              yd = d3.interpolate(y.domain(), [0, this.radialDomainMax || 1]);
             return t => {
               x.domain(xd(t));
               y.domain(yd(t));
@@ -588,17 +589,24 @@
         div.select("#legendSVG-"+this.samplenameparsed).remove()
         legend_wrapper.html("")
         legend_wrapper.append('svg').attr("id", "legendSVG-"+this.samplenameparsed)
-        const pieHeight = this.height;
-        const maxRadius = Math.round(pieHeight / 2);
+
+        // Drive the chart off the actual container width so the dial fills the
+        // panel. Keep it square so the circle is never letter-boxed inside a
+        // tall SVG (which made the rings look tiny).
+        const maxRadius = this.computeMaxRadius()
         this.maxRadius = maxRadius
+
         let svg = div.append('svg')
-          .style('max-width', maxRadius * 2)
-          .style('max-height', this.height)
+          .attr('width', '100%')
+          .style('width', '100%')
+          .style('height', 'auto')
+          .style('display', 'block')
           .attr('id', "sunburst-"+this.samplenameparsed);
         this.svg = svg
         svg.selectAll(".slice").remove()
         svg.selectAll(".legendElement").remove()
-        div.style("width", maxRadius * 2)
+        div
+          .style("width", "100%")
         svg.append("g").attr('class', "globalg")
         const $this = this;
         setTimeout(()=>{ 
@@ -613,6 +621,16 @@
         return d3.stratify()
           .id(d => d.taxid)
           .parentId(d => d.parenttaxid)(data);
+      },
+      // Square radius derived from the live panel width, with a sane fallback
+      // when the container hasn't been laid out yet (e.g. an inactive tab).
+      computeMaxRadius(){
+        const div = d3.select("#sunburstDiv-" + this.samplenameparsed)
+        const node = div.node()
+        let containerWidth = node && node.clientWidth ? node.clientWidth : 0
+        if (!containerWidth) containerWidth = this.width || 600
+        const size = Math.max(120, containerWidth)
+        return Math.round(size / 2)
       },
       startSunburst(data){
         // const $this = this
@@ -631,9 +649,20 @@
           .range([0, 2 * Math.PI])
           .clamp(true);
         this.x = x
-        const maxRadius = this.maxRadius
-        const y = d3.scaleSqrt()
-          .range([maxRadius * .05, maxRadius]);
+        // Re-measure the container now that layout has settled (startSunburst
+        // runs inside a setTimeout) so the dial is sized off the real panel
+        // width rather than a stale/zero value.
+        const maxRadius = this.computeMaxRadius()
+        this.maxRadius = maxRadius
+        // Linear radial scale => every populated depth level (ring) gets an
+        // equal slice of the available radius. The domain is capped at the
+        // deepest populated level (radialDomainMax) and clamped, so the
+        // meaningful rings fill the panel and rare deep lineages sit at the rim
+        // instead of shrinking everything.
+        const y = d3.scaleLinear()
+          .domain([0, this.radialDomainMax || 1])
+          .range([maxRadius * .05, maxRadius])
+          .clamp(true);
         this.y = y
         
         this.updateColors()
@@ -722,6 +751,48 @@
         })
         this.Extent = extent
         this.taxValues = []
+
+        // ----------------------------------------------------------------
+        // Radial-extent fix.
+        //
+        // d3.partition normalises every node's y0/y1 into [0,1] by dividing
+        // by the DEEPEST node in the tree. Kraken reports frequently contain a
+        // single freak lineage that descends many ranks deeper than the bulk
+        // of the data (e.g. one strain at indentation depth 62 while all the
+        // real species sit at depth ~10). That lone deep thread stretches the
+        // domain, so the meaningful rings get crammed into the centre and the
+        // dial looks "zoomed out". Conversely a sample whose bulk sits at the
+        // deepest level fills the circle and looks "zoomed in".
+        //
+        // To make every sample fill the SVG consistently we cap the radial
+        // domain at the deepest *populated* level — a level that either has
+        // more than one node (real branching) or carries a non-trivial share
+        // of the reads. Nodes deeper than that still render, clamped to the
+        // outer rim, so nothing is hidden. Ring thickness then becomes
+        // svgRadius / (populated depth levels), which is what we want.
+        let rootReads = 0
+        Object.keys(partDepths).forEach((k) => {
+          partDepths[k].forEach((n) => {
+            const r = n.data.data.num_fragments_clade
+            if (r && r > rootReads) rootReads = r
+          })
+        })
+        const readFloor = rootReads * 0.005 // 0.5% of the largest clade
+        let radialMaxDepth = 0
+        Object.keys(partDepths).forEach((k) => {
+          const lvl = +k
+          const nodes = partDepths[k]
+          const reads = d3.sum(nodes, (n) => n.data.data.num_fragments_clade || 0)
+          const populated = nodes.length > 1 || reads >= readFloor
+          if (populated && lvl > radialMaxDepth) radialMaxDepth = lvl
+        })
+        // A node at structural depth k has partition y1 = (k+1)/(maxDepth+1).
+        // Capping at radialMaxDepth means the domain upper bound is the y1 of
+        // the deepest populated level.
+        this.radialDomainMax = maxDepth > 0
+          ? Math.min(1, (radialMaxDepth + 1) / (maxDepth + 1))
+          : 1
+
         // for (let i = maxDepth; i > 0; i--) {
           // partDepths[i].forEach((d) => {
             // !taxValues ? (taxValues = [],  this.childrenSelected += 1) : '';
@@ -824,7 +895,7 @@
       this.dimensions.windowHeight = window.innerHeight
       this.dimensions.windowWidth = window.innerWidth
       this.dimensions.height = this.$refs.boxContainer.clientHeight*2
-      this.dimensions.width = this.$refs.boxContainer.clientWidth*0.6
+      this.dimensions.width = this.$refs.boxContainer.clientWidth
       if (this.inputdata)
       {
         this.makeSunburst(this.inputdata)
@@ -835,6 +906,16 @@
   };
 </script>
 <style>
+  .sunburst-panel {
+    width: 100%;
+  }
+
+  .sunburst-panel svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
   .node rect {
   fill-opacity: .9;
   shape-rendering: crispEdges;
