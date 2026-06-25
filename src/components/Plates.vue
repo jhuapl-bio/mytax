@@ -4,7 +4,7 @@
         <v-col sm="12">
           <div class="mtx-plate-controls">
             <div class="mtx-plate-ctrl-wrap">
-              <span class="mtx-plate-ctrl-label">Top N <InfoIcon text="Maximum number of taxa shown on the heatmap x-axis per sample. Ranked by abundance — raise this to see more taxa, lower it to focus on the dominant ones." /></span>
+              <span class="mtx-plate-ctrl-label">Top N <InfoIcon text="Maximum number of taxa shown on the heatmap (left axis) per sample. Ranked by abundance — raise this to see more taxa, lower it to focus on the dominant ones." /></span>
               <v-text-field
                 hint="Maximum Taxa Seen per sample"
                 v-model="top_n"
@@ -48,7 +48,7 @@
             </div>
           </div>
           <div v-if="selectedAttribute === 'G'" class="mtx-drill-note">
-            <span v-if="!isDrilledToSpecies">Click a genus cell (or x-axis label) to drill down to species.</span>
+            <span v-if="!isDrilledToSpecies">Click a genus cell (or its label on the left axis) to drill down to species.</span>
             <span v-else>Species under genus {{ drillTarget }} across samples.</span>
           </div>
           <div class="mtx-plate-canvas">
@@ -440,17 +440,22 @@
             }
           })
         }
-          this.boxHeight = 30
-          var margin = {top: 210, right: 24, bottom: 30, left: 160}
-        this.height = this.boxHeight*samplenames.length + margin.top + margin.bottom
-        d3.select(`#platesDiv`).style("height", `${this.height} px`)  
-        
+          // Axes are swapped vs. the original layout: taxa now run down the
+          // left (Y) axis, one row per taxon, and samples run across the top
+          // (X) axis. So the plot height scales with the number of taxa and the
+          // left margin is widened to fit (longer) taxon names; the top margin
+          // holds the rotated sample labels.
+          this.boxHeight = 26
+          var margin = {top: 150, right: 24, bottom: 30, left: 260}
+        this.height = this.boxHeight*unique_taxids.length + margin.top + margin.bottom
+        d3.select(`#platesDiv`).style("height", `${this.height} px`)
+
         var width = Math.max(280, this.width - margin.left - margin.right),
-              height = Math.max(120, this.height - margin.top - margin.bottom);  
-        
+              height = Math.max(120, this.height - margin.top - margin.bottom);
+
         this.margin = margin
-              
-        this.boxWidth = Math.max(18, (width / unique_taxids.length))
+
+        this.boxWidth = Math.max(18, (width / Math.max(1, samplenames.length)))
         
         
         var svgRoot = div.append('svg').attr("id", "svgPlates")
@@ -464,8 +469,10 @@
               .attr("transform",
                     "translate(" + margin.left + "," + margin.top + ")");
         
-        var taxidScale = d3.scaleBand().domain(unique_taxids).range([6, Math.max(12, width - 6)]).padding(0.14)
-        var sampleScale = d3.scaleBand().domain(samplenames).range([0, height]).padding(0.11)
+        // taxidScale is now the vertical (Y) scale — one band per taxon.
+        // sampleScale is now the horizontal (X) scale — one band per sample.
+        var taxidScale = d3.scaleBand().domain(unique_taxids).range([0, height]).padding(0.14)
+        var sampleScale = d3.scaleBand().domain(samplenames).range([6, Math.max(12, width - 6)]).padding(0.11)
         // Append to <body> (not the plot div) and set positioning inline so it is
         // never affected by scoped CSS, container overflow, or ancestor transforms
         // — it tracks the cursor in viewport coordinates.
@@ -497,27 +504,30 @@
         // faded parent-group bands (drawn behind the cells), colour-matched to the
         // right-hand parent legend. Names live in the legend, not under the axis,
         // so the labels no longer overlap.
+        // Parent-group bands are now horizontal rows (taxa run down the Y axis),
+        // each spanning the full plot width, with a thin left accent that ties
+        // the band to its swatch in the parent legend.
         const bgLayer = svg.append('g').attr('class', 'mtx-group-bg')
         const _bw = taxidScale.bandwidth()
         const _gap = Math.max(0, taxidScale.step() - _bw)
         groupSpans.forEach((grp) => {
-          const xs = grp.members.map((n) => taxidScale(n)).filter((v) => v != null)
-          if (!xs.length) return
-          const x0 = Math.min(...xs) - _gap / 2
-          const x1 = Math.max(...xs) + _bw + _gap / 2
+          const ys = grp.members.map((n) => taxidScale(n)).filter((v) => v != null)
+          if (!ys.length) return
+          const y0 = Math.min(...ys) - _gap / 2
+          const y1 = Math.max(...ys) + _bw + _gap / 2
           const c = this.parentColorScale ? this.parentColorScale(grp.source) : '#9bb6cf'
           bgLayer.append('rect')
             .attr('class', 'mtx-band')
             .attr('data-src', grp.source)
-            .attr('x', x0).attr('y', -6)
-            .attr('width', Math.max(1, x1 - x0)).attr('height', height + 12)
+            .attr('x', -6).attr('y', y0)
+            .attr('width', width + 12).attr('height', Math.max(1, y1 - y0))
             .attr('fill', c).attr('opacity', 0.12)
-          // thin top accent ties the band to its legend swatch
+          // thin left accent ties the band to its legend swatch
           bgLayer.append('rect')
             .attr('class', 'mtx-band-accent')
             .attr('data-src', grp.source)
-            .attr('x', x0).attr('y', -6)
-            .attr('width', Math.max(1, x1 - x0)).attr('height', 3)
+            .attr('x', -6).attr('y', y0)
+            .attr('width', 3).attr('height', Math.max(1, y1 - y0))
             .attr('fill', c).attr('opacity', 0.7)
         })
 
@@ -525,8 +535,8 @@
                         .data(tops)
                         .join("g").attr("class", "nodestop2")
                         .attr('transform', (d) => {
-                          return `translate(${taxidScale(d.top) || 0}, ${sampleScale(d.name) || 0})`
-                        });  
+                          return `translate(${sampleScale(d.name) || 0}, ${taxidScale(d.top) || 0})`
+                        });
 
 
 
@@ -534,10 +544,10 @@
         
         
         
-        node.append("rect") 
+        node.append("rect")
           .attr('class', 'mtx-heat-cell')
-          .attr("width", Math.max(1, taxidScale.bandwidth())) 
-          .attr("height", Math.max(1, sampleScale.bandwidth()))
+          .attr("width", Math.max(1, sampleScale.bandwidth()))
+          .attr("height", Math.max(1, taxidScale.bandwidth()))
           .attr('rx', 2)
           .attr('ry', 2)
           .style("fill", (d)=>{
@@ -604,25 +614,26 @@
               this.drillIntoGenus(d.top)
             }
           })
-        // Fewer characters when there are many columns, so labels stay legible and
-        // don't balloon the viewBox once it's fit to content.
-        const nCols = unique_taxids.length
+        // Truncate sample labels (top axis) by how many sample columns there
+        // are, and taxon labels (left axis) by how much room the left margin
+        // gives us. Full names are always available via the <title> tooltip.
+        const nCols = samplenames.length
         const maxChars = nCols > 34 ? 12 : nCols > 22 ? 16 : nCols > 14 ? 20 : 26
         const truncateTick = (name) => {
           const s = `${name || ''}`
           return s.length > maxChars ? `${s.slice(0, maxChars - 1)}...` : s
         }
+        const maxCharsY = Math.max(10, Math.floor((margin.left - 16) / 7))
+        const truncateTickY = (name) => {
+          const s = `${name || ''}`
+          return s.length > maxCharsY ? `${s.slice(0, maxCharsY - 1)}...` : s
+        }
 
-        // Add scales to axis
+        // ---- X axis: sample names across the top ----
         var x_axis = d3.axisTop()
-                      .scale(taxidScale)
-                      .tickFormat((d,i) => { 
-                        return truncateTick(d)
-                      });
-                      
-        //Append group and insert axis
-        
-        let sizes = {}
+                      .scale(sampleScale)
+                      .tickFormat((d) => truncateTick(d));
+
         let sizesY = {}
         let x = svg
           .append("g")
@@ -636,58 +647,50 @@
             .attr('dy', '-1.2em')
             .style("text-anchor", "start")
             .style('fill', '#5a6b7b')
-            .style("cursor", (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) ? 'pointer' : 'default')
 
         x.selectAll('.tick text')
           .append('title')
           .text((d) => `${d}`)
 
-        x.selectAll('.tick')
-          .on('click', (e, d) => {
-            if (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) {
-              this.drillIntoGenus(d)
-            }
-          })
-            
-          
         // Keep top labels single-line; wrapped tspans can spill into the first cell row.
-
         x.selectAll('text')
           .style("font-size", '1px')
           .each(getSizeX)
           .style("font-size", function(d) {  return Math.min(11, Math.max(9, sizesY[d])) + "px"; })
-            
-            
-        
-        // Add scales to axis
+
+        // ---- Y axis: taxa down the left side (click a genus to drill in) ----
         var y_axis = d3.axisLeft()
-                      .scale(sampleScale);
+                      .scale(taxidScale)
+                      .tickFormat((d) => truncateTickY(d));
         let y = svg
           .append("g")
-          .attr("transform", 
+          .attr("transform",
                     "translate(0,0)")
           .attr("class", "yAxis")
           .style("font-size", '1px')
           .call(y_axis);
-          
-          y.selectAll('text') // select all the text elements 
+
+          y.selectAll('text') // select all the text elements
           .style("font-size", '12px')
           .style('fill', '#5a6b7b')
-          // .each(getSizeY)
-          // .style("font-size", function(d) {  return sizes[d] + "px"; });
-          
-          // function getSizeY(d) {
-          //   var bbox = this.getBBox(),
-          //     cbbox = $this.margin.left + ($this.margin.left/2),
-          //     scale = Math.min(cbbox/bbox.width/1.2, $this.boxWidth);
-          //   sizes[d] = scale
-          //   return d
-          // }
+          .style("cursor", (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) ? 'pointer' : 'default')
+
+          y.selectAll('.tick text')
+            .append('title')
+            .text((d) => `${d}`)
+
+          y.selectAll('.tick')
+            .on('click', (e, d) => {
+              if (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) {
+                this.drillIntoGenus(d)
+              }
+            })
+
           function getSizeX(d) {
 
             var bbox = this.getBBox(),
               cbbox = $this.margin.top,
-              scale = Math.min(cbbox / Math.max(1, bbox.height), Math.max(16, taxidScale.bandwidth()) / Math.max(1, bbox.width));
+              scale = Math.min(cbbox / Math.max(1, bbox.height), Math.max(16, sampleScale.bandwidth()) / Math.max(1, bbox.width));
             sizesY[d] = scale
             return d
           }
