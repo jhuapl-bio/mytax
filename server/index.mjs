@@ -12,6 +12,7 @@ import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
 import { storage } from './storage.mjs';
 import  { broadcastToAllActiveConnections } from './messenger.mjs';
+import { resolveSilhouette, resolveSvg } from './phylopic.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 // App and server
@@ -47,6 +48,68 @@ app.get('/', (req, res) => {
 app.get('/ws', (req, res) => {
     logger.info("Welcome to Mytax2")
     res.status(200).send("Welcome to Mytax Version 2");
+});
+
+// PhyloPic silhouette proxy: resolve a taxon scientific name to a hosted
+// silhouette URL server-side (avoids browser CORS against api.phylopic.org).
+// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
+app.get('/phylopic', async (req, res) => {
+    // Permissive CORS so the dev frontend (e.g. :8080) can call this endpoint.
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    try {
+        const name = String(req.query.name || '').trim();
+        if (!name) {
+            res.status(400).json({ error: 'missing name' });
+            return;
+        }
+        const lineage = String(req.query.lineage || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const result = await resolveSilhouette(name, lineage);
+        // Let browsers/CDNs cache the (small) JSON lookup for a day.
+        res.header('Cache-Control', 'public, max-age=86400');
+        res.status(200).json({ name, result: result || null });
+    } catch (err) {
+        logger.error(`phylopic resolve error: ${err && err.message ? err.message : err}`);
+        res.status(200).json({ name: req.query.name || null, result: null });
+    }
+});
+
+// PhyloPic SVG stream: resolve a taxon name and send the silhouette's SVG
+// markup straight to the frontend (rendered inline). The SVG is fetched in
+// memory server-side and never written to disk.
+// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
+app.get('/phylopic/svg', async (req, res) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    res.header('Access-Control-Expose-Headers', 'X-Phylopic-Attribution, X-Phylopic-Page');
+    try {
+        const name = String(req.query.name || '').trim();
+        if (!name) {
+            res.status(400).send('missing name');
+            return;
+        }
+        const lineage = String(req.query.lineage || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const resolved = await resolveSvg(name, lineage);
+        if (!resolved || !resolved.svg) {
+            res.status(404).send('');
+            return;
+        }
+        if (resolved.attribution) {
+            res.header('X-Phylopic-Attribution', encodeURIComponent(resolved.attribution));
+        }
+        if (resolved.pageUrl) res.header('X-Phylopic-Page', resolved.pageUrl);
+        res.header('Cache-Control', 'public, max-age=86400');
+        res.type('image/svg+xml').status(200).send(resolved.svg);
+    } catch (err) {
+        logger.error(`phylopic svg error: ${err && err.message ? err.message : err}`);
+        res.status(404).send('');
+    }
 });
 
 

@@ -9,7 +9,7 @@
       <div class="mtx-heat-hero-title-wrap">
         <div class="mtx-heat-kicker">Comparative Taxonomy</div>
         <h2 class="mtx-heat-hero-title">Sample Heatmap</h2>
-        <p class="mtx-heat-hero-sub">Taxa are shown on the top axis. Hover a cell to inspect exact values and click a genus to drill into species.</p>
+        <p class="mtx-heat-hero-sub">Organisms run down the left axis and samples across the top. Hover a cell to inspect exact values and click a genus to drill into species.</p>
       </div>
       <div class="mtx-heat-hero-stats">
         <div class="mtx-stat">
@@ -17,7 +17,7 @@
           <strong>{{ sampleKeys.length }}</strong>
         </div>
         <div class="mtx-stat mtx-stat-rank">
-          <span class="k">Rank <InfoIcon text="Taxonomic rank used to group taxa on the heatmap x-axis. Switch between Domain, Phylum, Class, Order, Family, Genus, and Species." /></span>
+          <span class="k">Rank <InfoIcon text="Taxonomic rank used to group taxa on the heatmap's left (Y) axis. Switch between Domain, Phylum, Class, Order, Family, Genus, and Species." /></span>
           <v-select
             v-model="selectedAttribute"
             :items="ranks"

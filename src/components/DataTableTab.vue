@@ -28,7 +28,12 @@
         <tbody>
           <tr v-for="(r, i) in pageRows" :key="i">
             <td>{{ r.sample }}</td>
-            <td><span class="mtx-sci">{{ r.displayTarget }}</span></td>
+            <td>
+              <span class="mtx-tx">
+                <PhyloPicIcon :name="r.target" :lineage="r.lineage" :size="22" class="mtx-tx-icon" />
+                <span class="mtx-sci">{{ r.displayTarget }}</span>
+              </span>
+            </td>
             <td><span v-if="r.common" class="mtx-grp">{{ r.common }}</span><span v-else>—</span></td>
             <td>{{ r.rankLabel }}</td>
             <td class="n">{{ r.taxid }}</td>
@@ -49,10 +54,13 @@
 
 <script>
 import commonNames from '@/assets/taxon_common_names.json'
+import PhyloPicIcon from '@/components/PhyloPicIcon.vue'
+import { prefetchSvg } from '@/services/phylopic'
 const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', U: 'Unclassified' }
 
 export default {
   name: 'DataTableTab',
+  components: { PhyloPicIcon },
   props: { sampleData: { type: Object, default: () => ({}) } },
   filters: { n(v) { return (+v || 0).toLocaleString() } },
   data() {
@@ -90,7 +98,8 @@ export default {
             num_fragments_clade: r.num_fragments_clade, rank_code: r.rank_code,
             displayTarget: this.displayTarget(r, map),
             rankLabel: this.rankLabel(r.rank_code),
-            common: this.commonGroup(r, map)
+            common: this.commonGroup(r, map),
+            lineage: this.lineageNames(r, map)
           })
         })
       })
@@ -113,8 +122,31 @@ export default {
     pageCount() { return Math.max(1, Math.ceil(this.filtered.length / this.pageSize)) },
     pageRows() { return this.filtered.slice(this.page * this.pageSize, (this.page + 1) * this.pageSize) }
   },
-  watch: { search() { this.page = 0 }, rank() { this.page = 0 } },
+  watch: {
+    search() { this.page = 0 },
+    rank() { this.page = 0 },
+    // Only warm silhouettes for the rows actually on screen (the current page).
+    // Anything already resolved is reused from the shared service cache, here or
+    // in any other tab that uses the icons.
+    pageRows() { this.warmSilhouettes() }
+  },
+  mounted() { this.warmSilhouettes() },
   methods: {
+    // Resolve silhouettes for the CURRENT PAGE only, deduped by taxon (the same
+    // taxon recurs across samples). The service cache (memory + localStorage)
+    // skips anything already seen instantly, so paging back is free.
+    warmSilhouettes() {
+      const seen = new Set()
+      const items = []
+      this.pageRows.forEach((r) => {
+        if (!r || !r.target) return
+        const key = `${r.target}|${(r.lineage || []).join(',')}`
+        if (seen.has(key)) return
+        seen.add(key)
+        items.push({ name: r.target, lineage: r.lineage })
+      })
+      if (items.length) prefetchSvg(items, 5)
+    },
     isSubRank(code) { return /^S\d+$/.test(String(code || '')) },
     rankLabel(code) {
       if (/^S\d+$/.test(String(code || ''))) return `Subspecies (${code})`
@@ -137,6 +169,19 @@ export default {
     },
     displayTarget(row, map) {
       return this.isSubRank(row.rank_code) ? this.subspeciesPath(row, map) : row.target
+    },
+    // Ancestor scientific names, specific -> general, used as a PhyloPic
+    // fallback so a taxon with no silhouette of its own borrows its nearest
+    // ancestor's (e.g. species -> genus -> family).
+    lineageNames(row, map) {
+      const names = []
+      let cur = map[String(row.parenttaxid)]
+      let g = 0
+      while (cur && g++ < 60) {
+        if (cur.taxid !== -1 && cur.target) names.push(cur.target)
+        cur = map[String(cur.parenttaxid)]
+      }
+      return names
     },
     commonGroup(row, map) {
       let cur = row, g = 0
@@ -168,6 +213,8 @@ export default {
 .mtx-dt-table th.n, .mtx-dt-table td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .mtx-dt-table td { padding: 8px 12px; border-bottom: 1px solid #eef3f7; }
 .mtx-dt-table tr:hover td { background: #f8fbfe; }
+.mtx-tx { display: inline-flex; align-items: center; gap: 8px; }
+.mtx-tx-icon { flex: 0 0 auto; }
 .mtx-sci { font-style: italic; }
 .mtx-grp { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #eef3f7; color: #274766; text-transform: capitalize; }
 .mtx-dt-empty { text-align: center; color: #8a97a4; font-style: italic; padding: 28px; }
