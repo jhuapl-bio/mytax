@@ -369,7 +369,7 @@ export default {
 
         const marker = L.marker([lat, lon], { icon: this.segIcon(members, isCluster) })
         marker.bindTooltip(this.clusterTip(members, isCluster), {
-          direction: 'top', offset: [0, -6], opacity: 0.92
+          direction: 'top', offset: [0, -6], opacity: 1, className: 'mtx-map-tip'
         })
         marker.on('click', () => {
           if (isCluster && this.mapZoom < maxZoom) {
@@ -397,10 +397,13 @@ export default {
       const size = Math.ceil(2 * R + pad * 2)
       const c = size / 2
       let inner
+      let ringColor
       if (count === 1 && !isCluster) {
         const m = members[0]
+        ringColor = m.color
         inner = `<circle cx="${c}" cy="${c}" r="${R}" fill="${m.color}" stroke="#fff" stroke-width="1.6"/>`
       } else {
+        ringColor = '#1e6b97'
         const ir = R * 0.5
         const pie = d3.pie().sort(null).value(() => 1)(members)
         const arc = d3.arc().innerRadius(ir).outerRadius(R)
@@ -413,18 +416,35 @@ export default {
           `font-weight="700" fill="#274766">${count}</text>`
         inner = `<g transform="translate(${c},${c})">${wedges}${label}</g>`
       }
+      // expanding "sonar" ring drawn behind the dot to signal live activity
+      const ring = `<circle class="mtx-pulse-ring" cx="${c}" cy="${c}" r="${R}" ` +
+        `fill="none" stroke="${ringColor}" stroke-width="2.2"/>`
       const svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" ` +
-        `xmlns="http://www.w3.org/2000/svg" style="overflow:visible">${inner}</svg>`
+        `xmlns="http://www.w3.org/2000/svg" style="overflow:visible">${ring}${inner}</svg>`
       return L.divIcon({ className: 'mtx-seg-icon', html: svg, iconSize: [size, size], iconAnchor: [c, c] })
     },
     clusterTip(members, isCluster) {
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
       if (members.length === 1) {
         const p = members[0]
-        return `${p.sample} · ${p.reads.toLocaleString()} reads` + (p.top ? ` · ${p.top}` : '')
+        const sub = [`${p.reads.toLocaleString()} reads`].concat(p.top ? [esc(p.top)] : []).join(' · ')
+        return `<div class="mtx-tt">` +
+          `<span class="mtx-tt-dot" style="background:${esc(p.color)}"></span>` +
+          `<span class="mtx-tt-name">${esc(p.sample)}</span>` +
+          `<span class="mtx-tt-sub">${sub}</span></div>`
       }
-      const names = members.map(m => m.sample).join(', ')
+      const max = 4
+      const shown = members.slice(0, max)
+      const rows = shown.map(m =>
+        `<span class="mtx-tt-li"><span class="mtx-tt-dot" style="background:${esc(m.color)}"></span>${esc(m.sample)}</span>`
+      ).join('')
+      const more = members.length > max ? `<span class="mtx-tt-more">+${members.length - max} more</span>` : ''
       const action = isCluster ? 'click to zoom in' : 'click to inspect'
-      return `${members.length} samples: ${names} (${action})`
+      return `<div class="mtx-tt mtx-tt-multi">` +
+        `<div class="mtx-tt-hd">${members.length} samples</div>` +
+        `<div class="mtx-tt-list">${rows}${more}</div>` +
+        `<div class="mtx-tt-foot">${action}</div></div>`
     },
     openGroup(members) {
       this.selectedGroup = members.map(m => m.sample)
@@ -650,6 +670,22 @@ export default {
 .mtx-map ::v-deep .mtx-seg-icon { cursor: pointer; filter: drop-shadow(0 2px 3px rgba(20,56,84,.28)); }
 .mtx-map ::v-deep .mtx-seg-icon svg { transition: transform .12s ease; }
 .mtx-map ::v-deep .mtx-seg-icon:hover svg { transform: scale(1.08); }
+/* live "sonar" pulse emanating from each marker */
+.mtx-map ::v-deep .mtx-seg-icon .mtx-pulse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mtx-marker-pulse 2s cubic-bezier(.3,.1,.3,1) infinite;
+  will-change: transform, opacity;
+}
+.mtx-map ::v-deep .mtx-seg-icon:hover .mtx-pulse-ring { animation-duration: 1.3s; }
+@keyframes mtx-marker-pulse {
+  0%   { transform: scale(.7); opacity: .5; }
+  70%  { opacity: 0; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mtx-map ::v-deep .mtx-seg-icon .mtx-pulse-ring { animation: none; opacity: 0; }
+}
 
 /* per-location sample chips in the dock */
 .mtx-dock-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px 2px; }
@@ -663,4 +699,32 @@ export default {
 .mtx-map ::v-deep .leaflet-popup-content { margin: 8px 10px; }
 .mtx-map ::v-deep .mtx-leaflet-pop { font-size: 12px; line-height: 1.35; color: #1f2937; }
 .mtx-map ::v-deep .mtx-leaflet-pop strong { color: #274766; font-size: 13px; }
+
+/* ---- compact hover tooltip on markers ---- */
+.mtx-map ::v-deep .leaflet-tooltip.mtx-map-tip {
+  background: #16263a;
+  color: #e6edf3;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11.5px;
+  line-height: 1.3;
+  box-shadow: 0 6px 18px rgba(8, 22, 38, .32);
+  white-space: nowrap;
+}
+.mtx-map ::v-deep .leaflet-tooltip.mtx-map-tip::before { border-top-color: #16263a; }
+.mtx-map ::v-deep .mtx-tt { display: flex; align-items: center; gap: 6px; }
+.mtx-map ::v-deep .mtx-tt-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.mtx-map ::v-deep .mtx-tt-name { font-weight: 700; color: #fff; }
+.mtx-map ::v-deep .mtx-tt-sub { color: #9fb3c8; font-variant-numeric: tabular-nums; }
+.mtx-map ::v-deep .mtx-tt-multi { display: block; min-width: 120px; }
+.mtx-map ::v-deep .mtx-tt-hd { font-weight: 700; color: #fff; margin-bottom: 4px; }
+.mtx-map ::v-deep .mtx-tt-list { display: flex; flex-direction: column; gap: 2px; }
+.mtx-map ::v-deep .mtx-tt-li { display: flex; align-items: center; gap: 6px; color: #d3dde7; }
+.mtx-map ::v-deep .mtx-tt-more { color: #7d93a8; font-size: 10.5px; margin-top: 1px; }
+.mtx-map ::v-deep .mtx-tt-foot {
+  margin-top: 5px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.12);
+  color: #7d93a8; font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+}
 </style>

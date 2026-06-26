@@ -63,25 +63,37 @@
                     >
                     
                         <template v-slot:item.status="{ item }">
-                        <v-icon v-if=" item.status.preload">
-                            mdi-file
-                        </v-icon>
-                        <v-icon  color="success" v-else-if="item.status.success">
-                            mdi-check-circle
-                        </v-icon>
-                        <v-progress-circular
-                            indeterminate v-else-if="item.status.running"
-                            color="blue" small size="15"
-                        ></v-progress-circular>
-                        <v-tooltip bottom v-else>
-                            <template v-slot:activator="{ on }">
-                                <v-icon v-on="on" color="warning"  @click="selectedQueueSample = item.sample; dialogJobs = true">
-                                    mdi-exclamation
-                                </v-icon>
-                            </template>
-                            {{ item.status.error && item.status.error.length >=1 ? pasteLine(item.status.error) : 'Error in Completing Job' }}
-                        </v-tooltip>
-                            
+                        <div class="mtx-status-cell">
+                            <!-- One composite status badge per sample:
+                                 yellow = files waiting in the queue (number = how many)
+                                 green  = all done (listening for new reads if watching)
+                                 red    = can't establish watching / a job failed
+                                 The number in the middle = items still in this sample's
+                                 queue; hover shows a % complete + error breakdown. The
+                                 DNA helix spins while a report is being generated. -->
+                            <v-tooltip bottom content-class="mtx-qbadge-tipwrap">
+                                <template v-slot:activator="{ on }">
+                                    <span v-on="on"
+                                        class="mtx-qbadge"
+                                        :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': item.status.running }]"
+                                        @click="selectedQueueSample = item.sample; dialogJobs = true">
+                                        <v-icon v-if="item.status.running" x-small class="mtx-qbadge-dna mtx-dna-spin">mdi-dna</v-icon>
+                                        <span class="mtx-qbadge-num">{{ sampleBadge(item).num }}</span>
+                                    </span>
+                                </template>
+                                <div class="mtx-qbadge-tip">
+                                    <div class="mtx-qbadge-tip-h">{{ item.sample }} — {{ sampleBadge(item).label }}</div>
+                                    <table class="mtx-qbadge-table">
+                                        <tr><td>In queue</td><td>{{ sampleQueue(item.sample).pending }}</td></tr>
+                                        <tr><td>Running</td><td>{{ sampleQueue(item.sample).running }}</td></tr>
+                                        <tr><td>Completed</td><td>{{ sampleQueue(item.sample).done }} / {{ sampleQueue(item.sample).total }}</td></tr>
+                                        <tr v-if="sampleQueue(item.sample).error"><td>Errors</td><td class="mtx-qbadge-err">{{ sampleQueue(item.sample).error }}</td></tr>
+                                        <tr><td>% complete</td><td>{{ sampleQueue(item.sample).percent }}%</td></tr>
+                                        <tr><td>Listening</td><td>{{ isWatching(item) ? 'yes (real-time)' : 'no' }}</td></tr>
+                                    </table>
+                                </div>
+                            </v-tooltip>
+                        </div>
                         </template>
                         <template v-slot:item.origin="{ item }">
                             <v-tooltip bottom>
@@ -172,6 +184,9 @@
                         <span class="mtx-qchip empty" v-if="!jobStats.total">No jobs yet</span>
                     </div>
                     <div class="mtx-queue-actions">
+                        <v-btn x-small depressed color="indigo darken-1" dark @click="dialogQueueBoard = true">
+                            <v-icon x-small left>mdi-rotate-3d-variant</v-icon>Queue board
+                        </v-btn>
                         <v-btn x-small depressed color="primary" @click="dialogAllJobs = true">
                             <v-icon x-small left>mdi-format-list-checks</v-icon>View all jobs
                         </v-btn>
@@ -185,6 +200,26 @@
                 </div>
                 <span v-else>Jobs in Queue: {{ queueLength }}</span>
                 <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
+                <!-- Quick-access buttons near the sample table -->
+                <div class="mtx-quick-actions" v-if="!offlineMode">
+                    <v-tooltip bottom>
+                        <template v-slot:activator="{ on }">
+                            <v-btn small depressed color="primary" v-on="on" @click="dialog = true" class="mr-2">
+                                <v-icon small left>mdi-plus</v-icon>Add Entry to Samplesheet
+                            </v-btn>
+                        </template>
+                        Add a new sample entry to the samplesheet
+                    </v-tooltip>
+                    <v-tooltip bottom>
+                        <template v-slot:activator="{ on }">
+                            <v-btn small depressed color="info" v-on="on" @click="forceRestart()">
+                                <v-icon small left>mdi-restart</v-icon>Rerun All Jobs
+                            </v-btn>
+                        </template>
+                        Restart all jobs for this run
+                    </v-tooltip>
+                </div>
+
                 <div
                     class="mtx-upbox"
                     :class="{ 'mtx-upbox--over': uploadDragOver }"
@@ -235,14 +270,6 @@
                 View Logging
             </v-tooltip>
             
-            <v-tooltip  bottom v-if="!offlineMode">
-                <template v-slot:activator="{ on }">
-                    <v-btn  v-on="on" fab class="mx-2" color="info"  x-small @click="forceRestart()">
-                        <v-icon>mdi-restart</v-icon>
-                    </v-btn>
-                </template>
-                Restart All Jobs
-            </v-tooltip>
             <v-tooltip bottom  v-if="!offlineMode">
                 <template v-slot:activator="{ on }">
                     <v-btn color="primary "
@@ -289,24 +316,6 @@
                 max-width="720px"
                 scrollable
                 >
-                <template v-slot:activator="{ on, attrs }">
-
-                    <v-btn fab
-                        color="primary"
-                        dark  x-small
-                        class="mx-2" v-on="on"
-                        v-bind="attrs"
-
-                        >
-                        <v-tooltip bottom >
-                            <template v-slot:activator="{ on }">
-                                <v-icon  v-on="on">mdi-plus</v-icon>
-                            </template>
-                            Add Entry To Samplesheet
-                        </v-tooltip>
-                    </v-btn>
-
-                </template>
                 <v-card class="mtx-add-card">
                     <v-card-title class="mtx-add-title">
                         <v-icon left color="primary">mdi-flask-outline</v-icon>
@@ -977,6 +986,20 @@
             </v-data-iterator> 
         </v-dialog>
         <!-- ===== consolidated full-width job queue ===== -->
+        <!-- Full-screen live queue board (round-robin visualisation + reorder) -->
+        <v-dialog v-model="dialogQueueBoard" fullscreen transition="dialog-bottom-transition">
+            <QueueBoard
+                :queueList="queueList"
+                :board="queueBoard"
+                :selectedRun="selectedRun"
+                @close="dialogQueueBoard = false"
+                @reorder-lanes="onReorderLanes"
+                @prioritize="onPrioritizeJob"
+                @rerun="(p) => start(p.index, p.sample)"
+                @cancel="(p) => cancelJob(p.index, p.sample)"
+            />
+        </v-dialog>
+
         <v-dialog v-model="dialogAllJobs" max-width="1100" scrollable>
             <v-card>
                 <v-toolbar dark color="blue darken-3" dense flat>
@@ -1081,8 +1104,9 @@
   import * as d3 from 'd3'
   import path from "path"
   import _ from 'lodash';
+  import QueueBoard from '@/components/QueueBoard'
 
-  export default { 
+  export default {
     name: 'Samplesheet',
     props: [
         "status",
@@ -1099,16 +1123,17 @@
         'current', 
         'logs', 
         'bundleconfig', 
-        'queueList', 
-        'anyRunning', 
-        'queueLength', 
+        'queueList',
+        'anyRunning',
+        'queueLength',
         'pausedServer',
         "statussent",
-        "offlineMode"
+        "offlineMode",
+        "queueBoard"
     ],
     components: {
         VueJsonToCsv,
-        
+        QueueBoard,
     },
     updated: function(){
       const $this = this;
@@ -1332,6 +1357,7 @@
           dialogQueue: false,
           dialogLogs: false,
           dialogAllJobs: false,
+          dialogQueueBoard: false,
           jobFilter: 'all',
           jobHeaders: [
             { text: 'Sample', value: '_sample' },
@@ -1690,28 +1716,104 @@
             if (this.offlineMode) return;
             this.$emit("sendMessage", {type: "cancel",  run: this.selectedRun,  index:index, sample: sample   });
         },
+        // count of in-flight jobs for a sample, shown in the DNA tooltip
+        runningCount(item){
+            try{
+                const list = item && this.queueList && this.queueList[item.sample]
+                if (!Array.isArray(list)) return 0
+                return list.filter(j => j && j.status && j.status.running).length
+            } catch (e){ return 0 }
+        },
+        // Per-sample queue breakdown used by the status badge + its hover table.
+        sampleQueue(sample){
+            const out = { total: 0, done: 0, running: 0, queued: 0, error: 0, pending: 0, percent: 0 }
+            const list = this.queueList && this.queueList[sample]
+            if (!Array.isArray(list)) return out
+            list.forEach((j) => {
+                if (!j) return
+                const st = this.jobState(j)
+                out.total += 1
+                if (st === 'running') out.running += 1
+                else if (st === 'done' || st === 'historical') out.done += 1
+                else if (st === 'error') out.error += 1
+                else if (st === 'cancelled') { /* not counted as pending or done */ }
+                else out.queued += 1 // queued / paused / preload
+            })
+            out.pending = out.running + out.queued
+            out.percent = out.total ? Math.round((out.done / out.total) * 100) : 0
+            return out
+        },
+        // Map the breakdown + watch state to a single coloured badge.
+        sampleBadge(item){
+            const q = this.sampleQueue(item.sample)
+            const watching = this.isWatching(item)
+            if (q.pending > 0){
+                return { color: 'yellow', num: q.pending,
+                    label: `${q.pending} ${q.pending === 1 ? 'file' : 'files'} waiting to be analyzed` }
+            }
+            if (q.error > 0){
+                return { color: 'red', num: q.error,
+                    label: `${q.error} ${q.error === 1 ? 'job' : 'jobs'} failed — check logs` }
+            }
+            if (q.total > 0){
+                return { color: 'green', num: q.done,
+                    label: watching ? 'All done — listening for new reads' : 'All done' }
+            }
+            // nothing queued yet
+            if (watching){
+                return { color: 'green', num: 0, label: 'Listening for new reads' }
+            }
+            return { color: 'red', num: 0, label: 'Not able to establish watching / read reports' }
+        },
+        // QueueBoard: drag-reorder the barcode/sample rotation
+        onReorderLanes(samples){
+            if (this.offlineMode) return;
+            this.$emit("sendMessage", { type: "setLaneOrder", run: this.selectedRun, samples });
+        },
+        // QueueBoard: bump a single fastq to run next
+        onPrioritizeJob(p){
+            if (this.offlineMode) return;
+            this.$emit("sendMessage", { type: "prioritizeJob", run: this.selectedRun, sample: p.sample, index: p.index });
+        },
+        // A sample is "watching" when real-time watch mode is active on the
+        // backend (status.watching) — falls back to the per-sample/config watch
+        // flag for samples whose status hasn't been refreshed yet.
+        isWatching(item){
+            if (!item) return false
+            const st = item.status || {}
+            if (st.watching === true) return true
+            if (st.watching === false) return false
+            const cfgWatch = item.config && item.config.watch
+            return !!(item.watch || cfgWatch) && (item.origin || 'server') === 'server'
+        },
         // Derive one status string from a job's status flags.
+        // NOTE: kraken2 prints its normal progress ("Loading database... done",
+        // "N sequences processed") to STDERR, which we capture into status.error.
+        // So a non-empty status.error does NOT mean the job failed. Only treat a
+        // job as errored when it explicitly finished unsuccessfully (success ===
+        // false, or a non-zero exit code).
         jobState(job){
             const s = (job && job.status) || {}
             if (s.running) return 'running'
-            if (s.error || (s.code != null && s.code !== 0 && !s.success)) return 'error'
-            if (s.success) return s.historical ? 'historical' : 'done'
+            if (s.cancelled) return 'cancelled'
+            if (s.success === true) return s.historical ? 'historical' : 'done'
+            if (s.success === false || (s.code != null && s.code !== 0)) return 'error'
             if (s.paused) return 'paused'
             if (s.preload) return 'preload'
             return 'queued'
         },
         stateLabel(st){
             return ({ running: 'Running', queued: 'Queued', error: 'Error', done: 'Done',
-                historical: 'Done (cached)', paused: 'Paused', preload: 'Preloaded' })[st] || st
+                historical: 'Done (cached)', paused: 'Paused', preload: 'Preloaded', cancelled: 'Cancelled' })[st] || st
         },
         stateColor(st){
             return ({ running: 'blue', queued: 'grey', error: 'orange darken-1', done: 'green',
-                historical: 'green', paused: 'amber darken-2', preload: 'blue-grey' })[st] || 'grey'
+                historical: 'green', paused: 'amber darken-2', preload: 'blue-grey', cancelled: 'grey darken-1' })[st] || 'grey'
         },
         stateIcon(st){
             return ({ running: 'mdi-progress-clock', queued: 'mdi-tray-full', error: 'mdi-alert-box',
                 done: 'mdi-check-circle', historical: 'mdi-history', paused: 'mdi-pause-circle',
-                preload: 'mdi-file' })[st] || 'mdi-help-circle'
+                preload: 'mdi-file', cancelled: 'mdi-cancel' })[st] || 'mdi-help-circle'
         },
         reviewJob(job){
             this.selectedQueueJob = job
@@ -2001,6 +2103,12 @@ code {
     align-items: center;
 }
 .mtx-upbox-input { display: none; }
+/* ===== quick-action buttons above upload box ===== */
+.mtx-quick-actions {
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px 4px;
+}
 /* ===== sample source tags ===== */
 .mtx-src-tag {
     display: inline-flex;
@@ -2077,4 +2185,78 @@ code {
 .v-data-table /deep/ .v-data-table__wrapper {
 	overflow: unset;
 }
+
+/* ===== sample status cell ===== */
+.mtx-status-cell {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+/* pulsing green light = sample is being watched for new reads in real time */
+.mtx-watch-light {
+	display: inline-block;
+	width: 11px;
+	height: 11px;
+	border-radius: 50%;
+	background: #22c55e;
+	flex-shrink: 0;
+	animation: mtx-watch-pulse 1.8s ease-in-out infinite;
+}
+@keyframes mtx-watch-pulse {
+	0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.6); }
+	70%  { box-shadow: 0 0 0 7px rgba(34,197,94,0); }
+	100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+/* animated DNA helix = a report is actively being generated for this sample */
+.mtx-k2-active { display:inline-flex; align-items:center; }
+.mtx-dna-spin {
+	animation: mtx-dna-throb 1.2s ease-in-out infinite;
+	transform-origin: center;
+}
+@keyframes mtx-dna-throb {
+	0%   { transform: rotate(0deg) scale(1);    opacity: .65; }
+	50%  { transform: rotate(180deg) scale(1.18); opacity: 1; }
+	100% { transform: rotate(360deg) scale(1);    opacity: .65; }
+}
+
+/* composite per-sample status badge: coloured ring + count in the middle */
+.mtx-qbadge {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border-radius: 50%;
+	cursor: pointer;
+	font-weight: 700;
+	font-size: 0.8rem;
+	color: #1f2937;
+	border: 2.5px solid #cbd5e1;
+	background: #f8fafc;
+	transition: transform .1s ease, box-shadow .1s ease;
+}
+.mtx-qbadge:hover { transform: scale(1.08); }
+.mtx-qbadge-num { line-height: 1; }
+.mtx-qbadge-dna { position: absolute; top: -7px; right: -7px; color: #2563eb !important; }
+/* yellow = work waiting in the queue */
+.mtx-qbadge--yellow { border-color: #f59e0b; background: #fef3c7; color: #92400e; }
+/* green = all done / listening */
+.mtx-qbadge--green  { border-color: #22c55e; background: #dcfce7; color: #166534; }
+/* red = can't watch / read, or a job failed */
+.mtx-qbadge--red    { border-color: #ef4444; background: #fee2e2; color: #991b1b; }
+/* pulse while a report is actively generating */
+.mtx-qbadge--running { animation: mtx-qbadge-pulse 1.4s ease-in-out infinite; }
+@keyframes mtx-qbadge-pulse {
+	0%   { box-shadow: 0 0 0 0 rgba(37,99,235,.45); }
+	70%  { box-shadow: 0 0 0 8px rgba(37,99,235,0); }
+	100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); }
+}
+/* hover detail table */
+.mtx-qbadge-tip { min-width: 210px; }
+.mtx-qbadge-tip-h { font-weight: 700; margin-bottom: 6px; }
+.mtx-qbadge-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.mtx-qbadge-table td { padding: 2px 6px; }
+.mtx-qbadge-table td:last-child { text-align: right; font-weight: 600; }
+.mtx-qbadge-err { color: #fca5a5; }
 </style>

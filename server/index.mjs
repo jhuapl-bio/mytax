@@ -11,7 +11,7 @@ import {Orchestrator} from "./server.mjs"
 import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
 import { storage } from './storage.mjs';
-import  { broadcastToAllActiveConnections } from './messenger.mjs';
+import  { broadcastToAllActiveConnections, startRunUpdateFlusher } from './messenger.mjs';
 import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
@@ -39,7 +39,21 @@ let params = {}
     }
 // }
 
-let io = new Server(server, params);
+let io = new Server(server, {
+    ...params,
+    // A full.report for a dense metagenome easily exceeds socket.io's default
+    // 1MB frame limit. When a single payload blows past that limit the server
+    // closes the connection -> this was the "connection lost then regained"
+    // symptom while streaming reports for large samples. 100MB of headroom.
+    maxHttpBufferSize: 1e8,
+    // When 400 fastqs land at once the event loop is briefly saturated and the
+    // default 20s ping timeout can lapse, dropping otherwise-healthy clients.
+    // A longer timeout + steady interval keeps connections alive through bursts.
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    // Compress large report frames on the wire (skip tiny control messages).
+    perMessageDeflate: { threshold: 1024 },
+});
 
 app.get('/', (req, res) => {
     logger.info("Welcome to Mytax2")
@@ -125,7 +139,10 @@ app.get('/phylopic/svg', async (req, res) => {
 ensureIndexBuilding();
 
 logger.info(`Orchestrator creation...`)
-storage.orchestrator = new Orchestrator(); 
+storage.orchestrator = new Orchestrator();
+// Start the batched, run-scoped update flusher (single 'runUpdate' frame per
+// window for whichever run each client is viewing).
+startRunUpdateFlusher();
 
 
 io.on('connection', (ws) => {
@@ -168,7 +185,9 @@ io.on('connection', (ws) => {
 
   ws.emit("message", { "message": "Connection established with server" });
   ws.on('disconnect', () => {
-    storage.activeConnections.delete(userId); 
+    storage.activeConnections.delete(userId);
+    // Stop scoping live updates to this (now gone) connection's run.
+    storage.selectedRuns.delete(userId);
     logger.info(`User disconnected! ID: ${userId}`);
   });
   ws.on("getStatus", async (msg) => {
@@ -188,7 +207,7 @@ io.on('connection', (ws) => {
   ws.emit("sendQueueStatus",  storage.orchestrator.getQueueStatus() );
   ws.on('downloaddb', (msg) => {
     try {
-      storage.orchestrator.downloadfile(msg.database);
+      storage.orchestrator.downloadfile(msg.database, msg.confirm === true);
     } catch (err) {
       logger.error(err); 
     }
@@ -235,7 +254,35 @@ io.on('connection', (ws) => {
     logger.info(`${msg.index}: ${msg.sample}-${msg.run}, canceling....`)
     storage.orchestrator.cancel(msg.index, msg.sample, msg.run)
   })
-  ws.on("getReportPath", async () => { 
+  // --- live queue-board controls ------------------------------------------
+  // Client asks for the current round-robin play order for a run.
+  ws.on('getQueueBoard', (msg) => {
+    try {
+      const run = msg && msg.run
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  // Drag-reorder the barcode/sample rotation (tier-1 order).
+  ws.on('setLaneOrder', (msg) => {
+    try {
+      storage.orchestrator.setLaneOrder(msg.run, msg.samples)
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  // Bump a single fastq to run next.
+  ws.on('prioritizeJob', (msg) => {
+    try {
+      storage.orchestrator.prioritizeJob(msg.run, msg.sample, msg.index)
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  ws.on("getReportPath", async () => {
     try{
       ws.emit("reportSavePath", { data: process.env.reports });
     } catch(err){
@@ -308,12 +355,19 @@ io.on('connection', (ws) => {
   })
   ws.on('getRunInformation', (msg) => {
     try{
-        let i=0 
-        logger.info(`Getting Run information ${msg.run}` ) 
+        let i=0
+        logger.info(`Getting Run information ${msg.run}` )
+        // Record which run THIS connection is viewing so live updates are scoped
+        // to it (and the other run's 1000s of job frames don't clog this socket).
+        if (msg && msg.run){
+          storage.selectedRuns.set(userId, msg.run)
+          // hand the viewer the current round-robin board straight away
+          try { ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run)) } catch (e) { logger.error(e) }
+        }
         storage.orchestrator.getRunInformation(msg.run)
-    } catch(err){ 
+    } catch(err){
         logger.error(err)
-    } 
+    }
   })
   ws.on('load', (msg) => {
     try{

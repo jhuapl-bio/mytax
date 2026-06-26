@@ -22,16 +22,32 @@
     </v-tooltip>
     <v-tooltip  bottom v-if="selectedRun">
       <template v-slot:activator="{ on }">
-        <v-btn fab 
-            dark  x-small @click="deleteRun  "
+        <v-btn fab
+            dark  x-small @click="confirmDelete = true"
             class="mx-2 warning"  v-on="on"
             >
             <v-icon  >mdi-recycle</v-icon>
-            
+
         </v-btn>
       </template>
       Delete CURRENTLY selected run
     </v-tooltip>
+
+    <!-- Delete confirmation dialog -->
+    <v-dialog v-model="confirmDelete" max-width="420px">
+      <v-card>
+        <v-card-title class="headline">Delete Run</v-card-title>
+        <v-card-text>
+          Are you sure you want to delete run <strong>{{ selectedRun }}</strong>? This action cannot be undone.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="confirmDelete = false">Cancel</v-btn>
+          <v-btn color="warning" text @click="deleteRun">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="dialog"  max-width="600px">
       <v-card>
         <v-card-title>
@@ -81,6 +97,7 @@ export default {
   data() {
     return {
       dialog: false,
+      confirmDelete: false,
       formData: {
         runName: 'TestRun',
         selectedPath: '', // default value for Report Path
@@ -130,7 +147,13 @@ export default {
     },
   },
   mounted() {
-    
+    // If the parent already has a reportSavePath, use it immediately.
+    // Otherwise ask the server for it so the field isn't blank.
+    if (this.reportSavePath) {
+      this.formData.selectedPath = this.reportSavePath;
+    } else {
+      this.$emit("sendMessage", { type: "getReportPath" });
+    }
   },
   methods: {
     getReportPath(){
@@ -153,18 +176,20 @@ export default {
     addRun(){
       let $this = this
       this.$emit("sendMessage", {
-        type: "addRun", 
-        samplesheet: [], 
+        type: "addRun",
+        samplesheet: [],
         run: $this.formData.runName,
-        report: $this.finalReportPath, 
+        report: $this.finalReportPath,
         "message" : `Add Run ${$this.formData.runName} `
       });
+      this.$emit("runAdded", $this.formData.runName);
       this.closeDialog()
     },
     deleteRun(){
+      this.confirmDelete = false;
       this.$emit("sendMessage", {
-          type: "deleteRun", 
-          run: this.selectedRun, 
+          type: "deleteRun",
+          run: this.selectedRun,
           "message" : `Delete Run ${this.selectedRun} `
       });
     },

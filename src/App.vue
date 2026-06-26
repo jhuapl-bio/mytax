@@ -230,12 +230,18 @@
                   </template>
                   <template v-slot:selection="{ item }">
                     {{ item.key }} <v-spacer vertical></v-spacer>
-                      <v-progress-circular :indeterminate="true" top
-                        stream
-                        class="mr-2"
-                        size="14"  color="blue lighten-2"
-                        v-if="item.downloading" >
-                      </v-progress-circular>
+                      <template v-if="item.downloading">
+                        <v-progress-circular
+                          :indeterminate="item.progress == null"
+                          :value="item.progress || 0"
+                          :rotate="-90"
+                          class="mr-1"
+                          size="18" width="2" color="blue lighten-2" >
+                        </v-progress-circular>
+                        <span v-if="item.progress != null" class="caption blue--text text--lighten-1 mr-2">
+                          {{ item.progress }}%
+                        </span>
+                      </template>
                       <v-icon v-else
                         :color="item.size != 0 ? 'green' : 'orange lighten-1' "
                       >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
@@ -245,6 +251,16 @@
                 <v-btn class="ml-1" @click="canceldownload" v-if="database.downloading" icon small>
                   <v-icon>mdi-cancel</v-icon>
                 </v-btn>
+              </div>
+              <v-progress-linear
+                v-if="isOnline && database.downloading"
+                :indeterminate="database.progress == null"
+                :value="database.progress || 0"
+                height="6" rounded color="blue lighten-1" class="mt-1" >
+              </v-progress-linear>
+              <div v-if="isOnline && database.downloading" class="caption grey--text mt-1">
+                Downloading {{ database.key }}
+                <span v-if="database.progress != null">— {{ database.progress }}%</span>
               </div>
             </section>
 
@@ -270,6 +286,7 @@
                     v-if="isOnline"
                     ref="addRun"
                     @sendMessage="sendMessage"
+                    @runAdded="onRunAdded"
                     :selectedRun="selectedRun"
                     :samples="selectedsamplesAll"
                     :pathOptions="pathOptions"
@@ -322,6 +339,7 @@
         :samplesheet="samplesheet"
         :queueLength="queueLength"
         :queueList="queueList"
+        :queueBoard="queueBoard"
         :databases="databases"
         :selectedsamples="selectedsamples"
         :bundleconfig="bundleconfig"
@@ -503,12 +521,12 @@
             <v-icon small left>mdi-broom</v-icon>Clear demo/uploaded
           </v-btn>
         </div>
-        <v-row class="ml-4 pb-0">
-          
+        <v-row class="ml-4 pb-0 mtx-main-row">
+
           <v-col
               sm="12"
               id=""
-              class="overflow-y-auto  my-0"
+              class="my-0 mtx-main-col"
           >
               <v-tabs
                 v-model="tab"
@@ -523,7 +541,7 @@
                 </v-tab>
               </v-tabs>
 
-              <v-tabs-items v-model="tab"
+              <v-tabs-items v-model="tab" class="mtx-tab-scroll"
               >
 
               <v-tab-item
@@ -700,8 +718,9 @@ export default {
                 width: 550,
                 borderSize: 6
             },
-            runs: [], 
+            runs: [],
             selectedRun: null,
+            pendingRunSelect: null,
             anyRunning: false,
             pausedServer: false,
             selectedsamplesAll: [],
@@ -772,8 +791,9 @@ export default {
             filepath: "sample_metagenome.second.report",
             tab: 0, 
             gpu: false,
-            statussent: null, 
+            statussent: null,
             queueList: {},
+            queueBoard: {},
             drawerDragging: false,
             tabs: [
                 {
@@ -824,7 +844,13 @@ export default {
       },
       selectedRun(val){
         if (val){
+          // Drop the previous run's samples AND queue so a 1600-job run doesn't
+          // linger (or keep taking incremental updates) after switching to a
+          // small run. The server also re-scopes live updates to `val` on the
+          // getRunInformation below, and a fresh snapshot rehydrates everything.
           this.selectedsamplesAll = []
+          this.queueList = {}
+          this.queueBoard = {}
           this.loadMeta()
           this.sendMessage({
             run: val,
@@ -891,6 +917,10 @@ export default {
 
     },
     methods: {
+      onRunAdded(runName) {
+        // Store the new run name so the next "runs" socket event auto-selects it.
+        this.pendingRunSelect = runName
+      },
       generateUserId() {
         return `user_${Math.random().toString(36)}`;
       },
@@ -979,6 +1009,9 @@ export default {
             let historical = queue.every((f)=>{return f.status.historical})
             let waiting = queue.some((f)=>{return f.status.waiting})
             let logs = queue.map((f)=>{return f.status.logs})
+            // Preserve the backend-provided watching flag; the per-job queue
+            // entries don't carry it, so re-deriving would otherwise wipe it.
+            let watching = status && status.watching
 
             status = {
               running: running,
@@ -987,7 +1020,8 @@ export default {
               historical: historical,
               waiting: waiting,
               error: error,
-              logs: logs
+              logs: logs,
+              watching: watching
             }
 
             this.$set(this.selectedsamplesAll[index], 'status', status)
@@ -1209,8 +1243,20 @@ export default {
 
 
           this.socket = io(echoSocketUrl, {
-            query: { userId }
+            query: { userId },
+            // Explicit reconnection policy: keep retrying with capped backoff so a
+            // transient event-loop stall on the server doesn't strand the client.
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000
           });
+          // This is a fresh socket object, so its message handlers must be bound
+          // once below. Reset the guard (a reconnect of THIS socket keeps it true
+          // and won't rebind; only a brand-new socket from connect()/applySettings
+          // clears it). Prevents the duplicate-handler stacking described below.
+          this._listenersBound = false
           const $this  = this
           // this.initiate()
         
@@ -1236,16 +1282,36 @@ export default {
             // match the e.status.key with this.database.key and if match then set this.database.size to e.status.size
             let index = this.databases.findIndex(x => x.key === e.status.key)
             if (index > -1){
-              
+
               this.$set(this.databases, index, e.status)
-              // if this.database.key == e.status.key then set this.database.size to e.status.size
+              // If the updated db is the currently selected one, re-point the
+              // v-model object to the fresh status object so the selection slot
+              // (size / spinner / progress) actually re-renders on completion.
               if (this.database.key == e.status.key){
-                this.$set(this.database, 'size', e.status.size)
-                this.$set(this.database, 'downloading', e.status.downloading)
-                this.$set(this.database, 'error', e.status.error)
-              } 
+                this.$set(this, 'database', this.databases[index])
+              }
             }
 
+            // Backend says this DB already exists -> confirm before overwriting.
+            if (e.needsConfirm && e.warning){
+              this.$swal({
+                title: 'Database already downloaded',
+                text: e.warning,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Re-download',
+                cancelButtonText: 'Cancel'
+              }).then((result)=>{
+                if (result && result.isConfirmed){
+                  this.sendMessage({
+                    type: "downloaddb",
+                    database: e.status.key,
+                    confirm: true,
+                    "message": `Re-download Database ${e.status.key}`
+                  });
+                }
+              })
+            }
           })
           this.socket.on("databases", (e)=>{
             this.$set(this, 'databases', Object.values(e))
@@ -1307,14 +1373,29 @@ export default {
                 type: "getRuns"          
               }); 
               $this.sendMessage({
-                type: "getStatus"       
+                type: "getStatus"
               })
-              
+              // Resync GPU preference on every (re)connect, like the emits above.
+              $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
+
+              // IMPORTANT: only bind the message listeners ONCE. Previously every
+              // 'connect' (including every reconnect after a blip) re-ran all the
+              // socket.on(...) registrations below, stacking duplicate handlers.
+              // After a few reconnects each 'sampledata'/'status' frame was being
+              // processed 2x, 3x... which compounded the lag and triggered further
+              // ping-timeout drops -- a feedback loop. The emits above still run on
+              // every (re)connect to refresh state; the handlers bind a single time.
+              if ($this._listenersBound) { return }
+              $this._listenersBound = true
+
               $this.socket.on("runs", (e)=>{
                 $this.runs = e;
                 console.log(e, "Available Runs")
-                // get index of this.selectedRun and if in runs then set to that index otherwise set to first run
-                if (!this.selectedRun){
+                // Auto-select a newly created run if one is pending
+                if ($this.pendingRunSelect && e.indexOf($this.pendingRunSelect) > -1) {
+                  $this.selectedRun = $this.pendingRunSelect
+                  $this.pendingRunSelect = null
+                } else if (!this.selectedRun){
                   this.selectedRun = e[0]
                 } else if (e.indexOf(this.selectedRun) < 0 && e.length > 0){
                   this.selectedRun = e[0]
@@ -1340,7 +1421,13 @@ export default {
               $this.socket.on("queueDrop", (e)=>{
                 // assume this is the entire set of sample queue records
                 this.queueList = e.data
-              }) 
+              })
+              $this.socket.on("queueBoard", (e)=>{
+                // round-robin play order snapshot for the selected run
+                if (!e) return
+                if (e.run && $this.selectedRun && e.run !== $this.selectedRun) return
+                $this.queueBoard = e
+              })
               $this.socket.on("status", (e)=>{
                 // assume this is the entire set of sample queue records
                 // find queuelist sample and index and update status
@@ -1406,28 +1493,105 @@ export default {
                   console.error(err)
                 }
               })
-              $this.socket.on("sampledata", async (e)=>{
-                try{
-                    // $this.queueList[e.samplename] = e.queue
-                    console.log(e.data, e.samplename,"<<<")
-                    await this.importData(e.data, e.samplename, 'server')
-                } catch (err){
-                  console.error(err)
-                }
-              }) 
+              $this.socket.on("sampledata", (e)=>{
+                // Coalesce on the client too: importData is heavy (TSV parse +
+                // deep clones + chart re-render). Queue the latest report per
+                // sample and render on a trailing timer so a burst of updates
+                // doesn't lock the UI thread.
+                $this.scheduleServerImport(e.data, e.samplename)
+              })
               $this.socket.on("samplesheet", (e)=>{
                 $this.samplesheet = e.samplesheet
               })
              
               $this.socket.on('runInformation', async (e)=>{
-                $this.samplesheet = []
-                if (e.reportdata && e.data != ''){
-                  // $this.resetRun()
-                  // $this.samplesheet = e.samplesheet
-                  $this.$set($this, 'samplesheet', e.samplesheet)
-                  // get the queuelist for all samples
-                 
-                  
+                // Single-packet hydrate. The server sends the WHOLE run snapshot
+                // in one frame: samplesheet + for every sample its report text,
+                // full queue list and per-job status. We populate everything from
+                // here in one pass instead of waiting on a flood of per-sample
+                // sampledata / queueJob / status frames (which is what made a
+                // 1600-job run take minutes to load).
+                if (!e) return
+                $this.$set($this, 'samplesheet', e.samplesheet || [])
+                if (!Array.isArray(e.reportdata)) return
+
+                const pendingReports = []
+                for (const entry of e.reportdata){
+                  const sample = entry && entry.samplename
+                  if (!sample) continue
+                  // queue list for this sample (default to [] so status calc is safe)
+                  const queue = Array.isArray(entry.queue) ? entry.queue : []
+                  $this.$set($this.queueList, sample, queue)
+                  // register the sample WITHOUT a getStatus round-trip — the
+                  // queue + status are already in this packet.
+                  const lastJob = queue.length ? queue[queue.length - 1] : {}
+                  $this.addSample(sample, lastJob, 'server', true)
+                  $this.updateSampleStatus(sample)
+                  if (entry.data && typeof entry.data === 'string' && entry.data !== ''){
+                    pendingReports.push({ sample, data: entry.data })
+                  }
+                }
+                // Render the reports through the existing coalesced importer,
+                // flagged as a bulk hydrate so importData/addSample stay quiet.
+                for (const r of pendingReports){
+                  $this.scheduleServerImport(r.data, r.sample, true)
+                }
+              })
+
+              $this.socket.on('runUpdate', (e)=>{
+                // Batched, run-scoped incremental update. The server coalesces
+                // many per-job/per-sample changes for the SELECTED run into one
+                // frame on a timer, so the socket never floods and the viewer's
+                // run keeps rendering. Ignore frames for any other run.
+                if (!e || e.run !== $this.selectedRun) return
+                const jobs = Array.isArray(e.jobs) ? e.jobs : []
+                const samples = Array.isArray(e.samples) ? e.samples : []
+
+                // 1) merge job/queue + per-job status changes into the queue list
+                for (const j of jobs){
+                  const sample = j.samplename
+                  if (!sample) continue
+                  if (!$this.queueList[sample]){
+                    $this.$set($this.queueList, sample, [])
+                  }
+                  const idx = (j.index != null) ? j.index : $this.queueList[sample].length
+                  const merged = {
+                    ...($this.queueList[sample][idx] || {}),
+                    ...(j.job || {})
+                  }
+                  if (j.status) merged.status = j.status
+                  if (j.config){ for (const k in j.config) merged[k] = j.config[k] }
+                  if (!merged.status){
+                    merged.status = {
+                      running: false, waiting: true, success: null,
+                      historical: false, error: null, logs: []
+                    }
+                  }
+                  $this.$set($this.queueList[sample], idx, merged)
+                  $this.addSample(sample, merged, 'server', true)
+                }
+
+                // 2) sample-level report text + aggregate status (prioritises the
+                //    visualisation: render the latest full.report per sample).
+                const explicitStatus = new Set()
+                for (const s of samples){
+                  const sample = s.samplename
+                  if (!sample) continue
+                  $this.addSample(sample, {}, 'server', true)
+                  if (s.status){
+                    $this.updateSampleStatus(sample, s.status)
+                    explicitStatus.add(sample)
+                  }
+                  if (s.data && typeof s.data === 'string' && s.data !== ''){
+                    $this.scheduleServerImport(s.data, sample, true)
+                  }
+                }
+
+                // 3) recompute rollup status for job-touched samples that didn't
+                //    get an explicit sample status in this frame.
+                const touched = new Set(jobs.map(j=>j.samplename).filter(Boolean))
+                for (const sample of touched){
+                  if (!explicitStatus.has(sample)) $this.updateSampleStatus(sample)
                 }
               })
              
@@ -1456,14 +1620,10 @@ export default {
               } )
               $this.socket.on("data", (e)=>{
                 if (e.run == $this.selectedRun ){
-                  ( async ()=>{
-                    await $this.importData(e.data, e.samplename, 'server')
-                  }
-                  )();
+                  $this.scheduleServerImport(e.data, e.samplename)
                 }
               })
-              $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
-             
+
           })
 
          
@@ -1745,7 +1905,7 @@ export default {
             console.error(Err)
           }
         },
-        addSample(sample, config, origin){
+        addSample(sample, config, origin, skipStatus){
           // origin: where this sample came from — 'server' (live, backend-watched
           // local directories), 'upload' (a K2 report the user dropped/selected),
           // or 'demo' (canned offline sample data).
@@ -1754,12 +1914,18 @@ export default {
           let indx = this.selectedsamplesAll.findIndex(x => x.sample === sample );
           // check if thisqueueList has sample if not then add it
 
-          this.sendMessage({
-            type: "getStatus",
-            sample: sample,
-            run: this.selectedRun,
-            "message" : `Get Queue and Status/Info for ${sample} `
-          });
+          // skipStatus: set during bulk run hydration. The single runInformation
+          // packet already carries each sample's queue + status, so we must NOT
+          // round-trip a getStatus here — doing it once per sample is exactly the
+          // per-job 'status' storm that made large runs take minutes to load.
+          if (!skipStatus){
+            this.sendMessage({
+              type: "getStatus",
+              sample: sample,
+              run: this.selectedRun,
+              "message" : `Get Queue and Status/Info for ${sample} `
+            });
+          }
           if (indx == -1){
             let s = {
               sample: sample,
@@ -1800,14 +1966,39 @@ export default {
           this.selectedsamplesAll = keep
           this.demoLoaded = false
         },
-        async importData(information, sample, origin){
+        // Coalesce server-pushed report renders. Stores only the most recent
+        // report per sample and flushes on a trailing timer, so a burst of
+        // sampledata frames (e.g. while 400 fastqs classify) results in a bounded
+        // number of heavy importData() renders rather than one per frame.
+        scheduleServerImport(information, sample, skipStatus){
+          if (!information || typeof information !== 'string') return
+          if (!this._pendingImports) this._pendingImports = {}
+          // keep the latest report per sample, plus whether this render is part
+          // of a bulk run hydrate (skipStatus) so importData doesn't re-trigger
+          // a getStatus round-trip per sample.
+          this._pendingImports[sample] = { data: information, skipStatus: !!skipStatus }
+          if (this._importFlushTimer) return
+          this._importFlushTimer = setTimeout(async () => {
+            this._importFlushTimer = null
+            const batch = this._pendingImports || {}
+            this._pendingImports = {}
+            for (const s of Object.keys(batch)) {
+              try {
+                await this.importData(batch[s].data, s, 'server', batch[s].skipStatus)
+              } catch (err) {
+                console.error(err)
+              }
+            }
+          }, 400)
+        },
+        async importData(information, sample, origin, skipStatus){
           if (!information || typeof information !== 'string') {
             console.warn('importData: no text provided');
             return;
           }
           // default uploads when no explicit origin is supplied (drag/drop, file picker)
           origin = origin || 'upload'
-          this.addSample(sample, null, origin);
+          this.addSample(sample, null, origin, skipStatus);
           let text = information
           let fullsize = 0
           const $this = this
@@ -1915,6 +2106,7 @@ th, td {
 .mtx-tabnav {
   border-bottom: 1px solid #e2e8f0;
   margin-bottom: 14px;
+  flex: 0 0 auto;
 }
 .mtx-tabnav .v-tab {
   text-transform: none;
@@ -2253,4 +2445,35 @@ th, td {
   transition: background .15s ease;
 }
 .mtx-src-clear:hover { background: #fecaca; }
+
+/* ===== Fixed-header / per-tab scrolling ===== */
+/* Prevent the whole page from scrolling; scroll happens inside the tab pane */
+.v-main {
+  max-height: 100vh;
+  overflow: hidden;
+}
+.v-main__wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* The row + col that wraps tabs must fill remaining height */
+.mtx-main-row {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+.mtx-main-col {
+  display: flex !important;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+/* The tab-items pane is the only thing that scrolls */
+.mtx-tab-scroll {
+  flex: 1 1 0;
+  overflow-y: auto;
+  min-height: 0;
+}
 </style>

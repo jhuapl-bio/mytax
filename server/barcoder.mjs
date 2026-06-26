@@ -1,7 +1,7 @@
 
 import path from 'path'
 import  { spawn } from 'child_process';
-import { removeExtension, globFiles } from './controllers.mjs';
+import { removeExtension, globFiles, killProcessTree } from './controllers.mjs';
 import {logger} from './logger.js'
 
 export  class Barcoder { 
@@ -68,7 +68,9 @@ export  class Barcoder {
         if (this.process){
             try{
                 logger.info(`Attempting to stop demux process: ${this.name}`)
-                this.process.kill();
+                // this.process is the bash wrapper; kill the whole (detached)
+                // process group so the demux worker dies with it immediately.
+                killProcessTree(this.process)
                 this.status.running = false
                 this.status.error=`Canceled job`
                 this.status.success = -1
@@ -88,7 +90,8 @@ export  class Barcoder {
             const command = $this.command  
             $this.check_barcode().then((rundemux)=>{   
                 if (rundemux){  
-                    var  ls = spawn('bash', ['-c', command ]);
+                    // detached:true => own process group so stop() can kill the whole tree fast.
+                    var  ls = spawn('bash', ['-c', command ], { detached: true });
                     $this.status.running = true
                     $this.ws.emit( "status",  {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
                     ls.stdout.on('data', (data) => { 

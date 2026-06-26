@@ -11,7 +11,8 @@ import _ from 'lodash';
 import { mkdirp } from 'mkdirp'
 import { pathEqual } from 'path-equal'
 import { storage } from './storage.mjs'
-import { broadcastToAllActiveConnections } from './messenger.mjs';
+import { scheduler } from './scheduler.mjs'
+import { broadcastToAllActiveConnections, broadcastThrottled, queueSampleUpdate, queueJobUpdate } from './messenger.mjs';
 export  class Sample { 
 
     constructor(info, queue){
@@ -118,7 +119,23 @@ export  class Sample {
         }
 
         try{
-            this.watcher = await chokidar.watch(watchpaths, {ignored: /^\./, persistent: true,  usePolling: true   })
+            this.watcher = await chokidar.watch(watchpaths, {
+                ignored: /^\./,
+                persistent: true,
+                // Local-disk inputs: use native fsevents/inotify instead of
+                // polling. Polling a 400-file directory means stat()-ing every
+                // file on every tick, which pins a CPU core and stalls the event
+                // loop (the root cause of the lag + dropped websocket pings).
+                usePolling: false,
+                // Don't fire 'add' until the fastq has finished being written.
+                // MinKNOW streams reads into a file, so without this we'd queue a
+                // classify job against a half-written file and re-fire on every
+                // flush. Waiting for the size to stabilise = one job per file.
+                awaitWriteFinish: {
+                    stabilityThreshold: 2000,
+                    pollInterval: 200
+                }
+            })
             .on('add', async function(filepath, stat) {
                 logger.info(`NEWLY CREATED Seq: File ${filepath} has been ADDED`);
                 $this.addFile(filepath)
@@ -285,41 +302,51 @@ export  class Sample {
                 running: false,
                 cancelled: false
             }
-            // notify clients immediately that a sample/job was queued
-            broadcastToAllActiveConnections("queueJob", {
-                samplename: $this.sample,
-                queue: $this.formatQueueInfo(obj.index)
+            // Notify clients that a job was queued. Coalesced per (sample,index)
+            // into the run-scoped batched 'runUpdate' frame, and only buffered if
+            // someone is actually viewing this run.
+            queueJobUpdate($this.run, $this.sample, obj.index, {
+                job: $this.formatQueueInfo(obj.index)
             })
-            storage.queue.add(async ({signal}) => { 
-                $this.queueRecords[obj.index] = obj 
+            // The actual unit of work, unchanged from before. It still runs on the
+            // global PQueue (so abort/status logic is identical); we just let the
+            // round-robin scheduler decide WHEN to release it.
+            const workFn = async ({signal}) => {
+                $this.queueRecords[obj.index] = obj
                 // Check that filepath exists, and if not then remove from queue
                 if (!fs.existsSync(obj.filepath)){
                     logger.info(`File ${obj.filepath} does not exist, removing from queue`)
                     $this.queueRecords = $this.queueRecords.filter((d)=>{return d.filepath != obj.filepath})
-                    return 
+                    return
                 }
                 obj.status.waiting = false
                 signal.addEventListener('abort', () => {
                     logger.info(`aborting job ${obj.filepath}-${id}`)
-                    obj.stop() 
-                });  
-                // logger.info(`Added Queue job: ${obj.filepath}-${id}`)                
-                
-                // broadcastToAllActiveConnections("queueSample", { samplename: $this.sample, queue: $this.formatQueueInfo()})
-                logger.info("broadcasting to all active connections QUEUJOB")
-                broadcastToAllActiveConnections("queueJob", { 
-                    samplename: $this.sample, 
-                    queue: $this.formatQueueInfo(obj.index)
+                    obj.stop()
+                });
+
+                queueJobUpdate($this.run, $this.sample, obj.index, {
+                    job: $this.formatQueueInfo(obj.index)
                 })
-                
-                await obj.start() 
-                // try{
-                //     obj.sendJobStatus()
-                // } catch (err){
-                //     logger.error(`${err} error in sending job`)
-                // }
-                return 
-            }, {signal: controller.signal, priority: obj.priority ? obj.priority : 0});
+
+                await obj.start()
+                return
+            }
+            // Tier-1 = barcode/sample lane, tier-2 = the file's index within it.
+            // The scheduler cycles one file per lane so later barcodes start
+            // appearing almost immediately instead of waiting out barcode01.
+            scheduler.add({
+                jobId: `${$this.run}::${$this.sample}::${obj.index}`,
+                runName: $this.run,
+                sample: $this.sample,
+                index: obj.index,
+                priority: obj.priority ? obj.priority : 0,
+                controller,
+                exec: () => storage.queue.add(workFn, {
+                    signal: controller.signal,
+                    priority: obj.priority ? obj.priority : 0
+                })
+            })
         } catch (error) {
             if (!(error instanceof AbortError)) {
                 logger.error(`${error} error in queuing job ${obj.jobnumber} ${id}` )
@@ -376,12 +403,15 @@ export  class Sample {
     }
     getStatus(send){
         let status = {
-            running: false, 
-            historical: false, 
+            running: false,
+            historical: false,
             success: true,
             logs: [],
             error: [],
-            cancelled: false
+            cancelled: false,
+            // watching === real-time watch mode is on AND a live watcher exists,
+            // so the frontend can show a pulsing "listening for new reads" light.
+            watching: !!(this.watch && this.watcher)
         }
         // iterate thrugh this.queueList if any success is false then set success to false, if any historical set to true, append logs, if an cancel set to true etc
         status.running = this.queueList.some((d)=>{
@@ -449,51 +479,49 @@ export  class Sample {
         this.queueList.push({info: msg, job: obj})
         return msg 
     }
-    formatQueueInfo(index ){
-        const hasIndex = index !== undefined && index !== null
-        if (!hasIndex){
-            try{
-                let info = []
-                this.queueList.map((d)=>{
-                    let config = {
-                        ...d.info,
-                        ...d.job.sample 
-                    }
-                    config.command = config.command.args[1]
-                    config.status = d.job.status
-                    info.push(config)
-                })
-                return info
-            } catch (err){
-                logger.error(`${err} error in getting jobs for sample ${this.sample}`)
-                return null
-            }
-        } else {
-            try{
-                // get job at index 
-                let d = this.queueList[index]
-                if (!d) return null
-                let config = {
-                    ...d.info,
-                    ...d.job.sample 
-                }
-                config.command = config.command.args[1]
-                config.status = d.job.status
-                return config
-            } catch (err){
-                logger.error(`${err} error in getting job at index ${index} for sample ${this.sample}`)
-                return null
-            }
+    // Project a single queue entry down to ONLY the fields the client renders
+    // (job index, status, file, command, sample/run identity). The old code
+    // spread the entire classifier sampleObj *and* its full kraken config into
+    // every job; with 1600 jobs that duplicated the config object 1600x and
+    // bloated the snapshot into tens of MB. Keep it lean.
+    formatJobInfo(d){
+        if (!d || !d.info) return null
+        const info = d.info
+        const job = d.job
+        const cmdObj = (info && info.command) ? info.command : (job ? job.command : null)
+        const command = (cmdObj && cmdObj.args) ? cmdObj.args[1] : cmdObj
+        return {
+            index: info.index,
+            sample: info.sample,
+            run: info.run,
+            filepath: info.filepath,
+            reportPath: job ? job.reportPath : info.sampleReport,
+            database: info.database,
+            command: command,
+            status: job ? job.status : info.status
         }
-        
+    }
+    formatQueueInfo(index){
+        const hasIndex = index !== undefined && index !== null
+        try {
+            if (!hasIndex){
+                return this.queueList.map((d)=> this.formatJobInfo(d))
+            }
+            return this.formatJobInfo(this.queueList[index])
+        } catch (err){
+            logger.error(`${err} error in getting job(s) for sample ${this.sample}${hasIndex ? ` at index ${index}` : ''}`)
+            return hasIndex ? null : []
+        }
     }
     cancel(index){ 
         const $this = this
         if (index >=0 && index){
-            try{ 
-                logger.info(`${job.name} stopping job at index ${index} `)
-                this.queueList[index].cancel()
+            try{
+                // drop it from the round-robin buffer if it hasn't started yet
+                try { scheduler.removeJob(`${this.run}::${this.sample}::${index}`) } catch (e) { logger.error(`${e} scheduler removeJob`) }
                 let job = this.queueList[index].job
+                logger.info(`${job.name} stopping job at index ${index} `)
+                if (job.controller && typeof job.controller.abort === 'function') job.controller.abort()
                 job.status.cancelled = true
                 job.stop()
             } catch (err){
@@ -511,6 +539,9 @@ export  class Sample {
                         // let job = $this.queueList[i].job
                         let job = f.job
                         logger.info(`${job.name} stopping job for full sample #: ${job.jobnumber}`)
+                        // remove any not-yet-started copy from the round-robin buffer
+                        try { scheduler.removeJob(`${this.run}::${this.sample}::${job.index}`) } catch (e) { logger.error(`${e} scheduler removeJob`) }
+                        if (job.controller && typeof job.controller.abort === 'function') job.controller.abort()
                         job.status.cancelled = true
                         job.stop()
                     } catch (err){
@@ -524,12 +555,16 @@ export  class Sample {
     sendData(){
         try{
             logger.info(`Sending data for ${this.sample}`)
-            broadcastToAllActiveConnections('sampledata', {  
-                run: this.run, 
-                samplename: this.sample, 
+            // The full.report is rewritten after every file in the sample is
+            // classified, so for a 400-fastq sample this would otherwise fire a
+            // large payload (and trigger a heavy client-side re-render) hundreds
+            // of times. Coalesce per sample to the latest report inside the
+            // run-scoped batched 'runUpdate' frame; the client only ever needs the
+            // most recent full.report, and only if it's viewing this run.
+            queueSampleUpdate(this.run, this.sample, {
                 "data" : this.data,
-                status: this.getStatus() 
-            }) 
+                status: this.getStatus()
+            })
             return this.data
         } catch (err){
             logger.error(`${err} error in sending data to client`)
