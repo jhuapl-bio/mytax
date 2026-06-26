@@ -1,46 +1,40 @@
 /**
- * phylopic.js (frontend) — resolve a taxon scientific name to a PhyloPic
- * silhouette, primarily CLIENT-SIDE so the feature works with no backend
- * (npm run serve, GitHub Pages static build, etc.).
+ * phylopic.js (frontend) — taxon silhouettes from a prebuilt local index.
  *
- * PhyloPic's own site is a static app that calls api.phylopic.org from the
- * browser, so the API supports CORS. We use the build-aware v2 flow:
- *   1. /nodes?filter_name=<name>            (metadata — discovers `build`)
- *      then ?build=<b>&page=0&embed_items=true   -> _embedded.items
- *      (fall back to /autocomplete?query=<name> -> retry each suggestion)
- *   2. /images?filter_clade=<nodeUuid> (then filter_node) -> image items
- *   3. /images/<imageUuid> -> _links.vectorFile.href (SVG) + thumbnailFiles (PNG)
+ * Strategy
+ * --------
+ * The whole title -> image index is generated OFFLINE and committed as
+ * `src/assets/phylopic_image_index.json`. We import that JSON directly, so on
+ * page load there is NO API fan-out — just an in-memory lookup built once from
+ * the bundled file. Each organism entry carries the PhyloPic `svg` (vector)
+ * URL plus `sourceFile`/`UUID`.
  *
- * Display: we fetch the SVG markup and render it INLINE (an <img> renders the
- * vector blank). If the image CDN blocks the fetch, the caller can fall back to
- * the PNG thumbnail via <img> (which the official site uses successfully).
+ * Resolving a taxon is a pure in-memory lookup (the taxon name first, then each
+ * lineage ancestor). The actual SVG is fetched only when a taxon is shown
+ * (lazily, per tab/page) and every fetch is cached by URL, so a repeated
+ * name/URL is never fetched twice.
  *
- * If the direct API call fails entirely (e.g. CORS blocked in some locked-down
- * environment) AND a backend is configured, we silently retry through the
- * server proxy (/phylopic/svg). On a static deploy where the direct call works,
- * the proxy is never touched — so there's no connection error noise.
- *
- * Nothing is ever written to disk.
+ * Loading an individual silhouette:
+ *   1. Try the BACKEND proxy (`/phylopic/svg?url=...`). Fetching server-side
+ *      avoids browser CORS and yields clean inline <svg> markup.
+ *   2. If the backend is unreachable or fails (not running, network, non-OK),
+ *      fall back to fetching the same URL DIRECTLY from images.phylopic.org.
+ *      If that can't be inlined (CORS), hand the URL to the component as an
+ *      <img> src.
  */
 
-const API_BASE = 'https://api.phylopic.org'
-const API_HEADERS = { Accept: 'application/vnd.phylopic.v2+json' }
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+import indexData from '@/assets/phylopic_image_index.json'
 
-const LS_PREFIX = 'phylopic:v4:'
-const TTL_HIT = 30 * 24 * 60 * 60 * 1000
-const TTL_MISS = 3 * 24 * 60 * 60 * 1000
-const FETCH_TIMEOUT = 10000
+const FETCH_TIMEOUT = 15000
 
-let currentBuild = null
-// Set once we learn the direct API is unreachable from the browser, so we stop
-// retrying it and go straight to the proxy.
-let directApiBlocked = false
+// normalized title -> { svgUrl, sourceFile, uuid }  (built once from the JSON)
+let indexMap = null
 
-// key (name|lineage) -> { svg, svgUrl, pngUrl, attribution, pageUrl } | null
-const memCache = new Map()
-const inflight = new Map()
+// svgUrl -> { svg:?string, imgUrl:?string }  (resolved source, fetched once)
+const sourceCache = new Map()
+const sourceInflight = new Map()
 
+// Must match the offline index builder's normalization.
 function normalizeName(name) {
   return String(name || '')
     .replace(/_/g, ' ')
@@ -52,388 +46,197 @@ function normalizeName(name) {
 
 const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v])
 
-function withTimeout() {
+function withTimeout(ms = FETCH_TIMEOUT) {
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT)
+  const timer = setTimeout(() => ctrl.abort(), ms)
   return { signal: ctrl.signal, done: () => clearTimeout(timer) }
 }
 
-/** Base URL of our Express server (only used for the proxy fallback). */
-function serverBase() {
-  let host = 'localhost'
-  let port = '7689'
-  let proto = 'http:'
+/**
+ * Resolve the backend base URL the same way App.vue builds the socket URL, so
+ * the proxy targets whatever host/port the user configured in Settings. Read at
+ * call time (not import time) so it tracks changes the user makes.
+ */
+function backendBase() {
   try {
-    if (typeof window !== 'undefined' && window.location) {
-      proto = window.location.protocol === 'https:' ? 'https:' : 'http:'
-      host = window.location.hostname || host
-    }
-    if (typeof localStorage !== 'undefined') {
-      host = localStorage.getItem('mtx_serverHost') || host
-      port = localStorage.getItem('mtx_serverPort') || port
-    }
-  } catch (e) { /* defaults */ }
-  return `${proto}//${host}:${port}`
-}
-
-// ---------- localStorage cache ----------
-function lsGet(key) {
-  try {
-    const raw = localStorage.getItem(LS_PREFIX + key)
-    if (!raw) return undefined
-    const { r, t } = JSON.parse(raw)
-    const ttl = r ? TTL_HIT : TTL_MISS
-    if (Date.now() - t > ttl) {
-      localStorage.removeItem(LS_PREFIX + key)
-      return undefined
-    }
-    return r
+    const proto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'https:' : 'http:'
+    const host = (typeof localStorage !== 'undefined' && localStorage.getItem('mtx_serverHost'))
+      || (typeof window !== 'undefined' ? window.location.hostname : 'localhost')
+    const port = (typeof localStorage !== 'undefined' && localStorage.getItem('mtx_serverPort')) || '7689'
+    return `${proto}//${host}:${port}`
   } catch (e) {
-    return undefined
+    return 'http://localhost:7689'
   }
-}
-function lsSet(key, r) {
-  try {
-    // Store everything EXCEPT the (potentially large) inline svg markup, to keep
-    // localStorage small; svg markup is re-fetched per session (and HTTP-cached).
-    const slim = r ? { svgUrl: r.svgUrl, pngUrl: r.pngUrl, attribution: r.attribution, pageUrl: r.pageUrl } : null
-    localStorage.setItem(LS_PREFIX + key, JSON.stringify({ r: slim, t: Date.now() }))
-  } catch (e) { /* quota / private mode */ }
 }
 
-// ---------- PhyloPic v2 API (build-aware) ----------
-function apiUrl(path, params = {}) {
-  const url = path.startsWith('http')
-    ? new URL(path)
-    : new URL(path.replace(/^\/+/, ''), `${API_BASE}/`)
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
+/**
+ * Pick a renderable entry from an organism value. The index value is either an
+ * entry object or an array of them; prefer the first that exposes an SVG.
+ */
+function pickEntry(value) {
+  const list = asArray(value)
+  for (const e of list) {
+    if (e && (e.svg || e.sourceFile)) return e
   }
-  return url
+  return list[0] || null
 }
-function rememberBuild(json, responseUrl) {
-  if (json && json.build !== undefined && json.build !== null) {
-    currentBuild = String(json.build)
-    return
-  }
-  try {
-    const b = new URL(responseUrl).searchParams.get('build')
-    if (b) currentBuild = b
-  } catch (e) { /* ignore */ }
-}
-async function fetchJson(url) {
-  const t = withTimeout()
-  try {
-    const response = await fetch(url, { headers: API_HEADERS, redirect: 'follow', signal: t.signal })
-    const text = await response.text()
-    let json
-    try { json = JSON.parse(text) } catch (e) { json = null }
-    rememberBuild(json, response.url)
-    return { response, json }
-  } finally {
-    t.done()
-  }
-}
-async function apiGet(path, params = {}, options = {}) {
-  const { allow404 = false } = options
-  const url = apiUrl(path, params)
-  if (currentBuild && !url.searchParams.has('build')) url.searchParams.set('build', currentBuild)
 
-  let result = await fetchJson(url)
+// ---------- build the normalized lookup once from the bundled JSON ----------
+function buildIndex() {
+  const map = Object.create(null)
+  const organisms = (indexData && indexData.organisms) || {}
 
-  if (
-    !result.response.ok &&
-    result.response.status === 400 &&
-    !url.searchParams.has('build') &&
-    result.json && result.json.build !== undefined && result.json.build !== null
-  ) {
-    currentBuild = String(result.json.build)
-    url.searchParams.set('build', currentBuild)
-    result = await fetchJson(url)
-  }
-
-  if (allow404 && result.response.status === 404) return null
-  if (!result.response.ok) {
-    const err = new Error(`PhyloPic API ${result.response.status}`)
-    err.status = result.response.status
-    throw err
-  }
-  return result.json
-}
-function embeddedItems(json) {
-  const items = json && json._embedded && json._embedded.items
-  if (Array.isArray(items)) return items
-  if (items && typeof items === 'object') return Object.values(items)
-  const links = asArray(json && json._links && json._links.items)
-  return links
-    .map((link) => {
-      if (typeof link === 'string') return { href: link }
-      if (link && typeof link === 'object') return { href: link.href, title: link.title, _links: { self: link } }
-      return null
-    })
-    .filter(Boolean)
-}
-async function firstPage(endpoint, filters) {
-  const metadata = await apiGet(endpoint, filters, { allow404: true })
-  if (!metadata) return []
-  const totalItems = Number(metadata.totalItems != null ? metadata.totalItems : metadata.total_items)
-  if (Number.isFinite(totalItems) && totalItems === 0) return []
-  const page = await apiGet(
-    endpoint,
-    { ...filters, build: metadata.build != null ? metadata.build : currentBuild, page: 0, embed_items: true },
-    { allow404: true }
-  )
-  return page ? embeddedItems(page) : []
-}
-function extractUuid(value) {
-  if (!value) return null
-  if (typeof value === 'string') {
-    const m = value.match(UUID_RE)
-    return m ? m[0] : null
-  }
-  if (typeof value !== 'object') return null
-  for (const key of ['uuid', 'uid', 'id']) {
-    if (typeof value[key] === 'string') {
-      const u = extractUuid(value[key])
-      if (u) return u
+  // First pass: register every specific title that has an SVG.
+  for (const title of Object.keys(organisms)) {
+    const key = normalizeName(title)
+    if (!key || key in map) continue
+    const entry = pickEntry(organisms[title])
+    const svgUrl = entry && (entry.svg || entry.sourceFile)
+    if (!svgUrl) continue
+    map[key] = {
+      svgUrl,
+      sourceFile: (entry && entry.sourceFile) || svgUrl,
+      uuid: (entry && entry.UUID) || null,
     }
   }
-  if (typeof value.href === 'string') {
-    const u = extractUuid(value.href)
-    if (u) return u
-  }
-  const links = value._links || {}
-  for (const linkValue of Object.values(links)) {
-    for (const link of asArray(linkValue)) {
-      if (typeof link === 'string') {
-        const u = extractUuid(link)
-        if (u) return u
-      } else if (link && typeof link === 'object') {
-        const u = extractUuid(link.href || link)
-        if (u) return u
+
+  // Second pass: register generalNode.title values as fallbacks so that parent
+  // taxa (e.g. "Homo sapiens" from a "Homo sapiens sapiens" entry, or "Homo"
+  // from "Homo habilis") resolve correctly without needing their own dedicated
+  // image in the index.  We only add a key when it's not already present, so
+  // specific images always win over inherited ones.
+  for (const title of Object.keys(organisms)) {
+    const list = asArray(organisms[title])
+    for (const entry of list) {
+      if (!entry || !entry.generalNode || !entry.generalNode.title) continue
+      const genKey = normalizeName(entry.generalNode.title)
+      if (!genKey || genKey in map) continue
+      const svgUrl = entry.svg || entry.sourceFile
+      if (!svgUrl) continue
+      map[genKey] = {
+        svgUrl,
+        sourceFile: entry.sourceFile || svgUrl,
+        uuid: entry.UUID || null,
       }
     }
   }
-  return null
-}
-function autocompleteSuggestions(json) {
-  const pools = [json && json.matches, json && json.suggestions, json && json.items, json && json._embedded && json._embedded.items]
-  const values = []
-  for (const pool of pools) {
-    for (const item of asArray(pool)) {
-      if (typeof item === 'string') values.push(item)
-      else if (item && typeof item === 'object') {
-        for (const key of ['name', 'value', 'label', 'text', 'canonicalName']) {
-          if (typeof item[key] === 'string') values.push(item[key])
-        }
-      }
-    }
-  }
-  return [...new Set(values.map(normalizeName).filter(Boolean))]
-}
-async function findNodeByName(name) {
-  let nodes = await firstPage('nodes', { filter_name: name })
-  if (nodes.length) return nodes[0]
-  const autocomplete = await apiGet('autocomplete', { query: name }, { allow404: true })
-  const suggestions = autocomplete ? autocompleteSuggestions(autocomplete) : []
-  for (const s of suggestions) {
-    nodes = await firstPage('nodes', { filter_name: s })
-    if (nodes.length) return nodes[0]
-  }
-  return null
-}
-function vectorUrlFromImage(image) {
-  const link = image && image._links && image._links.vectorFile
-  if (typeof link === 'string') return link
-  if (link && typeof link.href === 'string') return link.href
-  return null
-}
-function thumbUrlFromImage(image) {
-  const links = (image && image._links) || {}
-  const hrefs = asArray(links.thumbnailFiles).map((t) => t && t.href).filter(Boolean)
-  return hrefs.find((h) => /192x192/.test(h)) || hrefs.find((h) => /128x128/.test(h)) || hrefs[0] || null
+
+  return map
 }
 
-/** Direct client-side resolution of one normalized name -> meta or null. Throws on network/CORS. */
-async function resolveOneNameDirect(name) {
-  const node = await findNodeByName(name)
-  if (!node) return null
-  const nodeUuid = extractUuid(node)
-  if (!nodeUuid) return null
-
-  let images = await firstPage('images', { filter_clade: nodeUuid })
-  if (!images.length) images = await firstPage('images', { filter_node: nodeUuid })
-  if (!images.length) return null
-
-  const image = images[0]
-  const imageUuid = extractUuid(image)
-  if (!imageUuid) return null
-
-  let svgUrl = vectorUrlFromImage(image)
-  let pngUrl = thumbUrlFromImage(image)
-  let attribution = (image && image.attribution) || null
-  if (!svgUrl) {
-    try {
-      const meta = await apiGet(`images/${imageUuid}`)
-      svgUrl = vectorUrlFromImage(meta) || `https://images.phylopic.org/images/${imageUuid}/vector.svg`
-      pngUrl = pngUrl || thumbUrlFromImage(meta)
-      attribution = attribution || (meta && meta.attribution) || null
-    } catch (e) {
-      svgUrl = `https://images.phylopic.org/images/${imageUuid}/vector.svg`
-    }
-  }
-  return {
-    svgUrl,
-    pngUrl: pngUrl || `https://images.phylopic.org/images/${imageUuid}/thumbnail/128x128.png`,
-    attribution,
-    pageUrl: `https://www.phylopic.org/images/${imageUuid}`,
-  }
+/** Ensure the index is loaded. Safe to call many times; builds once. */
+export function ensureIndex() {
+  if (!indexMap) indexMap = buildIndex()
+  return Promise.resolve(indexMap)
 }
 
-/** Try candidates (name + lineage) directly. Returns meta, or null (miss), or throws (network/CORS). */
-async function resolveMetaDirect(candidates) {
-  let hadNetworkError = false
-  for (const c of candidates) {
-    try {
-      const meta = await resolveOneNameDirect(c)
-      if (meta) return meta
-    } catch (e) {
-      hadNetworkError = true
-    }
-  }
-  if (hadNetworkError) {
-    const err = new Error('phylopic direct unreachable')
-    err.network = true
-    throw err
-  }
-  return null
+/** Synchronous accessor (the index is always available — it's bundled). */
+export function getIndex() {
+  if (!indexMap) indexMap = buildIndex()
+  return indexMap
 }
 
-async function fetchSvgText(url) {
-  if (!url) return null
-  const t = withTimeout()
-  try {
-    const res = await fetch(url, { headers: { Accept: 'image/svg+xml,*/*' }, redirect: 'follow', signal: t.signal })
-    if (!res.ok) return null
-    const text = await res.text()
-    return /<svg[\s>]/i.test(text) ? text : null
-  } catch (e) {
-    return null
-  } finally {
-    t.done()
-  }
-}
-
-/** Proxy fallback: ask our backend for the SVG markup. Returns {svg,...} or null. */
-async function resolveViaProxy(name, lineage) {
-  const t = withTimeout()
-  try {
-    const url =
-      `${serverBase()}/phylopic/svg?name=${encodeURIComponent(name)}` +
-      (lineage && lineage.length ? `&lineage=${encodeURIComponent(lineage.join(','))}` : '')
-    const res = await fetch(url, { signal: t.signal })
-    if (!res.ok) return null
-    const svg = await res.text()
-    if (!svg || !/<svg[\s>]/i.test(svg)) return null
-    let attribution = null
-    try {
-      const raw = res.headers.get('X-Phylopic-Attribution')
-      if (raw) attribution = decodeURIComponent(raw)
-    } catch (e) { /* header hidden */ }
-    return { svg, svgUrl: null, pngUrl: null, attribution, pageUrl: res.headers.get('X-Phylopic-Page') || null }
-  } catch (e) {
-    return null
-  } finally {
-    t.done()
-  }
-}
-
-function candidatesFor(name, lineage) {
-  const out = []
+/** Look up an index record for a taxon by name, then by lineage ancestors. */
+function lookupRecord(map, name, lineage) {
   const seen = new Set()
   for (const n of [name, ...asArray(lineage)]) {
-    const norm = normalizeName(n)
-    if (norm && !seen.has(norm)) {
-      seen.add(norm)
-      out.push(norm)
-    }
+    const key = normalizeName(n)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    if (map[key]) return map[key]
   }
-  return out
+  return null
 }
 
-/**
- * Resolve a name (+ lineage fallback) to a renderable silhouette.
- * @returns {Promise<{svg:?string, svgUrl:?string, pngUrl:?string, attribution:?string, pageUrl:?string}|null>}
- *   `svg` is inline markup (preferred). If null but `pngUrl` is set, the caller
- *   can render <img :src="pngUrl">.
- */
-export async function resolveSvgMarkup(name, lineage = []) {
-  const candidates = candidatesFor(name, lineage)
-  if (!candidates.length) return null
-  const key = candidates.join('|')
+// ---------- load a single SVG (cached per URL) ----------
+function looksLikeSvg(text) {
+  return /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)?<svg[\s>]/i.test(text)
+}
 
-  if (memCache.has(key)) return memCache.get(key)
-  const stored = lsGet(key)
-  if (stored !== undefined && stored !== null) {
-    // Re-hydrate svg markup for this session from the cached URL.
-    const svg = await fetchSvgText(stored.svgUrl)
-    const out = { ...stored, svg }
-    memCache.set(key, out)
-    return out
-  }
-  if (inflight.has(key)) return inflight.get(key)
-
-  const run = (async () => {
-    let meta = null
-    if (!directApiBlocked) {
-      try {
-        meta = await resolveMetaDirect(candidates)
-      } catch (e) {
-        directApiBlocked = true // stop hammering the direct API this session
-        meta = null
-      }
-    }
-
-    if (meta) {
-      const svg = await fetchSvgText(meta.svgUrl)
-      const out = { ...meta, svg }
-      lsSet(key, out)
-      return out
-    }
-
-    if (directApiBlocked) {
-      // Direct API unreachable (CORS/locked down) — try the backend proxy.
-      const proxied = await resolveViaProxy(candidates[0], candidates.slice(1))
-      if (proxied) return proxied
-      return null
-    }
-
-    // Direct API worked but found no silhouette — cache the miss.
-    lsSet(key, null)
+/** Try the backend proxy first. Returns inline svg string, or null to fall back. */
+async function tryBackend(svgUrl) {
+  const t = withTimeout()
+  try {
+    const proxy = `${backendBase()}/phylopic/svg?url=${encodeURIComponent(svgUrl)}`
+    const res = await fetch(proxy, { redirect: 'follow', signal: t.signal })
+    if (!res.ok) return null
+    const text = await res.text()
+    return looksLikeSvg(text) ? text : null
+  } catch (e) {
+    // Backend down / not connecting / CORS — signal the caller to fall back.
     return null
+  } finally {
+    t.done()
+  }
+}
+
+/** Fall back to fetching the SVG directly from the PhyloPic website. */
+async function tryDirect(svgUrl) {
+  const t = withTimeout()
+  try {
+    const res = await fetch(svgUrl, { redirect: 'follow', signal: t.signal })
+    if (!res.ok) return { svg: null, imgUrl: svgUrl }
+    const text = await res.text()
+    if (looksLikeSvg(text)) return { svg: text, imgUrl: null }
+    return { svg: null, imgUrl: svgUrl } // not inline-able — let <img> try
+  } catch (e) {
+    // CORS/network on the fetch — <img> loads aren't CORS-restricted.
+    return { svg: null, imgUrl: svgUrl }
+  } finally {
+    t.done()
+  }
+}
+
+async function loadSource(svgUrl) {
+  if (!svgUrl) return null
+  if (sourceCache.has(svgUrl)) return sourceCache.get(svgUrl)
+  if (sourceInflight.has(svgUrl)) return sourceInflight.get(svgUrl)
+
+  const p = (async () => {
+    // 1) backend proxy first
+    const fromBackend = await tryBackend(svgUrl)
+    if (fromBackend) return { svg: fromBackend, imgUrl: null }
+    // 2) direct from the website if the backend couldn't serve it
+    return tryDirect(svgUrl)
   })()
     .then((r) => {
-      memCache.set(key, r || null)
-      inflight.delete(key)
-      return r || null
+      sourceCache.set(svgUrl, r)
+      sourceInflight.delete(svgUrl)
+      return r
     })
     .catch(() => {
-      memCache.set(key, null)
-      inflight.delete(key)
-      return null
+      const r = { svg: null, imgUrl: svgUrl }
+      sourceCache.set(svgUrl, r)
+      sourceInflight.delete(svgUrl)
+      return r
     })
 
-  inflight.set(key, run)
-  return run
+  sourceInflight.set(svgUrl, p)
+  return p
 }
 
 /**
- * Warm the cache for many taxa with bounded concurrency. Pass the most relevant
- * taxa (current page) first. Already-cached/in-flight items are skipped fast.
+ * Resolve a taxon to a renderable silhouette using the prebuilt index.
+ * @returns {Promise<{svg:?string, imgUrl:?string, href:?string}|null>}
+ *   `svg` is inline markup (preferred); otherwise `imgUrl` is set for <img>.
+ */
+export async function resolveSvgMarkup(name, lineage = []) {
+  if (!normalizeName(name)) return null
+  const rec = lookupRecord(getIndex(), name, lineage)
+  if (!rec) return null
+  const loaded = await loadSource(rec.svgUrl)
+  if (!loaded) return null
+  return { svg: loaded.svg, imgUrl: loaded.imgUrl, href: rec.svgUrl }
+}
+
+/**
+ * Warm the silhouettes for many taxa with bounded concurrency — pass the most
+ * relevant (current page) first. Already-cached items return instantly, and a
+ * URL that's already been fetched is never fetched again.
  * @param {Array<{name:string, lineage?:string[]}>} items
  * @param {number} [concurrency]
  */
-export function prefetchSvg(items, concurrency = 5) {
+export function prefetchSvg(items, concurrency = 6) {
   const queue = (items || []).filter((it) => it && it.name)
   let i = 0
   const worker = async () => {
@@ -446,4 +249,7 @@ export function prefetchSvg(items, concurrency = 5) {
   for (let w = 0; w < n; w += 1) worker()
 }
 
-export default { resolveSvgMarkup, prefetchSvg }
+// Build the in-memory lookup as soon as the app bundle loads ("on HTML load").
+ensureIndex()
+
+export default { ensureIndex, getIndex, resolveSvgMarkup, prefetchSvg }

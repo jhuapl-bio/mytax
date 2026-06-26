@@ -838,10 +838,30 @@ export default {
         if (hit) focus = hit
       }
 
-      // map any node to its top-level group colour key
+      // map any node to its own taxon name (used for leaf pies / propagation)
       const groupOf = d => {
         const gdata = d && d.data ? d.data.data : null
         return this.legendNameForRow(sample, gdata)
+      }
+
+      // Colour key for an ARC: the ancestor of `d` that sits one ring below the
+      // current focus (i.e. a direct child of the focus). Every node in that
+      // subtree therefore shares one hue, so a whole branch reads as a single
+      // colour and only opacity changes with depth. This re-anchors on zoom:
+      // zoom into a Domain and its Kingdoms become the colour groups (3 kingdoms
+      // -> 3 colours), each carrying down to all of its descendants. Matches the
+      // "Current level" legend (focusLegendData), which colours those same
+      // direct children by name.
+      const colorKeyOf = d => {
+        let n = d
+        while (n && n.parent && n.parent !== focus) n = n.parent
+        const gdata = n && n.data ? n.data.data : null
+        return this.legendNameForRow(sample, gdata)
+      }
+      const colorOf = d => {
+        const base = d3.color(this.groupColor(colorKeyOf(d))) || d3.color('#9bb6cf')
+        const rel = Math.max(0, (d.depth - focus.depth) - 1)
+        return base.copy({ opacity: Math.max(0.42, 1 - rel * 0.11) })
       }
 
       // Legend semantics:
@@ -910,8 +930,7 @@ export default {
       const path = g.selectAll('path')
         .data(root.descendants().slice(1))
         .join('path')
-        .attr('fill', d => d3.color(this.groupColor(groupOf(d)))
-          .copy({ opacity: Math.max(0.42, 1 - Math.max(0, d.depth - 1) * 0.11) }))
+        .attr('fill', d => colorOf(d))
         .attr('fill-opacity', d => arcVisible(d.current) ? 1 : 0)
         .attr('pointer-events', d => arcVisible(d.current) ? 'auto' : 'none')
         .attr('d', d => arc(d.current))
@@ -978,6 +997,11 @@ export default {
           .attr('fill-opacity', d => arcVisible(d.target) ? 1 : 0)
           .attr('pointer-events', d => arcVisible(d.target) ? 'auto' : 'none')
           .attrTween('d', d => () => arc(d.current))
+
+        // re-anchor colours to the new focus: each direct child of the focus (and
+        // its whole subtree) gets a single hue, so the dial stays "consistent
+        // with the current level" after every zoom.
+        path.transition(t).attr('fill', d => colorOf(d))
 
         const tx = (focus && focus !== root && focus.data && focus.data.data) ? focus.data.data.taxid : null
         self.$set(self.sbFocus, sample, tx)
@@ -1525,9 +1549,13 @@ export default {
 .mtx-blank p { max-width: 460px; margin: 14px auto 0; font-size: 14px; }
 
 @keyframes mtxpulse {
-  0% { box-shadow: 0 0 0 0 rgba(42,157,143,.5); }
-  70% { box-shadow: 0 0 0 7px rgba(42,157,143,0); }
-  100% { box-shadow: 0 0 0 0 rgba(42,157,143,0); }
+  0%   { box-shadow: 0 0 0 0 rgba(42,157,143,.55); transform: scale(1); }
+  50%  { transform: scale(1.18); }
+  70%  { box-shadow: 0 0 0 7px rgba(42,157,143,0); }
+  100% { box-shadow: 0 0 0 0 rgba(42,157,143,0); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mtx-chip-dot.live, .mtx-sb-dot.live { animation: none; }
 }
 
 @media (max-width: 1024px) {

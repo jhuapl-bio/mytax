@@ -2,14 +2,15 @@ import glob from "glob-all"
 import {logger} from './logger.js'
 import PQueue from 'p-queue';
 import os from 'os'
-import { broadcastToAllActiveConnections } from './messenger.mjs';
+import { broadcastToAllActiveConnections, broadcastThrottled, flushThrottled } from './messenger.mjs';
 import { storage } from "./storage.mjs";
+import { scheduler } from "./scheduler.mjs";
 import path from 'path'
 import { fileURLToPath } from 'url'
 import {Barcoder} from "./barcoder.mjs"
 import { Downloader } from "./downloader.mjs"
 import { Run  } from "./run.mjs";
-import {  globFiles, getKrakenConfigDefault , openPath,  rmFile } from './controllers.mjs';
+import {  globFiles, getKrakenConfigDefault , openPath,  rmFile, resolveKrakenDbDirSync } from './controllers.mjs';
 import fs from "fs"
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,12 +69,42 @@ export  class Orchestrator {
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
                 decompress: true,
-                final: '16S_Greengenes_k2db',  
+                final: '16S_Greengenes_k2db',
                 nested: true,
                 key: 'Greengenes13.5',
                 fullpath: path.join(this.databasespath, "16S_Greengenes_k2db")
             },
-            
+            {
+                // genome-idx 16S tarballs extract to a `<name>_k2db` folder (same
+                // convention as Greengenes above). `final` must be that real folder
+                // name; `aliases` keeps detecting any legacy / renamed copies.
+                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Silva132_20200326.tgz",
+                decompress: true,
+                final: '16S_SILVA132_k2db',
+                nested: true,
+                key: 'SILVA132',
+                aliases: ['16S_Silva132_20200326'],
+                fullpath: path.join(this.databasespath, "16S_SILVA132_k2db")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Silva138_20200326.tgz",
+                decompress: true,
+                final: '16S_SILVA138_k2db',
+                nested: true,
+                key: 'SILVA138',
+                aliases: ['16S_Silva138_20200326'],
+                fullpath: path.join(this.databasespath, "16S_SILVA138_k2db")
+            },
+            {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/16S_RDP11.5_20200326.tgz",
+                decompress: true,
+                final: '16S_RDP_k2db',
+                nested: true,
+                key: 'RDP11.5',
+                aliases: ['16S_RDP11.5_20200326'],
+                fullpath: path.join(this.databasespath, "16S_RDP_k2db")
+            },
+
             // Add other databases here
         ];
         this.defaultLocation = ""
@@ -176,74 +207,94 @@ export  class Orchestrator {
         // Save to file
         await this.saveUserSettingsToFile(userId);
     }
+    // resolveTopDir: pick the on-disk database folder for an entry by trying its
+    // canonical `final` name first, then any `aliases` (legacy / renamed copies).
+    // Returns the first that exists, else the canonical path (may not exist yet).
+    resolveTopDir(db){
+        let candidates = [db.final, ...((db.aliases) || [])]
+        for (const name of candidates){
+            let p = path.join(this.databasespath, name)
+            try { if (fs.existsSync(p)) return p } catch (e){ /* skip */ }
+        }
+        return path.join(this.databasespath, db.final)
+    }
+    // sizeOfDb: bytes of the kraken2 index (hash.k2d), falling back to summing any
+    // *.k2d files found anywhere under the top dir.
+    async sizeOfDb(topPath, dbDir, dbkey){
+        let bytes = 0
+        try {
+            bytes = fs.statSync(path.join(dbDir, 'hash.k2d')).size
+        } catch (e){
+            try {
+                let k2dFiles = await globFiles(`${topPath}/**/*.k2d`)
+                for (let f of k2dFiles){
+                    try { bytes += fs.statSync(f).size } catch (err) { /* skip */ }
+                }
+            } catch (err){ logger.error(`Could not size database ${dbkey}: ${err}`) }
+        }
+        return bytes
+    }
     async checkdatabases(){
         try{
-            const $this = this
-            // glob all directories in the database path, get size of the folder and return in a list
-            let databases = await globFiles(`${this.downloader.databaseSavePath}/*`, { cwd: this.downloader.databaseSavePath, nodir: false })
-            // iterate through this.databases and if the final == basename then set status" exists true and size 0, then for each that exist check the size of the dir 
             for (let [ key, value ] of Object.entries(this.databases)){
-                let index = databases.findIndex((d)=>{
-                    return d == path.join($this.downloader.databaseSavePath, value.final )
-                })
-                 
-                if (index != -1){ 
-                    let database = databases[index]
-                    let size = await fs.statSync(path.join(database, 'hash.k2d')).size
+                let topPath = this.resolveTopDir(value)
+                if (fs.existsSync(topPath)){
+                    // Resolve to the actual kraken2 index dir (handles nested 16S sets).
+                    let dbDir = resolveKrakenDbDirSync(topPath)
+                    let bytes = await this.sizeOfDb(topPath, dbDir, value.key)
                     value.exists = true
-                    // convert size to byte, kb, mb, or gb
-                    if (size > 1000000000){
-                        size = `${(size / 1000000000).toFixed(2)} GB`
-                    } else if (size > 1000000){
-                        size = `${(size / 1000000).toFixed(2)} MB`
-                    } else if (size > 1000){
-                        size = `${(size / 1000).toFixed(2)} KB`
-                    } else {
-                        size = `${size} B`
-                    }
-                    value.size = size
-                    broadcastToAllActiveConnections('databaseStatus', { status: value  })
+                    value.fullpath = dbDir
+                    value.size = this.formatSize(bytes)
                 } else {
-                    value.exists = false 
+                    value.exists = false
                     value.size = 0
-                    broadcastToAllActiveConnections('databaseStatus', { status: value })
                 }
-                
+                broadcastToAllActiveConnections('databaseStatus', { status: value })
             }
         } catch (err){
             logger.error(err)
         }
     }
+    formatSize(size){
+        if (size > 1000000000){
+            return `${(size / 1000000000).toFixed(2)} GB`
+        } else if (size > 1000000){
+            return `${(size / 1000000).toFixed(2)} MB`
+        } else if (size > 1000){
+            return `${(size / 1000).toFixed(2)} KB`
+        }
+        return `${size} B`
+    }
     async checkdatabase(dbkey){
         try{
-            const $this = this
             let databaseIdx = this.databases.findIndex((d)=>{ return d.key == dbkey })
-            if (databaseIdx>-1){
-                let database = this.databases[databaseIdx]
-                
-                let exists = await fs.existsSync(database.fullpath)
-                if (exists){
-                    let size = await fs.statSync(path.join(database.fullpath, 'hash.k2d')).size
-                    if (size > 1000000000){
-                        size = `${(size / 1000000000).toFixed(2)} GB`
-                    } else if (size > 1000000){
-                        size = `${(size / 1000000).toFixed(2)} MB`
-                    } else if (size > 1000){
-                        size = `${(size / 1000).toFixed(2)} KB`
-                    } else {
-                        size = `${size} B` 
-                    }
-                    if (database.size != size){
-                        logger.info(`Database ${dbkey} has changed, updating size`)
-                    }
-                    this.databases[databaseIdx].size = size
-                    
-                    return 
-                } 
-            } else {
+            if (databaseIdx === -1){
                 return
             }
-            
+            let database = this.databases[databaseIdx]
+            // Pick the on-disk top dir (canonical name or a legacy alias).
+            let topPath = this.resolveTopDir(database)
+            let exists = fs.existsSync(topPath)
+            if (!exists){
+                // Directory isn't there -> mark as not present so the UI shows the
+                // "needs download" state instead of a stale size/spinner.
+                this.databases[databaseIdx].exists = false
+                this.databases[databaseIdx].size = 0
+                return
+            }
+            // Resolve to the directory that actually holds the kraken2 index
+            // (handles Silva/RDP nesting). This becomes the fullpath the frontend
+            // hands to kraken2 (item-value="fullpath").
+            let dbDir = resolveKrakenDbDirSync(topPath)
+            let bytes = await this.sizeOfDb(topPath, dbDir, dbkey)
+            let size = this.formatSize(bytes)
+            if (database.size != size){
+                logger.info(`Database ${dbkey} has changed, updating size`)
+            }
+            this.databases[databaseIdx].exists = true
+            this.databases[databaseIdx].fullpath = dbDir
+            this.databases[databaseIdx].size = size
+            return
         } catch (err){
             logger.error(err)
         }
@@ -292,28 +343,69 @@ export  class Orchestrator {
         }
     }
 
-    async downloadfile(target){
-        const $this = this 
+    // databaseIsPresent: true if the DB dir exists on disk with a kraken index in it.
+    databaseIsPresent(db){
+        try{
+            if (!db || !db.fullpath) return false
+            if (!fs.existsSync(db.fullpath)) return false
+            // Treat a non-zero `size` OR a present hash.k2d as "already downloaded".
+            if (db.size && db.size !== 0) return true
+            return fs.existsSync(path.join(db.fullpath, 'hash.k2d'))
+        } catch (err){
+            return false
+        }
+    }
+
+    async downloadfile(target, confirm = false){
+        const $this = this
         // get the index of the database in this.databases, if exits set download to true
         let index = this.databases.findIndex((d)=>{
             return d.key == target
         })
+        if (index === -1){
+            logger.error(`Database ${target} not found, cannot download`)
+            return
+        }
+        // ---- Re-download guard ---------------------------------------------
+        // If the DB is already present and the user hasn't explicitly confirmed,
+        // warn in stdout and ask the frontend to confirm instead of clobbering it.
+        if (!confirm && this.databaseIsPresent(this.databases[index])){
+            logger.info(`WARNING: database '${target}' is already present at ${this.databases[index].fullpath}. Re-download skipped pending confirmation.`)
+            broadcastToAllActiveConnections('databaseStatus', {
+                status: this.databases[index],
+                warning: `Database "${target}" is already downloaded. Re-download and overwrite it?`,
+                needsConfirm: true
+            })
+            return
+        }
         try{
-            if (index != -1){
-                this.databases[index].downloading = true
-            } 
-            this.databases[index].error = null   
-             
+            this.databases[index].downloading = true
+            this.databases[index].error = null
+            this.databases[index].progress = 0
+
             broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
-            await this.downloader.download(target)
+            await this.downloader.download(target, (p)=>{
+                // Stream download progress out to the frontend (throttled so a
+                // multi-GB download doesn't flood the socket).
+                $this.databases[index].progress = p.percent
+                $this.databases[index].downloaded = p.downloaded
+                $this.databases[index].total = p.total
+                broadcastThrottled('databaseStatus', { status: $this.databases[index] }, `dbprogress-${target}`, 300)
+            })
+            // Ensure the final progress frame is delivered, then mark complete.
+            flushThrottled(`dbprogress-${target}`)
             $this.databases[index].downloading = false
-            logger.info("done dwnld")  
+            $this.databases[index].progress = 100
+            logger.info("done dwnld")
             await this.checkdatabase(this.databases[index].key)
             broadcastToAllActiveConnections('databaseStatus', { status: $this.databases[index] })
-        } catch (err){ 
-            logger.error(err.message)
+        } catch (err){
+            flushThrottled(`dbprogress-${target}`)
+            let message = err && err.message ? err.message : `${err}`
+            logger.error(message)
             $this.databases[index].downloading = false
-            $this.databases[index].error = err.message
+            $this.databases[index].progress = null
+            $this.databases[index].error = message
             await this.checkdatabase(this.databases[index].key)
             broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
         }
@@ -405,39 +497,45 @@ export  class Orchestrator {
     async getRunInformation(run){
         // get index where run.name == run
         let index = this.runs.findIndex((r)=>{
-            return r.run == run  
-        }) 
-        if (index != -1){  
-            let r = this.runs[index]
-            let reportdata = []
-            r.sendSampleData()
+            return r.run == run
+        })
+        if (index == -1){
+            return null
+        }
+        let r = this.runs[index]
+        // Build ONE self-contained snapshot of the run and emit it as a single
+        // frame. The client hydrates everything (per-sample report text, the
+        // full queue list and each job's status) from this payload, so we no
+        // longer dribble a separate sampledata/status frame per sample.
+        //
+        // Previously this also called r.sendSampleData() up front, which fired a
+        // throttled 'sampledata' frame for every sample, and the client then
+        // round-tripped a 'getStatus' per sample -> a per-job 'status' storm
+        // back. For a 1600-job run that handshake took minutes. It's all in this
+        // one packet now. getStatus() is called with send=false so it does NOT
+        // emit per-job frames while we assemble the snapshot.
+        let reportdata = []
+        try {
             if (r.samples && Object.keys(r.samples).length > 0){
                 for (let [key, sample] of Object.entries(r.samples)){
-                    let queueList =  sample.formatQueueInfo()
                     reportdata.push({
                         samplename: key,
-                        data: sample.data, 
-                        queue: queueList,
+                        data: sample.data,
+                        queue: sample.formatQueueInfo(),
                         samplesheet: sample.samplesheet,
                         status: sample.getStatus()
                     })
                 }
             }
-            try{
-                let returninfo = {  
-                    run: r.run,
-                    reportdata: reportdata,
-                    samplesheet: r.samplesheet,
-                    config: r.config
-                }
-                
-                broadcastToAllActiveConnections( "runInformation",  returninfo);
-            } catch (err){ 
-                logger.error(`${err} error in sending run information`)
-            }
-        } else {
-            return null
-        } 
+            broadcastToAllActiveConnections("runInformation", {
+                run: r.run,
+                reportdata: reportdata,
+                samplesheet: r.samplesheet,
+                config: r.config
+            })
+        } catch (err){
+            logger.error(`${err} error in sending run information`)
+        }
     }
     async setSampleSingle(s, overwrite){
         try{
@@ -795,14 +893,17 @@ export  class Orchestrator {
                 logger.error(`${err} error in sending active status of add in queue`)
             } 
         });
-        storage.queue.on("add", (f) => { 
+        storage.queue.on("add", (f) => {
             try{
                 // logger.info(`Added to queue ${queue.size} --- ${queue.pending}`)
                 storage.queueLengthInterval = true
-                broadcastToAllActiveConnections( "queueLength", {data: queue.size + queue.pending , type: "add" });
+                // The round-robin scheduler now owns the authoritative count
+                // (PQueue only ever holds the 1 released job at a time), so report
+                // the scheduler's buffered total instead of the PQueue size.
+                broadcastThrottled( "queueLength", {data: scheduler.totalPending() + scheduler.active , type: "add" }, "queueLength");
             } catch (err){
                 logger.error(`${err} error in sending add status of add in queue`)
-            } 
+            }
         });
         $this.createInterval() 
        
@@ -819,7 +920,10 @@ export  class Orchestrator {
         storage.queue.on("idle", () => {
             logger.info("Idle queue, all jobs completed")
             // storage.queueLengthInterval = false
-            broadcastToAllActiveConnections( "queueLength", {data:  queue.size + queue.pending, type: "idle"});
+            // Queue drained: flush any pending throttled count, then send the
+            // authoritative final state so the UI doesn't sit on a stale number.
+            flushThrottled("queueLength");
+            broadcastToAllActiveConnections( "queueLength", {data:  scheduler.totalPending() + scheduler.active, type: "idle"});
             try{ 
             } catch (err){
                 logger.error(`${err} error in sending idle status of running in queue`)
@@ -828,11 +932,11 @@ export  class Orchestrator {
         
         storage.queue.on('completed', function ( result) {
             // logger.info(`task completed ${result}`)
-            broadcastToAllActiveConnections( "queueLength", {data:   queue.size , type: "completed" });
+            broadcastThrottled( "queueLength", {data:   scheduler.totalPending() + scheduler.active , type: "completed" }, "queueLength");
         })
         storage.queue.on('error', function (err) {
             logger.error(`Queue task error ${err}`)
-            broadcastToAllActiveConnections( "queueLength", {data: queue.size + queue.pending, type: "error"});
+            broadcastThrottled( "queueLength", {data: scheduler.totalPending() + scheduler.active, type: "error"}, "queueLength");
         })
        
      
@@ -904,6 +1008,7 @@ export  class Orchestrator {
                     $this.watcher.close().then((f)=>{
                         $this.watchFastqs(true)
                     })
+                    try { scheduler.clear() } catch (e) { logger.error(`${e} clearing scheduler`) }
                     storage.queue.clear()
                     resolve(f)
                 }).catch((err)=>{
@@ -946,10 +1051,33 @@ export  class Orchestrator {
     }
     getQueueStatus(){
         return {
-            length: storage.queue.size,
+            length: scheduler.totalPending() + scheduler.active,
             isPaused: storage.queue.isPaused,
-            pending: storage.queue.pending,
-            pendingLength: storage.queue.pending,
+            pending: scheduler.totalPending(),
+            pendingLength: scheduler.totalPending(),
+        }
+    }
+    // --- live queue-board controls (driven from the QueueBoard dialog) -------
+    getQueueBoard(run){
+        try{
+            return scheduler.getBoard(run)
+        } catch (err){
+            logger.error(`${err} error building queue board`)
+            return { run, laneOrder: [], lanes: [], upNext: [] }
+        }
+    }
+    setLaneOrder(run, samples){
+        try{
+            scheduler.setLaneOrder(run, samples)
+        } catch (err){
+            logger.error(`${err} error setting lane order`)
+        }
+    }
+    prioritizeJob(run, sample, index){
+        try{
+            scheduler.prioritizeJob(run, sample, index)
+        } catch (err){
+            logger.error(`${err} error prioritizing job`)
         }
     }
  
@@ -1154,8 +1282,9 @@ export  class Orchestrator {
                 }
             }
 
+            try { scheduler.clear() } catch (e) { logger.error(`${e} clearing scheduler`) }
             await storage.queue.clear()
-            
+
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)
         }

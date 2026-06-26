@@ -82,7 +82,14 @@ export  class Entry {
                 `${this.path_1}/*fna`,
                 `${this.path_1}/*faa`,
                 `${this.path_1}/*fasta`
-            ], {ignored: /^\./, persistent: true,  usePolling: true   })
+            ], {
+                ignored: /^\./,
+                persistent: true,
+                // Native watching on local disk; polling a large fastq dir
+                // pins a CPU core and stalls the event loop.
+                usePolling: false,
+                awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 200 }
+            })
             .on('add', async function(filepath, stat) {
                 logger.info(`NEWLY CREATED: File ${filepath} has been ADDED`);
 
@@ -144,7 +151,14 @@ export  class Entry {
         try{
             this.watcher = await chokidar.watch([
                 `${this.outdir}/**/full.report`,
-            ], {ignored: /^\./, persistent: true,  usePolling: true   })
+            ], {
+                ignored: /^\./,
+                persistent: true,
+                usePolling: false,
+                // Report files are rewritten frequently while classifying; wait
+                // for the write to settle so we read/emit once per update.
+                awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 }
+            })
             .on('add', async function(filepath, stat) {
                 logger.info(`NEWLY CREATED Report: ${filepath} has been ADDED`);
                 let sample = path.basename(path.dirname(filepath))

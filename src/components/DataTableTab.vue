@@ -209,7 +209,7 @@ export default {
 .mtx-dt-search { min-width: 240px; }
 .mtx-dt-scroll { border: 1px solid #e2e8f0; border-radius: 14px; overflow: auto; max-height: 64vh; background: #fff; }
 .mtx-dt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.mtx-dt-table th { position: sticky; top: 0; background: #f3f7fb; text-align: left; padding: 9px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5b6573; cursor: pointer; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
+.mtx-dt-table th { position: sticky; top: 0; z-index: 3; background: #f3f7fb; text-align: left; padding: 9px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5b6573; cursor: pointer; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
 .mtx-dt-table th.n, .mtx-dt-table td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .mtx-dt-table td { padding: 8px 12px; border-bottom: 1px solid #eef3f7; }
 .mtx-dt-table tr:hover td { background: #f8fbfe; }

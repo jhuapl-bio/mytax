@@ -4,10 +4,10 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 import  { spawn } from 'child_process';
-import { removeExtension,  getReportName, globFiles } from './controllers.mjs';
+import { removeExtension,  getReportName, globFiles, killProcessTree, resolveKrakenDbDirSync } from './controllers.mjs';
 import {logger} from './logger.js'
 import fs from "file-system"
-import { broadcastToAllActiveConnections } from './messenger.mjs';
+import { broadcastToAllActiveConnections, queueJobUpdate } from './messenger.mjs';
 export  class Classifier { 
     constructor(sample){    
 
@@ -65,11 +65,13 @@ export  class Classifier {
             run: this.run,
             sample: this.sample.sample,
         }
-        broadcastToAllActiveConnections( "status", {
-            run: this.run, 
-            sample: this.name,  
-            index: this.index, 
-            'status' :  this.status ,
+        // Previously this broadcast an unthrottled 'status' frame to every socket
+        // for EACH job, twice (on start + exit). With 2000+ jobs that alone
+        // saturated the connection. Now it's coalesced per (sample,index) into the
+        // run-scoped batched 'runUpdate' frame, and dropped entirely if nobody is
+        // viewing this run.
+        queueJobUpdate(this.run, this.name, this.index, {
+            status: this.status,
             config: info
         })
     }
@@ -84,12 +86,20 @@ export  class Classifier {
         logger.info(`Attempting to stop process: ${this.name}`)
         if (this.process){
             try{
-                this.process.kill();
+                // We spawn `bash -c "...kraken2..."`, so this.process is the bash
+                // wrapper. A plain this.process.kill() only signals bash and leaves
+                // the heavyweight kraken2 child running (still loading/holding the
+                // large DB) until it finishes on its own -> cancel feels slow.
+                // Because we spawn with detached:true, the child gets its own
+                // process group, so we can signal the WHOLE group (negative pid)
+                // and take kraken2 down with it. SIGTERM first, then a short
+                // SIGKILL escalation so it stops near-instantly.
+                killProcessTree(this.process)
                 this.status.running = false
                 this.status.error=`Canceled job`
                 this.status.success = -1
                 logger.info(`Process is ended in a midrun, exiting and continuing the queue if it exists currently......`)
-                return 
+                return
             } catch (err){
                 logger.error(`${err} failure to exit process appropriately`)
                 throw err
@@ -120,7 +130,9 @@ export  class Classifier {
                         $this.status.success = null
                         $this.status.logs = []
                         let command = $this.command
-                        let classify = spawn(command.main, command.args );
+                        // detached:true puts kraken2 (and the bash wrapper) in their
+                        // own process group so stop() can kill the whole group fast.
+                        let classify = spawn(command.main, command.args, { detached: true });
                         $this.sendJobStatus()
                         classify.stdout.on('data', (data) => {
                             $this.status.logs.push(`${data}`) 
@@ -182,8 +194,12 @@ export  class Classifier {
     }
     generateKrakenCommand(){
         let dirname = path.dirname(this.sampleReport)
-        let command = `echo "Sleep job"; mkdir -p ${dirname};  echo "Run"; kraken2 --db '${this.sample.database}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
-        this.database = this.sample.database
+        // Some DBs (e.g. Silva/RDP 16S) nest the kraken2 index in a subfolder, so
+        // the configured path won't contain taxo.k2d directly. Resolve to the
+        // actual index directory so kraken2 doesn't error out mid-run.
+        let dbpath = resolveKrakenDbDirSync(this.sample.database)
+        let command = `mkdir -p ${dirname}; kraken2 --db '${dbpath}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
+        this.database = dbpath
         if (this.sample.path_2 && this.sample.path_2 != this.sample.path_1 && this.sample.path_2 != ""){ 
             command=`${command} \\
             --paired ` 

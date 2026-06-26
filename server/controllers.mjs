@@ -203,3 +203,90 @@ export function globFiles(pattern, options){
         })
     })
 }
+
+// ---------------------------------------------------------------------------
+// resolveKrakenDbDirSync(baseDir)
+//
+// kraken2 needs the directory that DIRECTLY contains its index files
+// (taxo.k2d / hash.k2d / opts.k2d). Most genome-idx tarballs put these at the
+// top of the extracted folder, but some 16S sets (e.g. Silva, RDP) nest them
+// one level deeper inside a subfolder like `16S_SILVA138_k2db/`. Pointing
+// kraken2 at the parent then fails with:
+//   "database (...) does not contain necessary file taxo.k2d"
+//
+// This walks baseDir and up to 2 levels of subdirectories to find the real
+// index directory. Falls back to baseDir unchanged if nothing is found, so
+// non-nested databases keep working exactly as before. Synchronous so it can
+// be used from the (sync) kraken2 command builder.
+// ---------------------------------------------------------------------------
+export function resolveKrakenDbDirSync(baseDir){
+    try {
+        if (!baseDir) return baseDir;
+        const hasIndex = (d) => {
+            try { return fs.existsSync(path.join(d, 'taxo.k2d')); } catch (e){ return false; }
+        };
+        if (hasIndex(baseDir)) return baseDir;
+
+        const subdirs = (dir) => {
+            let out = [];
+            try {
+                for (const name of fs.readdirSync(dir)){
+                    const child = path.join(dir, name);
+                    try { if (fs.statSync(child).isDirectory()) out.push(child); } catch (e){ /* skip */ }
+                }
+            } catch (e){ /* not readable */ }
+            return out;
+        };
+
+        // Level 1: a direct child holds the index?
+        const level1 = subdirs(baseDir);
+        for (const d of level1){ if (hasIndex(d)) return d; }
+        // Level 2: a grandchild holds the index?
+        for (const d of level1){
+            for (const g of subdirs(d)){ if (hasIndex(g)) return g; }
+        }
+        return baseDir;
+    } catch (err){
+        return baseDir;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// killProcessTree(child, { grace })
+//
+// Jobs are spawned as `bash -c "...kraken2..."` with detached:true, which makes
+// the spawned bash a process-group leader. Calling child.kill() would only
+// signal bash and leave the real worker (kraken2 / guppy) running until it
+// finishes loading/scanning the large DB -> cancellation feels slow.
+//
+// Signalling the negative PID targets the entire process group, so the worker
+// dies with its wrapper. We send SIGTERM for a graceful stop, then escalate to
+// SIGKILL after a short grace window for anything that ignores SIGTERM.
+// Falls back to a direct child.kill() if group signalling isn't available.
+// ---------------------------------------------------------------------------
+export function killProcessTree(child, { grace = 1500 } = {}){
+    if (!child || typeof child.pid !== 'number') return;
+    const pid = child.pid;
+    const signalGroup = (signal) => {
+        try {
+            process.kill(-pid, signal);   // negative pid => whole process group
+        } catch (err) {
+            // Group not available (e.g. not detached) or already gone -> try direct.
+            try { child.kill(signal); } catch (e) { /* already exited */ }
+        }
+    };
+
+    let exited = false;
+    if (typeof child.once === 'function') {
+        child.once('exit', () => { exited = true; });
+    }
+
+    signalGroup('SIGTERM');
+    const timer = setTimeout(() => {
+        if (!exited) {
+            logger.info(`Process group ${pid} did not exit on SIGTERM, sending SIGKILL`);
+            signalGroup('SIGKILL');
+        }
+    }, grace);
+    if (typeof timer.unref === 'function') timer.unref();
+}

@@ -8,6 +8,7 @@
     "serveBoth": "npm run serve & npm run server",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
+    "build:phylopic": "node scripts/build-phylopic-index.mjs",
     "server": "export NODE_ENV=development && nodemon server/index.mjs --watch",
     "production": "export NODE_ENV=production && node server/index.mjs "
   },

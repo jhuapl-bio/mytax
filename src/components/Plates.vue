@@ -54,7 +54,7 @@
           <div class="mtx-plate-canvas">
             <div :id="`platesDiv`" class="mtx-plate-plot"></div>
             <aside class="mtx-parent-legend" v-if="parentLegend.length">
-              <div class="mtx-parent-legend-title">Parents</div>
+              <div class="mtx-parent-legend-title">{{ parentLegendTitle }}</div>
               <div class="mtx-parent-legend-sub">{{ parentLegendUnit }}</div>
               <ul>
                 <li v-for="p in parentLegend" :key="p.source"
@@ -146,7 +146,11 @@
       lineageMaps: {},
       parentLegend: [],
       parentLegendUnit: '',
+      parentLegendTitle: 'Groups',
       parentColorScale: null,
+      // persistent taxon -> colour map so each taxon at the selected rank keeps
+      // a consistent colour across re-renders and when you drill into it.
+      taxonColors: {},
       fullsize: {},
       height: 500,
       top_n: 11,
@@ -180,7 +184,8 @@
       highlightParent(src){
         const svg = d3.select('#svgPlates')
         if (svg.empty() || !src) return
-        svg.selectAll('g.nodestop2').style('opacity', (d) => (d && d.source === src) ? 1 : 0.15)
+        const keyOf = (d) => this.isDrilledToSpecies ? (d && d.source) : (d && d.top)
+        svg.selectAll('g.nodestop2').style('opacity', (d) => (d && keyOf(d) === src) ? 1 : 0.15)
         const sel = src
         svg.selectAll('rect.mtx-band').style('opacity', function(){
           return d3.select(this).attr('data-src') === sel ? 0.34 : 0.04
@@ -319,18 +324,25 @@
           return f.top && f.top !== 'Nothing'
         }).map((f)=> f.top))]
 
-        // --- bin/order taxa by their parent (one rank up = `source`): all children
-        // of a parent sit contiguously, groups and members ordered by abundance.
+        // --- colour key = the taxon at the *currently selected* rank. Each row
+        // normally IS a taxon at that rank, so every distinct taxon gets its own
+        // colour (e.g. 3 kingdoms shown -> 3 colours). When drilled into a genus
+        // (species view) the selected-rank ancestor is the genus (`source`), so
+        // every species under it inherits that one colour. Members sharing a
+        // colour key are kept contiguous so their band/legend swatch lines up.
         const infoByTaxon = {}
         tops.forEach((t) => {
           if (!t.top || t.top === 'Nothing') return
           if (!infoByTaxon[t.top]) infoByTaxon[t.top] = { source: (t.source || '—'), abu: 0 }
           infoByTaxon[t.top].abu = Math.max(infoByTaxon[t.top].abu, t.abu || 0)
         })
+        const colorKeyForName = (name) => $this.isDrilledToSpecies
+          ? ((infoByTaxon[name] && infoByTaxon[name].source) || '—')
+          : name
         const groupsMap = {}
         unique_taxids.forEach((name) => {
-          const src = (infoByTaxon[name] && infoByTaxon[name].source) || '—'
-          ;(groupsMap[src] = groupsMap[src] || []).push(name)
+          const key = colorKeyForName(name)
+          ;(groupsMap[key] = groupsMap[key] || []).push(name)
         })
         Object.values(groupsMap).forEach((arr) =>
           arr.sort((a, b) => (infoByTaxon[b].abu || 0) - (infoByTaxon[a].abu || 0)))
@@ -359,14 +371,29 @@
         for (const sn of samplenames) {
           const prows = this.parseddata[sn] || []
           prows.forEach((r) => {
-            const src = r.source || '—'
-            parentAgg[src] = (parentAgg[src] || 0) + (Number(r.abu) || 0)
+            const key = $this.isDrilledToSpecies ? (r.source || '—') : (r.top || '—')
+            parentAgg[key] = (parentAgg[key] || 0) + (Number(r.abu) || 0)
           })
         }
-        const parentColor = d3.scaleOrdinal()
-          .domain(groupOrder)
-          .range(d3.schemeTableau10.concat(d3.schemeSet3 || []))
+        // Stable, persistent colour assignment: a taxon keeps the same colour
+        // across re-renders and when drilled into. The most abundant groups are
+        // assigned first so they take the leading palette colours.
+        if (!this.taxonColors) this.taxonColors = {}
+        const palette = d3.schemeTableau10
+          .concat(d3.schemeSet3 || [], d3.schemePaired || [], d3.schemeSet2 || [])
+        const parentColor = (key) => {
+          if (key == null || key === '—') return '#9bb6cf'
+          if (!this.taxonColors[key]) {
+            this.taxonColors[key] = palette[Object.keys(this.taxonColors).length % palette.length]
+          }
+          return this.taxonColors[key]
+        }
+        groupOrder.forEach((key) => parentColor(key))
         this.parentColorScale = parentColor
+        const rankNames = { R: 'Root', D: 'Domain', D1: 'Subdomain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }
+        this.parentLegendTitle = this.isDrilledToSpecies
+          ? `Genus ${this.drillTarget}`
+          : (rankNames[this.selectedAttribute] || this.selectedAttribute)
         this.parentLegend = groupOrder
           .filter((src) => src && src !== '—')
           .map((src) => {
@@ -551,10 +578,19 @@
           .attr('rx', 2)
           .attr('ry', 2)
           .style("fill", (d)=>{
-            if (!isFinite(d.abu) || !scalesHeatmap[d.name] || d.abu <= 0) {
-              return '#f3f6f9'
+            if (!isFinite(d.abu) || d.abu <= 0) return '#f3f6f9'
+            // colour by the taxon at the selected rank (its own name normally,
+            // or its genus ancestor when drilled into species).
+            const key = $this.isDrilledToSpecies ? d.source : d.top
+            const taxonColor = $this.parentColorScale ? $this.parentColorScale(key) : null
+            if (!taxonColor) {
+              // fallback: blue intensity scale
+              return scalesHeatmap[d.name] ? scalesHeatmap[d.name](d.abu) : '#f3f6f9'
             }
-            return scalesHeatmap[d.name](d.abu)
+            // Normalize abu within this sample (0–1) then interpolate white → taxon color
+            const max = maxBySample[d.name] || 1
+            const t = Math.pow(Math.min(1, d.abu / max), 0.55) // mild gamma so low values are still visible
+            return d3.interpolate('#f0f4f8', taxonColor)(t)
           })
           .style('stroke', '#dbe6f1')
           .style('stroke-width', 0.8)
@@ -671,7 +707,7 @@
           .call(y_axis);
 
           y.selectAll('text') // select all the text elements
-          .style("font-size", '12px')
+          .style("font-size", '9px')
           .style('fill', '#5a6b7b')
           .style("cursor", (this.selectedAttribute === 'G' && !this.isDrilledToSpecies) ? 'pointer' : 'default')
 
@@ -858,55 +894,55 @@
   position: fixed;
   z-index: 99999;
   pointer-events: none;
-  background: rgba(30, 41, 59, 0.96);
+  background: rgba(22, 33, 49, 0.97);
   color: #f1f5f9;
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  line-height: 1.5;
-  box-shadow: 0 4px 12px rgba(0,0,0,.25);
-  max-width: 340px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  line-height: 1.3;
+  box-shadow: 0 6px 16px rgba(5,12,22,.4);
+  max-width: 250px;
 }
 .mtx-tip-title {
   font-weight: 700;
-  font-size: 12px;
-  margin-bottom: 4px;
-  color: #e2e8f0;
+  font-size: 11.5px;
+  margin-bottom: 3px;
+  color: #fff;
 }
 .mtx-tip-table {
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 10.5px;
 }
 .mtx-tip-table td {
-  padding: 1px 8px 1px 0;
+  padding: 0 7px 0 0;
 }
 .mtx-tip-table td:first-child {
   color: #94a3b8;
   font-weight: 600;
 }
 .mtx-tip-lineage-h {
-  margin-top: 6px;
-  font-size: 9.5px;
+  margin-top: 4px;
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: .05em;
   color: #94a3b8;
   font-weight: 700;
 }
 .mtx-tip-lineage {
-  margin-top: 3px;
+  margin-top: 2px;
   border-left: 2px solid #3b4a5f;
-  padding-left: 7px;
+  padding-left: 6px;
 }
 .mtx-tip-lin {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: baseline;
-  padding: 1px 0;
+  padding: 0;
 }
 .mtx-tip-lin .r {
   color: #8aa0b6;
-  font-size: 10px;
-  min-width: 74px;
+  font-size: 9.5px;
+  min-width: 52px;
   flex: 0 0 auto;
 }
 .mtx-tip-lin .n { color: #e2e8f0; }

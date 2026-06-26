@@ -11,8 +11,8 @@ import {Orchestrator} from "./server.mjs"
 import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
 import { storage } from './storage.mjs';
-import  { broadcastToAllActiveConnections } from './messenger.mjs';
-import { resolveSilhouette, resolveSvg } from './phylopic.mjs';
+import  { broadcastToAllActiveConnections, startRunUpdateFlusher } from './messenger.mjs';
+import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 // App and server
@@ -39,7 +39,21 @@ let params = {}
     }
 // }
 
-let io = new Server(server, params);
+let io = new Server(server, {
+    ...params,
+    // A full.report for a dense metagenome easily exceeds socket.io's default
+    // 1MB frame limit. When a single payload blows past that limit the server
+    // closes the connection -> this was the "connection lost then regained"
+    // symptom while streaming reports for large samples. 100MB of headroom.
+    maxHttpBufferSize: 1e8,
+    // When 400 fastqs land at once the event loop is briefly saturated and the
+    // default 20s ping timeout can lapse, dropping otherwise-healthy clients.
+    // A longer timeout + steady interval keeps connections alive through bursts.
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    // Compress large report frames on the wire (skip tiny control messages).
+    perMessageDeflate: { threshold: 1024 },
+});
 
 app.get('/', (req, res) => {
     logger.info("Welcome to Mytax2")
@@ -50,71 +64,85 @@ app.get('/ws', (req, res) => {
     res.status(200).send("Welcome to Mytax Version 2");
 });
 
-// PhyloPic silhouette proxy: resolve a taxon scientific name to a hosted
-// silhouette URL server-side (avoids browser CORS against api.phylopic.org).
-// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
-app.get('/phylopic', async (req, res) => {
-    // Permissive CORS so the dev frontend (e.g. :8080) can call this endpoint.
+// PhyloPic image index: serve the prebuilt { build, map } of taxon name ->
+// source-file URL. Built server-side (no browser CORS) and cached by build.
+// The frontend tries this first; if it isn't ready yet (202) or the backend is
+// down, the frontend builds the same index directly against the PhyloPic API.
+app.get('/phylopic/index', (req, res) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET');
-    try {
-        const name = String(req.query.name || '').trim();
-        if (!name) {
-            res.status(400).json({ error: 'missing name' });
-            return;
-        }
-        const lineage = String(req.query.lineage || '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const result = await resolveSilhouette(name, lineage);
-        // Let browsers/CDNs cache the (small) JSON lookup for a day.
-        res.header('Cache-Control', 'public, max-age=86400');
-        res.status(200).json({ name, result: result || null });
-    } catch (err) {
-        logger.error(`phylopic resolve error: ${err && err.message ? err.message : err}`);
-        res.status(200).json({ name: req.query.name || null, result: null });
+    const idx = getCachedIndex();
+    if (idx) {
+        res.header('Cache-Control', 'public, max-age=3600');
+        res.status(200).json(idx);
+        return;
     }
+    ensureIndexBuilding();
+    res.status(202).json({ building: true });
 });
 
-// PhyloPic SVG stream: resolve a taxon name and send the silhouette's SVG
-// markup straight to the frontend (rendered inline). The SVG is fetched in
-// memory server-side and never written to disk.
-// Query: ?name=<scientific name>&lineage=<comma-separated ancestor names>
+// PhyloPic SVG proxy: the frontend tries THIS first to load an individual
+// silhouette (the name -> svg-URL map is bundled with the app). Fetching
+// server-side avoids browser CORS and gives us clean inline <svg> markup. If
+// this endpoint is unreachable (backend down) or fails, the frontend falls back
+// to fetching the same URL directly from images.phylopic.org.
+//
+// SSRF guard: only proxy hosts on phylopic.org (images/api), nothing else.
+const PHYLOPIC_SVG_HOSTS = new Set([
+    'images.phylopic.org',
+    'api.phylopic.org',
+]);
+
 app.get('/phylopic/svg', async (req, res) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET');
-    res.header('Access-Control-Expose-Headers', 'X-Phylopic-Attribution, X-Phylopic-Page');
+
+    const raw = req.query.url;
+    let target;
     try {
-        const name = String(req.query.name || '').trim();
-        if (!name) {
-            res.status(400).send('missing name');
+        target = new URL(String(raw || ''));
+    } catch (e) {
+        res.status(400).json({ error: 'invalid url' });
+        return;
+    }
+    if (target.protocol !== 'https:' || !PHYLOPIC_SVG_HOSTS.has(target.hostname)) {
+        res.status(400).json({ error: 'disallowed host' });
+        return;
+    }
+
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        let upstream;
+        try {
+            upstream = await fetch(target.href, { redirect: 'follow', signal: ctrl.signal });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!upstream.ok) {
+            res.status(502).json({ error: `upstream ${upstream.status}` });
             return;
         }
-        const lineage = String(req.query.lineage || '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const resolved = await resolveSvg(name, lineage);
-        if (!resolved || !resolved.svg) {
-            res.status(404).send('');
-            return;
-        }
-        if (resolved.attribution) {
-            res.header('X-Phylopic-Attribution', encodeURIComponent(resolved.attribution));
-        }
-        if (resolved.pageUrl) res.header('X-Phylopic-Page', resolved.pageUrl);
+        const ct = (upstream.headers.get('content-type') || '').toLowerCase();
+        const body = await upstream.text();
+        const isSvg = ct.includes('svg') || ct.includes('xml') || /^\s*(<\?xml|<svg[\s>])/i.test(body);
+        res.header('Content-Type', isSvg ? 'image/svg+xml; charset=utf-8' : (ct || 'application/octet-stream'));
         res.header('Cache-Control', 'public, max-age=86400');
-        res.type('image/svg+xml').status(200).send(resolved.svg);
-    } catch (err) {
-        logger.error(`phylopic svg error: ${err && err.message ? err.message : err}`);
-        res.status(404).send('');
+        res.status(200).send(body);
+    } catch (e) {
+        res.status(502).json({ error: 'fetch failed' });
     }
 });
 
+// Warm the PhyloPic index in the background at startup so it's ready when the
+// frontend asks (best-effort; failures are swallowed).
+ensureIndexBuilding();
 
 logger.info(`Orchestrator creation...`)
-storage.orchestrator = new Orchestrator(); 
+storage.orchestrator = new Orchestrator();
+// Start the batched, run-scoped update flusher (single 'runUpdate' frame per
+// window for whichever run each client is viewing).
+startRunUpdateFlusher();
 
 
 io.on('connection', (ws) => {
@@ -157,7 +185,9 @@ io.on('connection', (ws) => {
 
   ws.emit("message", { "message": "Connection established with server" });
   ws.on('disconnect', () => {
-    storage.activeConnections.delete(userId); 
+    storage.activeConnections.delete(userId);
+    // Stop scoping live updates to this (now gone) connection's run.
+    storage.selectedRuns.delete(userId);
     logger.info(`User disconnected! ID: ${userId}`);
   });
   ws.on("getStatus", async (msg) => {
@@ -177,7 +207,7 @@ io.on('connection', (ws) => {
   ws.emit("sendQueueStatus",  storage.orchestrator.getQueueStatus() );
   ws.on('downloaddb', (msg) => {
     try {
-      storage.orchestrator.downloadfile(msg.database);
+      storage.orchestrator.downloadfile(msg.database, msg.confirm === true);
     } catch (err) {
       logger.error(err); 
     }
@@ -224,7 +254,35 @@ io.on('connection', (ws) => {
     logger.info(`${msg.index}: ${msg.sample}-${msg.run}, canceling....`)
     storage.orchestrator.cancel(msg.index, msg.sample, msg.run)
   })
-  ws.on("getReportPath", async () => { 
+  // --- live queue-board controls ------------------------------------------
+  // Client asks for the current round-robin play order for a run.
+  ws.on('getQueueBoard', (msg) => {
+    try {
+      const run = msg && msg.run
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  // Drag-reorder the barcode/sample rotation (tier-1 order).
+  ws.on('setLaneOrder', (msg) => {
+    try {
+      storage.orchestrator.setLaneOrder(msg.run, msg.samples)
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  // Bump a single fastq to run next.
+  ws.on('prioritizeJob', (msg) => {
+    try {
+      storage.orchestrator.prioritizeJob(msg.run, msg.sample, msg.index)
+      ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run))
+    } catch (err) {
+      logger.error(err)
+    }
+  })
+  ws.on("getReportPath", async () => {
     try{
       ws.emit("reportSavePath", { data: process.env.reports });
     } catch(err){
@@ -297,12 +355,19 @@ io.on('connection', (ws) => {
   })
   ws.on('getRunInformation', (msg) => {
     try{
-        let i=0 
-        logger.info(`Getting Run information ${msg.run}` ) 
+        let i=0
+        logger.info(`Getting Run information ${msg.run}` )
+        // Record which run THIS connection is viewing so live updates are scoped
+        // to it (and the other run's 1000s of job frames don't clog this socket).
+        if (msg && msg.run){
+          storage.selectedRuns.set(userId, msg.run)
+          // hand the viewer the current round-robin board straight away
+          try { ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run)) } catch (e) { logger.error(e) }
+        }
         storage.orchestrator.getRunInformation(msg.run)
-    } catch(err){ 
+    } catch(err){
         logger.error(err)
-    } 
+    }
   })
   ws.on('load', (msg) => {
     try{
