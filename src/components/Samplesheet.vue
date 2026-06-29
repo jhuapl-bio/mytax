@@ -77,7 +77,6 @@
                                         class="mtx-qbadge"
                                         :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': item.status.running }]"
                                         @click="selectedQueueSample = item.sample; dialogJobs = true">
-                                        <v-icon v-if="item.status.running" x-small class="mtx-qbadge-dna mtx-dna-spin">mdi-dna</v-icon>
                                         <span class="mtx-qbadge-num">{{ sampleBadge(item).num }}</span>
                                     </span>
                                 </template>
@@ -2157,15 +2156,7 @@ code {
   vertical-align: middle;
 }
 
-.v-tooltip__content {
-  max-width: 200px; /* Adjust the max-width for the tooltip content as needed */
-}
-
-/* Additional styles to customize the tooltip arrow */
-.v-tooltip--bottom .v-tooltip__content::before {
-  border-bottom-color: "blue"; /* Change the arrow color */
-  margin-left: 0; /* Adjust arrow position */
-}
+/* tooltip arrow colour tweak — kept for reference but has no effect in scoped styles */
 .v-card {
   display: flex !important;
   flex-direction: column;
@@ -2259,4 +2250,15 @@ code {
 .mtx-qbadge-table td { padding: 2px 6px; }
 .mtx-qbadge-table td:last-child { text-align: right; font-weight: 600; }
 .mtx-qbadge-err { color: #fca5a5; }
+</style>
+
+<!-- unscoped: Vuetify appends tooltip content to <body>, outside this component -->
+<style>
+/* queue-badge tooltip — allow enough room for the stats table */
+.mtx-qbadge-tipwrap {
+    max-width: 320px !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    padding: 8px 12px !important;
+}
 </style>

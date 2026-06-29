@@ -124,7 +124,7 @@ fi
 
 mkdir -p $outputdir
 
-echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report ${outputReport} $paired ${filepath} "
+echo "kraken2 --db ${database} --output /dev/null $additional --report ${outputReport} $paired ${filepath} "
 # alreadyseen=0
 # if [[ -f ${outputBase}.report ]]; then
 # 	alreadyseen="${outputBase}.report.bk"
@@ -133,7 +133,7 @@ echo "kraken2 --db ${database} --output ${outputAssigned} $additional --report $
 
 
 
-kraken2 --db ${database} --output ${outputBase}.out $additional --report ${outputBase}.report $paired ${filepath} 
+kraken2 --db ${database} --output /dev/null $additional --report ${outputBase}.report $paired ${filepath}
 
 
 if [[ ! -z "$names" ]] ; then
