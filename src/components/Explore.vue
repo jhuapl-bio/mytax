@@ -28,7 +28,7 @@
             @click="toggleSampleVisibility(s)"
           >
             <span class="mtx-chip-dot" :class="{ live: isLive(s) }"></span>
-            {{ s }}
+            {{ s | fmtSample }}
             <span class="mtx-chip-count">{{ sampleReadTotal(s) | kfmt }}</span>
           </button>
           <span v-if="availableSamples.length === 0" class="mtx-empty-chip">
@@ -78,7 +78,7 @@
             <button v-for="s in availableSamples" :key="s" class="mtx-add-item" @click="addPanel(s)">
               <span class="mtx-add-ico">🧪</span>
               <span>
-                <strong>{{ s }}</strong>
+                <strong>{{ s | fmtSample }}</strong>
                 <small>Adds a panel for this sample</small>
               </span>
             </button>
@@ -104,7 +104,7 @@
         <header class="mtx-card-head">
           <h3>
             <span class="mtx-sb-dot" :class="{ live: isLive(s) }"></span>
-            {{ s }}
+            {{ s | fmtSample }}
           </h3>
           <div class="mtx-card-actions">
             <span class="mtx-pill" v-if="sampleReadTotal(s)">{{ sampleReadTotal(s) | kfmt }} reads</span>
@@ -146,19 +146,19 @@
 
     <!-- ============ extra analytic panels ============ -->
     <div class="mtx-section-label" v-if="panels.length">
-      Panels · focused on {{ focusSample }}
+      Panels · focused on {{ focusSample | fmtSample }}
     </div>
     <div class="mtx-grid" v-if="panels.length">
       <section v-for="p in panels" :key="p.id" class="mtx-card mtx-panel-card">
         <header class="mtx-card-head">
           <h3>
             <span class="mtx-panel-type">{{ p.type }}</span>
-            {{ p.sample }} · {{ rankLabel(p.rank) }}
+            {{ p.sample | fmtSample }} · {{ rankLabel(p.rank) }}
           </h3>
           <div class="mtx-card-actions">
             <InfoIcon text="Sample this panel is bound to." />
             <select v-model="p.sample" class="mtx-select sm" @change="drawPanelSoon(p)">
-              <option v-for="s in availableSamples" :key="'panel-s-' + s" :value="s">{{ s }}</option>
+              <option v-for="s in availableSamples" :key="'panel-s-' + s" :value="s">{{ s | fmtSample }}</option>
             </select>
             <InfoIcon text="Chart type: Sunburst shows hierarchy; Lollipop and Bar rank taxa by reads; Table gives a sortable breakdown." />
             <select v-model="p.type" class="mtx-select sm" @change="drawPanelSoon(p)">

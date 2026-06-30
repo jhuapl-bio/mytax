@@ -51,122 +51,142 @@
                     </v-list-item>
                     </template>
                 </v-text-field>
-                <div>
-                    <v-data-table
-                        :headers="headers"
-                        :items="selectedsamplesAll"
-                        :search="search"  
-                        :sort-by="sortBy.toLowerCase()"
-                        :items-per-page="10"
-                        class="elevation-1 mx-4"
-                        :dense="true"
-                    >
-                    
-                        <template v-slot:item.status="{ item }">
-                        <div class="mtx-status-cell">
-                            <!-- One composite status badge per sample:
-                                 yellow = files waiting in the queue (number = how many)
-                                 green  = all done (listening for new reads if watching)
-                                 red    = can't establish watching / a job failed
-                                 The number in the middle = items still in this sample's
-                                 queue; hover shows a % complete + error breakdown. The
-                                 DNA helix spins while a report is being generated. -->
-                            <v-tooltip bottom content-class="mtx-qbadge-tipwrap">
-                                <template v-slot:activator="{ on }">
-                                    <span v-on="on"
-                                        class="mtx-qbadge"
-                                        :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': item.status.running }]"
-                                        @click="selectedQueueSample = item.sample; dialogJobs = true">
-                                        <span class="mtx-qbadge-num">{{ sampleBadge(item).num }}</span>
-                                    </span>
+                <!-- ===== compact, grouped sample table =====
+                     Samples are grouped by their parent run/folder so two runs
+                     that both contain barcode01..24 stay visually separate. Each
+                     group header is collapsible; child rows show the short label
+                     (e.g. "barcode01") while the unique id stays under the hood. -->
+                <div class="mtx-stable-wrap">
+                    <table class="mtx-stable">
+                        <thead>
+                            <tr>
+                                <th class="mtx-st-name">Sample</th>
+                                <th class="mtx-st-src">Source</th>
+                                <th v-if="!offlineMode" class="mtx-st-status">Status</th>
+                                <th class="mtx-st-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template v-for="grp in groupedSamples">
+                                <!-- group header row -->
+                                <tr class="mtx-st-grouprow" :key="`grp-${grp.key}`" @click="toggleGroup(grp.key)">
+                                    <td :colspan="offlineMode ? 3 : 4">
+                                        <span class="mtx-st-caret">
+                                            <v-icon x-small>{{ isGroupCollapsed(grp.key) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+                                        </span>
+                                        <v-icon x-small class="mtx-st-gicon">{{ grp.group ? 'mdi-folder-multiple-outline' : 'mdi-flask-outline' }}</v-icon>
+                                        <span class="mtx-st-gname">{{ grp.group || 'Individual samples' }}</span>
+                                        <span class="mtx-st-gcount">{{ grp.samples.length }}</span>
+                                        <span class="mtx-st-gstats" v-if="!offlineMode">
+                                            <span v-if="groupStats(grp).running" class="mtx-gpill running">{{ groupStats(grp).running }} running</span>
+                                            <span v-if="groupStats(grp).queued" class="mtx-gpill queued">{{ groupStats(grp).queued }} queued</span>
+                                            <span v-if="groupStats(grp).error" class="mtx-gpill error">{{ groupStats(grp).error }} err</span>
+                                            <span v-if="groupStats(grp).done" class="mtx-gpill done">{{ groupStats(grp).done }} done</span>
+                                        </span>
+                                        <span class="mtx-st-gactions" v-if="grp.group && !offlineMode" @click.stop>
+                                            <v-btn icon x-small title="Run every sample in this group" @click="startGroup(grp)">
+                                                <v-icon small>mdi-play-circle-outline</v-icon>
+                                            </v-btn>
+                                            <v-btn icon x-small title="Open all jobs for this group" @click="openGroupJobs(grp)">
+                                                <v-icon small>mdi-format-list-bulleted</v-icon>
+                                            </v-btn>
+                                            <v-btn icon x-small class="mtx-st-gdelete"
+                                                :title="`Delete all ${grp.samples.length} barcodes in ${grp.group}`"
+                                                @click="deleteGroup(grp)">
+                                                <v-icon small>mdi-delete-sweep</v-icon>
+                                            </v-btn>
+                                        </span>
+                                    </td>
+                                </tr>
+                                <!-- child sample rows -->
+                                <template v-if="!isGroupCollapsed(grp.key)">
+                                    <tr
+                                        v-for="item in grp.samples"
+                                        :key="`smp-${item.sample}`"
+                                        class="mtx-st-row"
+                                        :class="{ 'mtx-st-row--hidden': item.hidden, 'mtx-st-row--grouped': grp.group }"
+                                    >
+                                        <!-- name + run/cancel -->
+                                        <td class="mtx-st-name">
+                                            <div class="mtx-st-namecell">
+                                                <v-btn v-if="!offlineMode" icon x-small color="blue darken-1"
+                                                    title="Run / re-run this sample" @click="start(-1, item.sample)">
+                                                    <v-icon small>mdi-play-circle</v-icon>
+                                                </v-btn>
+                                                <span class="mtx-st-label" :title="item.sample">{{ item._label }}</span>
+                                                <v-btn v-if="!offlineMode && item.status && item.status.running" icon x-small color="orange darken-1"
+                                                    title="Cancel running" @click="cancelJob(-1, item.sample)">
+                                                    <v-icon small>mdi-cancel</v-icon>
+                                                </v-btn>
+                                            </div>
+                                        </td>
+                                        <!-- source tag -->
+                                        <td class="mtx-st-src">
+                                            <v-tooltip bottom>
+                                                <template v-slot:activator="{ on }">
+                                                    <span v-on="on" class="mtx-src-tag" :class="'mtx-src-tag--' + (item.origin || 'server')">
+                                                        <v-icon x-small class="mr-1">{{ sourceIcon(item.origin) }}</v-icon>{{ sourceLabel(item.origin) }}
+                                                    </span>
+                                                </template>
+                                                {{ sourceTooltip(item.origin) }}
+                                            </v-tooltip>
+                                        </td>
+                                        <!-- status badge -->
+                                        <td v-if="!offlineMode" class="mtx-st-status">
+                                            <v-tooltip bottom content-class="mtx-qbadge-tipwrap">
+                                                <template v-slot:activator="{ on }">
+                                                    <span v-on="on"
+                                                        class="mtx-qbadge"
+                                                        :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': item.status.running }]"
+                                                        @click="selectedQueueSample = item.sample; dialogJobs = true">
+                                                        <span class="mtx-qbadge-num">{{ sampleBadge(item).num }}</span>
+                                                    </span>
+                                                </template>
+                                                <div class="mtx-qbadge-tip">
+                                                    <div class="mtx-qbadge-tip-h">{{ item._label }} — {{ sampleBadge(item).label }}</div>
+                                                    <table class="mtx-qbadge-table">
+                                                        <tr><td>In queue</td><td>{{ sampleQueue(item.sample).pending }}</td></tr>
+                                                        <tr><td>Running</td><td>{{ sampleQueue(item.sample).running }}</td></tr>
+                                                        <tr><td>Completed</td><td>{{ sampleQueue(item.sample).done }} / {{ sampleQueue(item.sample).total }}</td></tr>
+                                                        <tr v-if="sampleQueue(item.sample).error"><td>Errors</td><td class="mtx-qbadge-err">{{ sampleQueue(item.sample).error }}</td></tr>
+                                                        <tr><td>% complete</td><td>{{ sampleQueue(item.sample).percent }}%</td></tr>
+                                                        <tr><td>Listening</td><td>{{ isWatching(item) ? 'yes (real-time)' : 'no' }}</td></tr>
+                                                    </table>
+                                                </div>
+                                            </v-tooltip>
+                                        </td>
+                                        <!-- row actions: jobs / hide / edit / delete -->
+                                        <td class="mtx-st-actions">
+                                            <div class="mtx-st-actionbar">
+                                                <v-btn v-if="!offlineMode" icon x-small title="View jobs for this sample"
+                                                    @click="selectedQueueSample = item.sample; dialogJobs = true">
+                                                    <v-icon small>mdi-format-list-checks</v-icon>
+                                                </v-btn>
+                                                <v-btn icon x-small :title="!item.hidden ? 'Hide from plots' : 'Show in plots'"
+                                                    @click="item.hidden ? selectSample(item.sample) : hideSample(item.sample)">
+                                                    <v-icon small :color="item.hidden ? 'grey' : ''">{{ item.hidden ? 'mdi-eye-off' : 'mdi-eye' }}</v-icon>
+                                                </v-btn>
+                                                <v-btn v-if="!offlineMode" icon x-small title="Edit sample" @click="editItem(item.sample)">
+                                                    <v-icon small>mdi-cog</v-icon>
+                                                </v-btn>
+                                                <v-btn icon x-small
+                                                    :class="isLocal(item) ? 'mtx-del-local' : 'mtx-del-server'"
+                                                    :title="isLocal(item) ? 'Remove uploaded report (local only)' : 'Delete sample from run'"
+                                                    @click="deleteRow(item.sample)">
+                                                    <v-icon small>{{ isLocal(item) ? 'mdi-close-circle' : 'mdi-delete' }}</v-icon>
+                                                </v-btn>
+                                            </div>
+                                        </td>
+                                    </tr>
                                 </template>
-                                <div class="mtx-qbadge-tip">
-                                    <div class="mtx-qbadge-tip-h">{{ item.sample }} — {{ sampleBadge(item).label }}</div>
-                                    <table class="mtx-qbadge-table">
-                                        <tr><td>In queue</td><td>{{ sampleQueue(item.sample).pending }}</td></tr>
-                                        <tr><td>Running</td><td>{{ sampleQueue(item.sample).running }}</td></tr>
-                                        <tr><td>Completed</td><td>{{ sampleQueue(item.sample).done }} / {{ sampleQueue(item.sample).total }}</td></tr>
-                                        <tr v-if="sampleQueue(item.sample).error"><td>Errors</td><td class="mtx-qbadge-err">{{ sampleQueue(item.sample).error }}</td></tr>
-                                        <tr><td>% complete</td><td>{{ sampleQueue(item.sample).percent }}%</td></tr>
-                                        <tr><td>Listening</td><td>{{ isWatching(item) ? 'yes (real-time)' : 'no' }}</td></tr>
-                                    </table>
-                                </div>
-                            </v-tooltip>
-                        </div>
-                        </template>
-                        <template v-slot:item.origin="{ item }">
-                            <v-tooltip bottom>
-                                <template v-slot:activator="{ on }">
-                                    <span v-on="on" class="mtx-src-tag" :class="'mtx-src-tag--' + (item.origin || 'server')">
-                                        <v-icon x-small class="mr-1">{{ sourceIcon(item.origin) }}</v-icon>{{ sourceLabel(item.origin) }}
-                                    </span>
-                                </template>
-                                {{ sourceTooltip(item.origin) }}
-                            </v-tooltip>
-                        </template>
-                        <template v-slot:item.delete="{ item }">
-                        <v-tooltip bottom>
-                            <template v-slot:activator="{ on }">
-                                <v-btn icon small v-on="on"
-                                    :class="isLocal(item) ? 'mtx-del-local' : 'mtx-del-server'"
-                                    @click="deleteRow(item.sample)">
-                                    <v-icon small>{{ isLocal(item) ? 'mdi-close-circle' : 'mdi-delete' }}</v-icon>
-                                </v-btn>
                             </template>
-                            {{ isLocal(item) ? 'Remove this uploaded report (local only)' : 'Delete sample from run' }}
-                        </v-tooltip>
-                        </template>
-                        <template v-slot:item.edit="{ item }">
-                        <v-btn icon @click="editItem(item.sample)">
-                            <v-icon>mdi-cog</v-icon>
-                        </v-btn>
-                        </template>
-                        <template v-slot:item.jobs="{ item }">
-                        <v-btn icon @click="selectedQueueSample = item.sample; dialogJobs = true">
-                            <v-icon>mdi-call-made</v-icon>
-                        </v-btn>
-                        </template>
-                        <template v-slot:item.sample="{ item }">
-                            
-                            <v-tooltip 
-                                dark left  :key="`${item.sample}-rerunbutton`"
-                            >
-                                <template v-slot:activator="{ on, attrs }">
-                                    <div style="display:flex; margin:auto">
-                                        <v-btn  @click="start(-1, item.sample)"
-                                            color="blue lighten-1" class="px-0 mx-0"
-                                            icon v-on="on" v-bind="attrs"
-                                            dark x-small
-                                        >
-                                            <v-icon small>mdi-play-circle</v-icon>
-                                        </v-btn>
-                                        <span>{{ item.sample }}</span>
-                                        <v-btn  v-if="item.status.running" @click="cancelJob(-1, item.sample)"
-                                            color="orange darken-1" class="px-0 mx-0"
-                                            icon v-on="on" v-bind="attrs"
-                                            dark x-small
-                                        >
-                                            <v-icon small>mdi-cancel</v-icon>
-                                        </v-btn>
-                                    </div>
-                                </template>
-                                Re start the run
-                            </v-tooltip> 
-                        </template>
-                        <template v-slot:item.action="{ item }">
-                        <v-tooltip bottom>
-                            <template v-slot:activator="{ on }">
-                                <v-btn icon   v-if="!item.hidden" v-on="on" @click="hideSample(item.sample)">
-                                    <v-icon>mdi-eye</v-icon>
-                                </v-btn>
-                                <v-btn icon v-on="on" v-else @click="selectSample(item.sample)">
-                                    <v-icon color="secondary" >mdi-cancel</v-icon>
-                                </v-btn>
-                            </template>
-                            {{ !item.hidden ? 'Hide' : 'Show' }}
-                        </v-tooltip>
-                        </template>
-                    </v-data-table> 
+                            <tr v-if="!groupedSamples.length" class="mtx-st-emptyrow">
+                                <td :colspan="offlineMode ? 3 : 4" class="mtx-st-empty">
+                                    {{ search ? 'No samples match your search.' : 'No samples detected yet.' }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 <!-- ===== compact queue summary (always visible in drawer) ===== -->
                 <div class="mtx-queue-summary" v-if="!offlineMode">
@@ -369,7 +389,7 @@
                                     :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path; matches are suggested as you go'"
                                     persistent-hint
                                     :error-messages="pathErrors1"
-                                    :label="toggleDemuxRun ? 'Run directory' : 'Sequencing file or directory'"
+                                    :label="toggleDemuxRun ? 'Run directory' : 'Reads — R1 (file or directory)'"
                                     prepend-inner-icon="mdi-folder-search-outline"
                                     dense outlined
                                     @keyup="handleInputPath1"
@@ -379,9 +399,9 @@
                                 <v-combobox
                                     v-model="editedItem.path_2"
                                     :items="pathOptions2"
-                                    :hint="editedItem.path_2 ? `Paired reads: ${editedItem.path_2}` : 'Optional — paired-end R2'"
+                                    :hint="editedItem.path_2 ? `Paired reads R2: ${editedItem.path_2}` : 'Optional — paired-end R2 file'"
                                     persistent-hint
-                                    label="Paired reads (optional)"
+                                    label="Reads — R2 (paired-end, optional)"
                                     prepend-inner-icon="mdi-file-multiple-outline"
                                     dense outlined
                                     @keyup="handleInputPath2"
@@ -771,218 +791,85 @@
         </v-card>
         </v-dialog> 
         
-        <v-dialog v-model="dialogJobs">
-            <v-data-iterator  class="grey lighten-3"
-                :items="queueSample"
-                :items-per-page.sync="itemsPerPage"
-                :page.sync="page"
-                :search="search"
-                :sort-by="sortBy.toLowerCase()"
-                :sort-desc="sortDesc"
-            >
-            
-            <template v-slot:header>
-                
-                <v-toolbar
-                dark
-                color="blue darken-3"
-                class="mb-1"
-                >
-                <v-btn
-                    small fab
-                    color="grey" @click="dialogJobs = false"
-                    
-                >
-                    <v-icon>mdi-close</v-icon>
-                </v-btn>
-                <v-spacer></v-spacer>
-                <v-btn
-                    large
-                    depressed v-if="selectedSample"
-                    color="blue" @click="(page = page+1)"
-                    :value="false" :disabled="page * itemsPerPage >= selectedSample.length"
-                >
-                    <v-icon>mdi-arrow-down</v-icon>
-                </v-btn>
-                <v-btn
-                    large @click="(page > 1 ? page = page -1 : '')"
-                    depressed :disabled="page <= 1"
-                    color="blue"
-                    :value="true"
-                >
-                    <v-icon>mdi-arrow-up</v-icon>
-                </v-btn>
-                <v-spacer></v-spacer>
-                <v-text-field
-                    v-model="search"
-                    clearable
-                    flat
-                    solo-inverted
-                    hide-details
-                    prepend-inner-icon="mdi-magnify"
-                    label="Search"
-                ></v-text-field>
-                <template v-if="$vuetify.breakpoint.mdAndUp">
+        <!-- ===== per-sample / per-group jobs panel =====
+             Replaces the old card-grid popup. Shows every file/job for the
+             selected sample (or an entire run group) as a compact, scrollable,
+             queue-board-styled table. -->
+        <v-dialog v-model="dialogJobs" max-width="1100" scrollable>
+            <v-card class="mtx-jp-card">
+                <v-toolbar dark color="indigo darken-3" dense flat>
+                    <v-icon left>mdi-format-list-checks</v-icon>
+                    <v-toolbar-title class="mtx-jp-title">Jobs — {{ panelTitle }}</v-toolbar-title>
                     <v-spacer></v-spacer>
-                    <v-select
-                    v-model="sortBy"
-                    flat
-                    solo-inverted
-                    hide-details
-                    :items="keys"
-                    prepend-inner-icon="mdi-magnify"
-                    label="Sort by"
-                    ></v-select>
-                    <v-spacer></v-spacer>
-                    
-                </template>
+                    <v-btn icon @click="dialogJobs = false"><v-icon>mdi-close</v-icon></v-btn>
                 </v-toolbar>
-            </template>
 
-            <template v-slot:default="props">
-                
-                    <v-row> 
-                    <v-col
-                    v-for="que in props.items"
-                    :key="`${que.index}-sampleIndex-${que.status.running}`"
-                    cols="12"  
-                    sm="6"
-                    md="4"
-                    lg="4"
-                >
-                    <v-card    style="overflow-x:auto; width:100% " max-height="200px">
-                        
-                        <v-card-title class="text-header-2">
-                            <v-progress-circular
-                                indeterminate :key="`${que.status.running}-running${que.sample}`" v-if="que.status.running "
-                                color="primary"  size="15"
-                            ></v-progress-circular>
-                            <v-tooltip  :key="`queueinfo-${que.status.historical}-${que.index}`" v-else-if=" que.status.success &&  que.status.historical "
-                                dark left
+                <!-- summary strip -->
+                <div class="mtx-jp-strip">
+                    <span class="mtx-jp-total">{{ panelJobs.length }} file{{ panelJobs.length === 1 ? '' : 's' }}</span>
+                    <span class="mtx-jp-pill running" v-if="panelStats.running">{{ panelStats.running }} running</span>
+                    <span class="mtx-jp-pill queued"  v-if="panelStats.queued">{{ panelStats.queued }} queued</span>
+                    <span class="mtx-jp-pill error"   v-if="panelStats.error">{{ panelStats.error }} error</span>
+                    <span class="mtx-jp-pill done"    v-if="panelStats.done">{{ panelStats.done }} done</span>
+                    <span class="mtx-jp-pct" v-if="panelJobs.length">{{ panelStats.percent }}% complete</span>
+                    <v-spacer></v-spacer>
+                    <input v-model="jobsPanelSearch" class="mtx-jp-search" placeholder="Filter files…" />
+                </div>
+
+                <v-card-text class="pa-0 mtx-jp-body">
+                    <table class="mtx-jp-table">
+                        <thead>
+                            <tr>
+                                <th class="mtx-jp-c-idx">#</th>
+                                <th class="mtx-jp-c-state">State</th>
+                                <th class="mtx-jp-c-sample" v-if="selectedQueueGroup">Sample</th>
+                                <th class="mtx-jp-c-file">File</th>
+                                <th class="mtx-jp-c-type">Type</th>
+                                <th class="mtx-jp-c-act">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr
+                                v-for="job in panelJobs"
+                                :key="`${job._sample}-${job.index}`"
+                                class="mtx-jp-row"
+                                :class="'mtx-jp-row--' + job._state"
                             >
-                                <template v-slot:activator="{ on }">
-                                    <v-icon
-                                        class="" small
-                                        :color="'green'"
-                                        dark v-on="on"
-                                    >
-                                        mdi-history
-                                    </v-icon>
-                                </template>
-                                Already run
-                            </v-tooltip>
-                            <v-tooltip  v-else-if=" que.status.success "
-                                dark left
-                            >
-                                <template v-slot:activator="{ on, attrs }">
-                                    <v-icon 
-                                        class="" small
-                                        :color="'green'"
-                                        dark v-on="on" :bind="attrs"
-                                    >
-                                        mdi-check-circle
-                                    </v-icon>
-                                </template>
-                                Completed Job Successfully 
-                            </v-tooltip>
-                            <v-tooltip :key="`queuerror-${que.status.error}-${que.index}`" v-else-if="que.status.error || que.status.code != 0"
-                                :color="'orange lighten-1'"
-                                dark left
-                            >
-                                <template v-slot:activator="{ on, attrs }">
-                                        <v-icon
-                                            large color="orange lighten-2"
-                                            v-bind="attrs"
-                                            v-on="on" @click="selectedQueueJob = que; dialogQueue = true"
-                                        >
-                                            mdi-alert-box
-                                        </v-icon>
-                                </template>
-                                Error in Completing Job, Click to check logs
-                            </v-tooltip>
-                            {{ `${que.sample && que.sample.sample ? que.sample.sample : ''} ` }}
-                            <v-spacer></v-spacer>
-                            <v-tooltip  
-                                dark left
-                            >
-                                    <template v-slot:activator="{ on }">
-                                        <v-btn
-                                            color="secondary" class="px-0 mx-0"
-                                            fab v-on="on" @click="selectedQueueJob = que; dialogQueue = true"
-                                            dark x-small
-                                        >
-                                            <v-icon
-                                                dark  
-                                            >
-                                            mdi-tray-full
-                                            </v-icon>
-                                        </v-btn>
-                                    </template>
-                                    Information
-                            </v-tooltip>
-                            <v-tooltip  
-                                dark left :key="`${que.index}-${que.name}-Archivecancel`"
-                            >
-                                <template v-slot:activator="{ on }">
-                                        <v-btn  :disabled="!que.status.running  " v-on="on" @click="cancelJob(que.index, selectedQueueSample)"  fab x-small  color="orange lighten-1">
-                                            <v-icon >mdi-cancel</v-icon>
-                                        </v-btn>
-                                </template>
-                                Cancel
-                            </v-tooltip>
-                            <v-tooltip 
-                                dark left  :key="`${que.index}-${que.name}-rerunbutton`"
-                            >
-                                <template v-slot:activator="{ on, attrs }">
-                                    <v-btn :disabled="que.status.running" @click="start(que.index, que.sample)"
-                                        color="blue lighten-1" class="px-0 mx-0"
-                                        fab v-on="on" v-bind="attrs"
-                                        dark x-small
-                                    >
-                                        <v-icon >mdi-play-circle</v-icon>
+                                <td class="mtx-jp-c-idx">{{ job.index }}</td>
+                                <td class="mtx-jp-c-state">
+                                    <span class="mtx-jp-state" :class="job._state">
+                                        <v-progress-circular v-if="job._state === 'running'" indeterminate size="13" width="2" color="blue" class="mr-1"></v-progress-circular>
+                                        <v-icon v-else x-small :color="stateColor(job._state)" class="mr-1">{{ stateIcon(job._state) }}</v-icon>
+                                        {{ stateLabel(job._state) }}
+                                    </span>
+                                </td>
+                                <td class="mtx-jp-c-sample" v-if="selectedQueueGroup">{{ sampleHierarchy(job._sample).label }}</td>
+                                <td class="mtx-jp-c-file" :title="job.filepath">{{ shortFile(job.filepath) }}</td>
+                                <td class="mtx-jp-c-type">{{ job.name || (job.sample && job.sample.demux ? 'Demux' : 'Classify') }}</td>
+                                <td class="mtx-jp-c-act">
+                                    <v-btn icon x-small :disabled="!job.status || !job.status.running"
+                                        title="Cancel this job" @click="cancelJob(job.index, job._sample)">
+                                        <v-icon x-small>mdi-cancel</v-icon>
                                     </v-btn>
-                                </template>
-                                Rerun 
-                            </v-tooltip> 
-                        </v-card-title>
-                        <v-card-subtitle class="subheading">
-                            <v-tooltip  :key="`${que.index}-${que.name}-arhice`" v-if="!que.status.running && que.status.success == 0  "
-                                dark left
-                            >
-                                <template v-slot:activator="{ on  }">
-                                    <v-icon v-on="on" small color="secondary lighten-1">
-                                        mdi-archive
-                                    </v-icon>
-                                </template>
-                                {{  que.filepath }} 
-                            </v-tooltip>
-                            {{ `${que.sample} - ${que.sample && que.sample.demux ? 'Demux' : 'Classify'} ` }} . {{ que.index }}
-                        </v-card-subtitle>
-                        <v-divider></v-divider>
-                        
-                            <v-list  dense>
-                                <v-list-item v-for="k in attributes" :key="`${k}-formatkey`"  two-line>
-                                    
-                                    
-                                    <v-list-item-content   >
-                                        <v-list-item-title    style="white-space: normal;" >{{ k }}</v-list-item-title>
-                                        
-                                    </v-list-item-content>
-                                    <v-divider vertical></v-divider>
-                                    <v-list-item-content   class="align-end">
-                                        <v-list-item-subtitle class="mx-3" style="white-space: normal;"  >{{ que[k] }}</v-list-item-subtitle>
-                                        <v-divider ></v-divider>
-                                    </v-list-item-content>
-                                    
-                                </v-list-item>
-                            </v-list>
-                        
-                    </v-card>
-
-                </v-col>
-                </v-row>
-            </template>
-            </v-data-iterator> 
+                                    <v-btn icon x-small :disabled="job.status && job.status.running"
+                                        title="Re-run this file" @click="start(job.index, job._sample)">
+                                        <v-icon x-small>mdi-play-circle</v-icon>
+                                    </v-btn>
+                                    <v-btn icon x-small title="View command & logs"
+                                        @click="selectedQueueJob = job; dialogQueue = true">
+                                        <v-icon x-small>mdi-text-box-search</v-icon>
+                                    </v-btn>
+                                </td>
+                            </tr>
+                            <tr v-if="!panelJobs.length">
+                                <td :colspan="selectedQueueGroup ? 6 : 5" class="mtx-jp-empty">
+                                    {{ jobsPanelSearch ? 'No files match your filter.' : 'No files queued for this ' + (selectedQueueGroup ? 'group' : 'sample') + ' yet.' }}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </v-card-text>
+            </v-card>
         </v-dialog>
         <!-- ===== consolidated full-width job queue ===== -->
         <!-- Full-screen live queue board (round-robin visualisation + reorder) -->
@@ -1147,7 +1034,11 @@
         val || this.closeItem()
       },
       dialogJobs(val){
-        !val ? this.selectedQueueSample = null : ''
+        if (!val){
+          this.selectedQueueSample = null
+          this.selectedQueueGroup = null
+          this.jobsPanelSearch = ''
+        }
       },
       selectedsamplesAll: {
         deep: true, 
@@ -1264,7 +1155,8 @@
             return this.editedItem.sample  && this.editedItem.path_1 ;
         },
         numberOfPages () {
-                return Math.ceil(this.selectedSample.length / this.itemsPerPage)
+                const len = (this.selectedSample && this.selectedSample.length) || 0
+                return Math.ceil(len / this.itemsPerPage)
         },
         queueSample(){
             return this.selectedQueueSample ? this.queueList[this.selectedQueueSample] : []
@@ -1295,7 +1187,89 @@
             if (f === 'done') return this.allJobs.filter(j => j._state === 'done' || j._state === 'historical')
             return this.allJobs.filter(j => j._state === f)
         },
-        
+        // Build the grouped, searchable view of samples. Each top-level entry is a
+        // parent run/folder ("group") containing its barcode child rows. Samples
+        // with no parent are collected under a single "Individual samples" bucket.
+        groupedSamples(){
+            const q = (this.search || '').toString().trim().toLowerCase()
+            const samples = (this.selectedsamplesAll || [])
+            // Collect every parent run/group name that is present so a leftover
+            // run-level placeholder row (whose id === the group name) isn't also
+            // listed as a loose "Individual" sample next to its own barcode rows.
+            const groupNames = new Set()
+            samples.forEach((item) => {
+                const g = this.sampleHierarchy(item.sample).group
+                if (g) groupNames.add(g)
+            })
+            const order = []
+            const map = new Map()
+            samples.forEach((item) => {
+                const h = this.sampleHierarchy(item.sample)
+                // skip the phantom parent-run row (the un-demuxed run entry)
+                if (!h.group && groupNames.has(item.sample)) return
+                const hay = `${h.label} ${h.group || ''} ${item.sample}`.toLowerCase()
+                if (q && !hay.includes(q)) return
+                const key = h.group || '__individual__'
+                if (!map.has(key)){
+                    const g = { key, group: h.group || null, samples: [] }
+                    map.set(key, g); order.push(g)
+                }
+                map.get(key).samples.push(Object.assign({}, item, { _label: h.label, _group: h.group }))
+            })
+            // natural sort within each group so barcode1, barcode2 ... barcode10 order
+            const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+            order.forEach(g => g.samples.sort((a, b) => coll.compare(a._label, b._label)))
+            // grouped barcode runs first, the loose "Individual samples" bucket last
+            order.sort((a, b) => {
+                if (a.group && !b.group) return -1
+                if (!a.group && b.group) return 1
+                return coll.compare(a.group || '', b.group || '')
+            })
+            return order
+        },
+        // Jobs shown in the per-sample / per-group jobs panel. Flattens the queue
+        // list for the selected sample (or every sample in the selected group),
+        // tagging each job with its sample id + derived state.
+        panelJobs(){
+            const ql = this.queueList || {}
+            let jobs = []
+            const push = (sample) => {
+                (ql[sample] || []).forEach((job) => {
+                    if (job) jobs.push(Object.assign({}, job, { _sample: sample, _state: this.jobState(job) }))
+                })
+            }
+            if (this.selectedQueueGroup){
+                Object.keys(ql).forEach((sample) => {
+                    if (this.sampleHierarchy(sample).group === this.selectedQueueGroup) push(sample)
+                })
+            } else if (this.selectedQueueSample){
+                push(this.selectedQueueSample)
+            }
+            const q = (this.jobsPanelSearch || '').toString().trim().toLowerCase()
+            if (q){
+                jobs = jobs.filter(j => `${j.filepath || ''} ${j._sample}`.toLowerCase().includes(q))
+            }
+            return jobs
+        },
+        panelStats(){
+            const c = { running: 0, queued: 0, error: 0, done: 0, total: 0, percent: 0 }
+            this.panelJobs.forEach((j) => {
+                c.total += 1
+                if (j._state === 'running') c.running += 1
+                else if (j._state === 'done' || j._state === 'historical') c.done += 1
+                else if (j._state === 'error') c.error += 1
+                else if (j._state === 'cancelled') { /* ignore */ }
+                else c.queued += 1
+            })
+            c.percent = c.total ? Math.round((c.done / c.total) * 100) : 0
+            return c
+        },
+        panelTitle(){
+            if (this.selectedQueueGroup) return this.selectedQueueGroup
+            if (this.selectedQueueSample) return this.fmtSample(this.selectedQueueSample)
+            return ''
+        },
+
         icon () {
             if (this.selectedAllSamples) return 'mdi-checkbox-marked'
             if (this.selectedSomeSamples) return 'mdi-minus-box'
@@ -1338,6 +1312,12 @@
           snack: false, 
           drawerSample: false,
           name: null,
+          // per-group collapsed state for the grouped sample table (key -> true)
+          collapsedGroups: {},
+          // when the jobs panel is opened for a whole group rather than one sample
+          selectedQueueGroup: null,
+          // free-text filter inside the jobs panel
+          jobsPanelSearch: '',
           dialogJobs: false,
           dialogJobsInfo: false,
           singleExpand: true,
@@ -1764,6 +1744,81 @@
             }
             return { color: 'red', num: 0, label: 'Not able to establish watching / read reports' }
         },
+        // Resolve a sample id into { group, label } for the hierarchy view.
+        // Prefers explicit group/label on the samplesheet entry (sent by the
+        // server), then falls back to splitting on the "__" id separator, then to
+        // a flat, ungrouped sample.
+        sampleHierarchy(sampleId){
+            const sheet = Array.isArray(this.samplesheet) ? this.samplesheet : []
+            const entry = sheet.find(e => e && e.sample === sampleId)
+            if (entry && (entry.group || entry.label)){
+                return { group: entry.group || null, label: entry.label || sampleId }
+            }
+            const i = sampleId ? sampleId.indexOf('__') : -1
+            if (i > 0){
+                return { group: sampleId.slice(0, i), label: sampleId.slice(i + 2) }
+            }
+            return { group: null, label: sampleId }
+        },
+        // Human-readable form of a unique sample id, used in tooltips/plots.
+        fmtSample(sampleId){
+            const h = this.sampleHierarchy(sampleId)
+            return h.group ? `${h.group} / ${h.label}` : h.label
+        },
+        // Short, readable file name for the jobs panel (basename only).
+        shortFile(filepath){
+            if (!filepath) return '—'
+            try { return filepath.split(/[\\/]/).pop() } catch (e) { return filepath }
+        },
+        isGroupCollapsed(key){
+            return !!this.collapsedGroups[key]
+        },
+        toggleGroup(key){
+            this.$set(this.collapsedGroups, key, !this.collapsedGroups[key])
+        },
+        // Aggregate queue counts across every sample in a group (for the header pills).
+        groupStats(grp){
+            const c = { running: 0, queued: 0, error: 0, done: 0, total: 0 }
+            ;(grp.samples || []).forEach((s) => {
+                const q = this.sampleQueue(s.sample)
+                c.running += q.running; c.queued += q.queued; c.error += q.error
+                c.done += q.done; c.total += q.total
+            })
+            return c
+        },
+        // Run every sample in a group (re-runs all of that run's barcodes).
+        startGroup(grp){
+            if (this.offlineMode) return
+            ;(grp.samples || []).forEach(s => this.start(-1, s.sample))
+        },
+        // Delete every barcode/sample that belongs to a run group.
+        deleteGroup(grp){
+            if (this.offlineMode) return
+            const samples = (grp.samples || []).map(s => s.sample)
+            if (!samples.length) return
+            const run = grp.group
+            const proceed = () => samples.forEach(sample => this.deleteRow(sample))
+            // Confirm if SweetAlert is available; otherwise delete directly.
+            if (this.$swal){
+                this.$swal({
+                    title: `Delete all ${samples.length} barcodes in “${run}”?`,
+                    text: 'This removes every sample in this run and its reports. This cannot be undone.',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc2626',
+                    cancelButtonColor: '#64748b',
+                    confirmButtonText: `Delete ${samples.length} samples`
+                }).then((result) => { if (result && result.isConfirmed) proceed() })
+            } else {
+                proceed()
+            }
+        },
+        // Open the jobs panel scoped to a whole group (all of that run's barcodes).
+        openGroupJobs(grp){
+            this.selectedQueueSample = null
+            this.selectedQueueGroup = grp.group
+            this.dialogJobs = true
+        },
         // QueueBoard: drag-reorder the barcode/sample rotation
         onReorderLanes(samples){
             if (this.offlineMode) return;
@@ -1914,14 +1969,30 @@
             // });
         },
         editItem (item) {
-            // get the index in selectedsamplesAll where sample == item
-            let editedIndex = this.samplesheet.findIndex(x => x.sample === item)
-            if (editedIndex > -1){
-                this.editedItem = Object.assign({ lat: null, lon: null }, this.samplesheet[editedIndex])
-            }
+            // Pull the canonical samplesheet row (path_1/path_2/database/…) AND the
+            // live in-memory sample so the edit form prefills every field even when
+            // one source is missing the paired-read (R2) or database value — that
+            // mismatch was what left R2 blank in the edit dialog.
+            const sheet = Array.isArray(this.samplesheet) ? this.samplesheet : []
+            let editedIndex = sheet.findIndex(x => x && x.sample === item)
+            const sheetEntry = editedIndex > -1 ? sheet[editedIndex] : {}
+            const live = (this.selectedsamplesAll || []).find(x => x && x.sample === item) || {}
+            const cfg = live.config || {}
+            // samplesheet row wins, but fall back to the live config for anything
+            // the row is missing or left blank.
+            this.editedItem = Object.assign({ lat: null, lon: null }, cfg, sheetEntry)
+            ;['path_1', 'path_2', 'database', 'kits', 'pattern', 'format', 'platform', 'lat', 'lon'].forEach((k) => {
+                const v = this.editedItem[k]
+                if ((v === undefined || v === null || v === '') &&
+                    cfg[k] !== undefined && cfg[k] !== null && cfg[k] !== '') {
+                    this.$set(this.editedItem, k, cfg[k])
+                }
+            })
             this.toggleDemuxRun = false
-            this.editedIndex = editedIndex
-            // this.editedItem = Object.assign({}, this.editedItem)
+            // treat as an edit whenever the sample exists in either source
+            this.editedIndex = editedIndex > -1
+                ? editedIndex
+                : (this.selectedsamplesAll || []).findIndex(x => x && x.sample === item)
             this.dialog = true
         },
         closeItem () {
@@ -2040,6 +2111,56 @@ code {
     display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; vertical-align: middle; font-size: 11.5px; color: #64748b;
 }
+
+/* ===== per-sample / per-group jobs panel ===== */
+.mtx-jp-card { border-radius: 12px; overflow: hidden; }
+.mtx-jp-title { font-size: 14px; font-weight: 600; }
+.mtx-jp-strip {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    padding: 8px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0;
+}
+.mtx-jp-total { font-size: 12px; font-weight: 700; color: #334155; }
+.mtx-jp-pill {
+    font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+    background: #e2e8f0; color: #475569;
+}
+.mtx-jp-pill.running { background: #dbeafe; color: #1d4ed8; }
+.mtx-jp-pill.queued  { background: #e2e8f0; color: #475569; }
+.mtx-jp-pill.error   { background: #ffedd5; color: #c2410c; }
+.mtx-jp-pill.done    { background: #dcfce7; color: #15803d; }
+.mtx-jp-pct { font-size: 11px; color: #64748b; margin-left: 4px; }
+.mtx-jp-search {
+    font-size: 12px; padding: 4px 10px; border: 1px solid #cbd5e1;
+    border-radius: 8px; background: #fff; outline: none; min-width: 160px;
+}
+.mtx-jp-search:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+.mtx-jp-body { height: 64vh; overflow: auto; }
+.mtx-jp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.mtx-jp-table thead th {
+    position: sticky; top: 0; z-index: 2; text-align: left;
+    font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    color: #64748b; background: #f8fafc; padding: 7px 12px; border-bottom: 1px solid #e2e8f0;
+    white-space: nowrap;
+}
+.mtx-jp-c-idx   { width: 44px; color: #94a3b8; }
+.mtx-jp-c-state { width: 130px; }
+.mtx-jp-c-type  { width: 90px; }
+.mtx-jp-c-act   { width: 110px; text-align: right; }
+.mtx-jp-table td { padding: 4px 12px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+.mtx-jp-table tr:hover td { background: #f8fafc; }
+.mtx-jp-c-act { text-align: right; }
+.mtx-jp-sample, .mtx-jp-c-sample { font-weight: 600; color: #334155; }
+.mtx-jp-c-file {
+    max-width: 360px; overflow: hidden; text-overflow: ellipsis;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #475569;
+}
+.mtx-jp-state { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; }
+.mtx-jp-state.running { color: #1d4ed8; }
+.mtx-jp-state.error   { color: #c2410c; }
+.mtx-jp-state.done, .mtx-jp-state.historical { color: #15803d; }
+.mtx-jp-row--error td { background: #fff7ed; }
+.mtx-jp-row--running td { background: #eff6ff; }
+.mtx-jp-empty { text-align: center; color: #94a3b8; padding: 26px 12px; }
 /* ===== Kraken2 report upload drop box ===== */
 .mtx-upbox {
     display: flex;
@@ -2166,23 +2287,110 @@ code {
   flex-grow: 1;
   overflow: auto;
 }
-.table{
-	/* max-width: calc(100% - 48px); */
-	/* max-height: calc(100vh - 170px); */
-}
-.v-data-table {
+/* ===== compact, grouped sample table ===== */
+.mtx-stable-wrap {
+	margin: 4px 4px 0;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
 	overflow: auto;
+	max-height: 46vh;
+	background: #fff;
 }
-.v-data-table /deep/ .v-data-table__wrapper {
-	overflow: unset;
+.mtx-stable {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	color: #1e293b;
 }
+.mtx-stable thead th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	text-align: left;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: .05em;
+	text-transform: uppercase;
+	color: #64748b;
+	background: #f1f5f9;
+	padding: 6px 10px;
+	border-bottom: 1px solid #e2e8f0;
+	white-space: nowrap;
+}
+.mtx-stable thead th.mtx-st-name,
+.mtx-stable td.mtx-st-name { text-align: left; }
+.mtx-stable thead th.mtx-st-actions,
+.mtx-stable td.mtx-st-actions { text-align: right; }
+.mtx-stable thead th.mtx-st-status,
+.mtx-stable td.mtx-st-status { text-align: center; width: 64px; }
+.mtx-stable thead th.mtx-st-src,
+.mtx-stable td.mtx-st-src { width: 92px; }
 
-/* ===== sample status cell ===== */
-.mtx-status-cell {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
+/* group header row */
+.mtx-st-grouprow {
+	cursor: pointer;
+	background: #eef2ff;
+	user-select: none;
 }
+.mtx-st-grouprow:hover { background: #e4e9fb; }
+.mtx-st-grouprow td {
+	padding: 5px 10px;
+	border-bottom: 1px solid #dbe2f0;
+	white-space: nowrap;
+}
+.mtx-st-caret { display: inline-flex; vertical-align: middle; margin-right: 2px; }
+.mtx-st-gicon { color: #4f46e5 !important; margin-right: 4px; }
+.mtx-st-gname { font-weight: 700; font-size: 12px; color: #312e81; }
+.mtx-st-gcount {
+	display: inline-block;
+	min-width: 18px;
+	text-align: center;
+	margin-left: 6px;
+	padding: 0 6px;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 16px;
+	color: #4338ca;
+	background: #c7d2fe;
+	border-radius: 999px;
+}
+.mtx-st-gstats { margin-left: 10px; }
+.mtx-gpill {
+	font-size: 10px;
+	font-weight: 600;
+	padding: 1px 7px;
+	border-radius: 999px;
+	margin-left: 4px;
+	background: #e2e8f0;
+	color: #475569;
+}
+.mtx-gpill.running { background: #dbeafe; color: #1d4ed8; }
+.mtx-gpill.queued  { background: #e2e8f0; color: #475569; }
+.mtx-gpill.error   { background: #ffedd5; color: #c2410c; }
+.mtx-gpill.done    { background: #dcfce7; color: #15803d; }
+.mtx-st-gactions { float: right; }
+.mtx-st-gdelete:hover { color: #dc2626 !important; }
+
+/* sample rows */
+.mtx-st-row td {
+	padding: 3px 10px;
+	border-bottom: 1px solid #f1f5f9;
+	white-space: nowrap;
+}
+.mtx-st-row:hover td { background: #f8fafc; }
+.mtx-st-row--grouped .mtx-st-name { padding-left: 22px; }
+.mtx-st-row--hidden { opacity: .5; }
+.mtx-st-namecell { display: inline-flex; align-items: center; gap: 2px; }
+.mtx-st-label {
+	font-weight: 600;
+	font-size: 12px;
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mtx-st-actionbar { display: inline-flex; align-items: center; gap: 1px; justify-content: flex-end; }
+.mtx-st-empty { text-align: center; color: #94a3b8; padding: 22px 10px; font-size: 12px; }
 /* pulsing green light = sample is being watched for new reads in real time */
 .mtx-watch-light {
 	display: inline-block;

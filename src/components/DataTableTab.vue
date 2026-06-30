@@ -27,7 +27,7 @@
         </thead>
         <tbody>
           <tr v-for="(r, i) in pageRows" :key="i">
-            <td>{{ r.sample }}</td>
+            <td>{{ r.sample | fmtSample }}</td>
             <td>
               <span class="mtx-tx">
                 <PhyloPicIcon :name="r.target" :lineage="r.lineage" :size="22" class="mtx-tx-icon" />

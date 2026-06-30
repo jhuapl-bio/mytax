@@ -2,7 +2,7 @@ import {logger} from './logger.js'
 import { Sample } from './sample.mjs'
 import fs from "file-system"
 import { broadcastToAllActiveConnections } from './messenger.mjs';
-import { writeRun, globFiles, getKrakenConfigDefault } from './controllers.mjs';
+import { writeRun, globFiles, getKrakenConfigDefault, makeSampleId } from './controllers.mjs';
 import path from "path"
 
 import { storage } from './storage.mjs';
@@ -210,14 +210,24 @@ export  class Run {
         let searchPatternBC = info.searchPatternBC
         let pattern = path.join(info.path_1, searchPatternBC)
         let files = await globFiles(`${pattern}`, {  nodir: false })
+        // The run-entry name the user typed becomes the GROUP (parent) for every
+        // barcode discovered underneath it. Two different run folders that both
+        // contain barcode01..24 therefore expand into distinct, non-colliding
+        // sample ids (e.g. RunA__barcode01 vs RunB__barcode01) while still being
+        // grouped under their own run in the UI.
+        const group = info.sample;
         for (const [i, d] of files.entries()) {
-            const sample = path.basename(d);
+            const label = path.basename(d);            // e.g. "barcode01"
+            // Unique, path/shell-safe sample id scoped to its parent run.
+            const sample = makeSampleId(group, label);
             let newinfo = { ...info }; // Make a copy of the info object
             // get abs path of d
             newinfo.path_1 = d;
             // newinfo.path_1 = path.join(path.dirname(info.path_1), d);
             newinfo.sample = sample;
-    
+            newinfo.group = group;     // parent run / folder name
+            newinfo.label = label;     // display name within the group
+
             let index = $this.samplesheet.findIndex((item) => item.sample === sample);
             if (index > -1) {
                 logger.info(`Sample exists, overwriting..`)

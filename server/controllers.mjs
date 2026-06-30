@@ -3,6 +3,28 @@ import fs from "file-system"
 import glob from "glob-all"
 import { exec } from 'child_process';
 import { logger } from './logger.js';
+// Delimiter that joins a parent run/folder name to a barcode label to form a
+// unique, path- and shell-safe sample id. The frontend splits on the same token
+// to render the grouped hierarchy (parent run -> barcode rows).
+export const SAMPLE_ID_SEP = '__';
+
+// Build a unique sample id scoped to its parent group. Sanitises both parts so
+// the result is safe to use as a directory name, a shell argument and an object
+// key. If no parent is supplied the bare (sanitised) label is returned so that
+// single, non-barcoded samples keep their original flat name (backwards compat).
+export function sanitizeIdPart(s) {
+    return String(s == null ? '' : s)
+        .trim()
+        .replace(/[\\/\s]+/g, '_')   // no slashes or whitespace
+        .replace(/_{3,}/g, '__');     // don't let it collide with the separator
+}
+export function makeSampleId(group, label) {
+    const g = sanitizeIdPart(group);
+    const l = sanitizeIdPart(label);
+    if (!g || g === l) return l;
+    return `${g}${SAMPLE_ID_SEP}${l}`;
+}
+
 export function removeExtension(filename, illumina, extraExtension) {
     // let filetrim = path.basename(filename.replace(/\.[^\/.]+$/, ''));
     let filetrim = path.basename(filename);
