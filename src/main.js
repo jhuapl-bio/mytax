@@ -7,12 +7,15 @@ import 'material-design-icons-iconfont/dist/material-design-icons.css'
 
 import JsonExcel from "vue-json-excel";
 import VueJsonToCsv from 'vue-json-to-csv'
+import { installSampleNameHelpers } from './utils/sampleName'
 
 
 Vue.component("downloadExcel", JsonExcel);
 Vue.config.productionTip = false
 Vue.use(VueSweetalert2);
 Vue.use(VueJsonToCsv);
+// global `fmtSample` filter + `$fmtSample` helper for hierarchical sample names
+installSampleNameHelpers(Vue);
 new Vue({
   vuetify,
   render: h => h(App)

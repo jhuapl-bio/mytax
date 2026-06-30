@@ -13,6 +13,7 @@ import { Server } from "socket.io";
 import { storage } from './storage.mjs';
 import  { broadcastToAllActiveConnections, startRunUpdateFlusher } from './messenger.mjs';
 import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
+import { getHealth, installDependency } from './health.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 // App and server
@@ -177,6 +178,10 @@ io.on('connection', (ws) => {
   } 
   sendUserSettings()
   ws.emit( "databases",  storage.orchestrator.databases )
+  // Push an initial backend-dependency health snapshot (kraken2, KrakenTools,
+  // conda/mamba, dorado, guppy) so the UI lights reflect reality on load.
+  getHealth().then((h) => { try { ws.emit('health', h) } catch (e) { logger.error(e) } })
+            .catch((err) => logger.error(`health snapshot failed: ${err}`))
   // get all of the queueSamples information for a given run
   ws.on("message", (msg) => {
     logger.info(`Message received: ${msg.message}`);
@@ -228,6 +233,26 @@ io.on('connection', (ws) => {
       logger.error(err)
     }
   })
+  // --- backend dependency health + in-UI installer -------------------------
+  // Client asks for a fresh dependency snapshot (re-probes PATH each time).
+  ws.on("getHealth", async () => {
+    try {
+      ws.emit("health", await getHealth());
+    } catch (err) {
+      logger.error(err);
+    }
+  });
+  // Client requests a one-click conda install of an installable tool. The
+  // package list is resolved server-side from a fixed registry (the client only
+  // sends a key), and progress streams back via 'installLog' / 'installStatus'
+  // plus a refreshed 'health' frame on completion.
+  ws.on("installTool", (msg) => {
+    try {
+      installDependency(msg && msg.key);
+    } catch (err) {
+      logger.error(err);
+    }
+  });
   ws.on('gpu', (msg) => {
     try {
       const userId = ws.handshake.query.userId;

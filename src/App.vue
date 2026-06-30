@@ -40,6 +40,36 @@
         
         <v-spacer></v-spacer>
 
+        <!-- ===== Backend dependency lights ===== -->
+        <!-- A compact cluster of pulsing lights, one per backend tool. Green =
+             present, red (pulsing) = required-but-missing, amber (pulsing) =
+             installing. Hover any light for its status / why it isn't present.
+             The whole cluster opens the Backend dependencies manager. -->
+        <div class="mtx-health-cluster" @click="openHealth" title="Backend dependencies">
+          <v-tooltip bottom v-for="dep in healthLights" :key="dep.key">
+            <template v-slot:activator="{ on }">
+              <span
+                class="mtx-health-light"
+                :class="dep.cls"
+                v-on="on"
+              ></span>
+            </template>
+            <div class="mtx-health-tip">
+              <strong>{{ dep.label }}</strong>
+              <span class="mtx-health-tip-state" :class="dep.cls">{{ dep.stateText }}</span>
+              <div class="mtx-health-tip-reason">{{ dep.reason }}</div>
+            </div>
+          </v-tooltip>
+          <v-tooltip bottom>
+            <template v-slot:activator="{ on }">
+              <v-btn icon small v-on="on" class="mtx-health-btn" @click.stop="openHealth">
+                <v-icon small :color="healthIconColor">{{ healthIcon }}</v-icon>
+              </v-btn>
+            </template>
+            <span>{{ healthSummary }}</span>
+          </v-tooltip>
+        </div>
+
         <!-- Server status dot -->
         <v-tooltip bottom>
           <template v-slot:activator="{ on }">
@@ -177,8 +207,152 @@
 
           </v-card-text>
         </v-card>
-      </v-dialog> 
-      <div class="pt-6 "> 
+      </v-dialog>
+
+      <!-- ===== Backend dependencies manager ===== -->
+      <v-dialog v-model="healthDialog" max-width="760" scrollable>
+        <v-card class="mtx-health-card">
+          <v-card-title class="mtx-health-titlebar">
+            <v-icon class="mr-2" :color="healthIconColor">mdi-server-network</v-icon>
+            Backend dependencies
+            <span class="mtx-health-overall" :class="health.ok ? 'ok' : 'bad'">
+              {{ health.ok ? 'All set' : 'Action needed' }}
+            </span>
+            <v-spacer></v-spacer>
+            <v-btn icon @click="requestHealth" title="Re-check"><v-icon>mdi-refresh</v-icon></v-btn>
+            <v-btn icon @click="healthDialog = false"><v-icon>mdi-close</v-icon></v-btn>
+          </v-card-title>
+
+          <v-divider></v-divider>
+
+          <v-card-text class="mtx-health-body">
+
+            <!-- Offline note -->
+            <div v-if="!isOnline" class="mtx-health-offline">
+              <v-icon small class="mr-1" color="#b45309">mdi-cloud-off-outline</v-icon>
+              Not connected to the backend — dependency status and installs need a live server connection.
+            </div>
+
+            <!-- Environment row: OS + conda -->
+            <div class="mtx-health-env">
+              <div class="mtx-env-chip">
+                <v-icon x-small class="mr-1">mdi-laptop</v-icon>
+                <span class="mtx-env-label">OS</span>
+                <span class="mtx-env-val">{{ osLabel }}</span>
+              </div>
+              <div class="mtx-env-chip" :class="health.conda && health.conda.present ? 'good' : 'warn'">
+                <v-icon x-small class="mr-1">{{ health.conda && health.conda.present ? 'mdi-check-decagram' : 'mdi-alert-decagram-outline' }}</v-icon>
+                <span class="mtx-env-label">{{ (health.conda && health.conda.mamba) ? 'mamba' : 'conda' }}</span>
+                <span class="mtx-env-val" v-if="health.conda && health.conda.present">
+                  {{ health.conda.version || 'available' }}
+                </span>
+                <span class="mtx-env-val" v-else>not found</span>
+              </div>
+              <div class="mtx-env-chip" v-if="health.conda && health.conda.env">
+                <v-icon x-small class="mr-1">mdi-cube-outline</v-icon>
+                <span class="mtx-env-label">env</span>
+                <span class="mtx-env-val">{{ shortEnv(health.conda.env) }}</span>
+              </div>
+            </div>
+            <div class="mtx-health-conda-note" v-if="health.conda && !health.conda.present">
+              <v-icon x-small class="mr-1" color="#b45309">mdi-information-outline</v-icon>
+              conda/mamba isn't on the server's PATH, so one-click installs are disabled.
+              Install <a href="https://docs.conda.io/en/latest/miniconda.html" target="_blank" rel="noopener">Miniconda</a>,
+              restart the server, then re-check.
+            </div>
+
+            <!-- Dependency cards -->
+            <div class="mtx-dep-list">
+              <div
+                v-for="dep in health.dependencies"
+                :key="dep.key"
+                class="mtx-dep-card"
+                :class="depCardClass(dep)"
+              >
+                <div class="mtx-dep-main">
+                  <span class="mtx-dep-light" :class="depLightClass(dep)"></span>
+                  <div class="mtx-dep-text">
+                    <div class="mtx-dep-name">
+                      {{ dep.label }}
+                      <span class="mtx-dep-tag" v-if="dep.required">required</span>
+                      <span class="mtx-dep-tag optional" v-else>optional</span>
+                    </div>
+                    <div class="mtx-dep-desc">{{ dep.description }}</div>
+                    <div class="mtx-dep-meta" v-if="dep.present">
+                      <v-icon x-small class="mr-1" color="#15803d">mdi-check</v-icon>
+                      <span v-if="dep.version">{{ dep.version }}</span>
+                      <span v-else>installed</span>
+                      <code class="mtx-dep-path" v-if="dep.path">{{ dep.path }}</code>
+                    </div>
+                    <div class="mtx-dep-meta missing" v-else>
+                      <v-icon x-small class="mr-1" color="#b91c1c">mdi-close</v-icon>
+                      Not detected on the server's PATH
+                    </div>
+                  </div>
+                  <div class="mtx-dep-actions">
+                    <v-btn
+                      v-if="!dep.present && dep.installable"
+                      small depressed
+                      class="mtx-dep-install"
+                      :loading="installing === dep.key"
+                      :disabled="!isOnline || !!installing || !(health.conda && health.conda.present)"
+                      @click="installTool(dep.key)"
+                    >
+                      <v-icon x-small left>mdi-download</v-icon>
+                      Install
+                    </v-btn>
+                    <v-chip v-else-if="dep.present" x-small color="#dcfce7" text-color="#15803d" class="mtx-dep-ok">
+                      ready
+                    </v-chip>
+                    <v-tooltip bottom v-if="!dep.installable && !dep.present">
+                      <template v-slot:activator="{ on }">
+                        <v-btn icon small v-on="on" :href="dep.docs" target="_blank" rel="noopener">
+                          <v-icon small>mdi-open-in-new</v-icon>
+                        </v-btn>
+                      </template>
+                      Manual install instructions
+                    </v-tooltip>
+                  </div>
+                </div>
+
+                <!-- Manual command / docs (always available as a fallback) -->
+                <div class="mtx-dep-manual" v-if="!dep.present">
+                  <div class="mtx-dep-manual-head">
+                    <v-icon x-small class="mr-1">mdi-console</v-icon>
+                    Install manually
+                    <a class="mtx-dep-docs" :href="dep.docs" target="_blank" rel="noopener">docs ↗</a>
+                  </div>
+                  <div class="mtx-dep-manual-cmd">
+                    <code>{{ dep.manual }}</code>
+                    <v-btn icon x-small @click="copyText(dep.manual)" title="Copy">
+                      <v-icon x-small>mdi-content-copy</v-icon>
+                    </v-btn>
+                  </div>
+                </div>
+
+                <!-- Live install log for this dependency -->
+                <div class="mtx-dep-log" v-if="installLogs[dep.key]">
+                  <div class="mtx-dep-log-head">
+                    <v-icon x-small class="mr-1">mdi-text-box-outline</v-icon>
+                    Install log
+                    <v-spacer></v-spacer>
+                    <v-progress-circular
+                      v-if="installing === dep.key"
+                      indeterminate size="12" width="2" color="#38bdf8" class="mr-1"
+                    ></v-progress-circular>
+                    <span v-if="installing === dep.key" class="mtx-dep-log-running">running…</span>
+                    <v-btn icon x-small @click="clearLog(dep.key)" title="Clear"><v-icon x-small>mdi-close</v-icon></v-btn>
+                  </div>
+                  <pre class="mtx-dep-console" :ref="'log_' + dep.key">{{ installLogs[dep.key] }}</pre>
+                </div>
+              </div>
+            </div>
+
+          </v-card-text>
+        </v-card>
+      </v-dialog>
+
+      <div class="pt-6 ">
         
         <v-navigation-drawer permanent class="pt-6 mtx-drawer"
           app ref="information_panel_drawer"  left :width="drawerWidth" v-model="navigation.shown"
@@ -638,6 +812,54 @@ export default {
         if (this.isConnecting) return 'Connecting to backend…'
         return this.connectedStatus || 'Backend offline'
       },
+      // One light descriptor per backend dependency for the app-bar cluster.
+      healthLights() {
+        const deps = (this.health && this.health.dependencies) || []
+        return deps.map((d) => {
+          let cls, stateText, reason
+          if (this.installing === d.key) {
+            cls = 'installing'
+            stateText = 'Installing…'
+            reason = 'Installing now — see the dependencies panel for live logs.'
+          } else if (d.present) {
+            cls = 'ok'
+            stateText = 'Available'
+            reason = d.version ? d.version : 'Detected on the server PATH.'
+          } else if (d.required) {
+            cls = 'missing'
+            stateText = 'Missing (required)'
+            reason = d.installable
+              ? 'Not installed. Click to open the installer and add it via conda.'
+              : 'Not installed. Click for manual install instructions.'
+          } else {
+            cls = 'optional-missing'
+            stateText = 'Not installed (optional)'
+            reason = 'Optional tool — only needed for specific workflows.'
+          }
+          return { key: d.key, label: d.label, cls, stateText, reason }
+        })
+      },
+      healthIcon() {
+        if (this.installing) return 'mdi-progress-download'
+        return this.health && this.health.ok ? 'mdi-heart-pulse' : 'mdi-alert'
+      },
+      healthIconColor() {
+        if (this.installing) return '#38bdf8'
+        return this.health && this.health.ok ? '#34d399' : '#f87171'
+      },
+      healthSummary() {
+        if (!this.isOnline) return 'Backend offline — dependency status unavailable'
+        if (this.installing) return `Installing ${this.installing}…`
+        const miss = (this.health && this.health.requiredMissing) || []
+        if (miss.length) return `Missing required: ${miss.join(', ')} — click to fix`
+        return 'All backend tools available — click for details'
+      },
+      osLabel() {
+        const o = (this.health && this.health.os) || {}
+        const names = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' }
+        const base = names[o.platform] || o.platform || 'Unknown OS'
+        return o.arch ? `${base} (${o.arch})` : base
+      },
       settingsPreviewUrl() {
         const proto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'https:' : 'http:'
         return `${proto}//${this.settingsEditHost}:${this.settingsEditPort}`
@@ -701,6 +923,11 @@ export default {
         const savedPort = localStorage.getItem('mtx_serverPort') || '7689'
         return {
           settingsDialog: false,
+          // Backend dependency health (kraken2, KrakenTools, conda, dorado, guppy)
+          healthDialog: false,
+          health: { ok: true, dependencies: [], conda: {}, os: {}, requiredMissing: [] },
+          installing: null,        // dependency key currently installing, or null
+          installLogs: {},         // key -> accumulated install log text
           serverHost: savedHost,
           serverPort: savedPort,
           settingsEditHost: savedHost,
@@ -1230,6 +1457,57 @@ export default {
           this.sendMessage({ type: 'getReportPath' })
           this.sendMessage({ type: 'getDbs' })
         },
+        // --- backend dependency manager ------------------------------------
+        openHealth() {
+          this.healthDialog = true
+          this.requestHealth()
+        },
+        requestHealth() {
+          this.sendMessage({ type: 'getHealth' })
+        },
+        installTool(key) {
+          if (!this.isOnline || this.installing) return
+          this.installing = key
+          this.$set(this.installLogs, key, '')
+          this.sendMessage({ type: 'installTool', key })
+        },
+        clearLog(key) {
+          this.$delete(this.installLogs, key)
+        },
+        shortEnv(env) {
+          if (!env) return ''
+          const parts = String(env).split('/')
+          return parts[parts.length - 1] || env
+        },
+        depCardClass(dep) {
+          if (this.installing === dep.key) return 'installing'
+          if (dep.present) return 'present'
+          return dep.required ? 'missing' : 'optional'
+        },
+        depLightClass(dep) {
+          if (this.installing === dep.key) return 'installing'
+          if (dep.present) return 'ok'
+          return dep.required ? 'missing' : 'optional-missing'
+        },
+        copyText(text) {
+          try {
+            if (navigator && navigator.clipboard) {
+              navigator.clipboard.writeText(text)
+              this.$swal({ toast: true, position: 'top-end', timer: 1400, showConfirmButton: false, icon: 'success', title: 'Copied' })
+            }
+          } catch (err) {
+            console.error(err)
+          }
+        },
+        scrollLog(key) {
+          try {
+            const refs = this.$refs['log_' + key]
+            const el = Array.isArray(refs) ? refs[0] : refs
+            if (el) el.scrollTop = el.scrollHeight
+          } catch (err) {
+            console.error(err)
+          }
+        },
         async connect(){
           const socketProtocol = (window.location.protocol === 'https:' ? 'https:' : 'http:')
           const port = ':' + (this.serverPort || '7689')
@@ -1326,6 +1604,42 @@ export default {
               this.$set(this.database, 'error', this.databases[index].error)
             }
           })
+          // --- backend dependency health ------------------------------------
+          // Bound here (alongside 'databases') rather than inside the guarded
+          // 'connect' block so the initial health snapshot the server emits on
+          // connection isn't missed.
+          this.socket.on('health', (e) => {
+            if (!e) return
+            $this.health = e
+            // Clear the local "installing" flag once the server confirms it's
+            // no longer installing (covers reconnects mid-install too).
+            if (!e.installing && $this.installing) {
+              // installStatus handles success/fail toasts; just clear the spinner.
+              $this.installing = null
+            }
+          })
+          this.socket.on('installLog', (e) => {
+            if (!e || !e.key) return
+            const prev = $this.installLogs[e.key] || ''
+            $this.$set($this.installLogs, e.key, prev + (e.line || ''))
+            $this.$nextTick(() => $this.scrollLog(e.key))
+          })
+          this.socket.on('installStatus', (e) => {
+            if (!e || !e.key) return
+            if (e.running) {
+              $this.installing = e.key
+              return
+            }
+            // terminal state
+            if ($this.installing === e.key) $this.installing = null
+            const dep = ($this.health.dependencies || []).find(d => d.key === e.key) || { label: e.key }
+            if (e.ok) {
+              $this.$swal({ icon: 'success', title: `${dep.label} installed`, text: 'The tool is now available to the backend.', timer: 3000, showConfirmButton: false })
+            } else if (e.error) {
+              $this.$swal({ icon: 'error', title: `${dep.label} install failed`, text: e.error })
+            }
+            $this.requestHealth()
+          })
           this.socket.on('disconnect', function(e) {
             console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
             $this.isOnline = false;
@@ -1375,6 +1689,8 @@ export default {
               $this.sendMessage({
                 type: "getStatus"
               })
+              // Refresh backend dependency health on every (re)connect.
+              $this.sendMessage({ type: "getHealth" })
               // Resync GPU preference on every (re)connect, like the emits above.
               $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
 
@@ -2292,6 +2608,198 @@ th, td {
   0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
   70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
   100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+@keyframes mtx-pulse-amber {
+  0%   { box-shadow: 0 0 0 0 rgba(56,189,248,.6); }
+  60%  { box-shadow: 0 0 0 7px rgba(56,189,248,0); }
+  100% { box-shadow: 0 0 0 0 rgba(56,189,248,0); }
+}
+
+/* --- Backend dependency lights (app-bar cluster) --- */
+.mtx-health-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  margin: 0 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+}
+.mtx-health-cluster:hover {
+  background: rgba(255,255,255,.16);
+  border-color: rgba(255,255,255,.28);
+}
+.mtx-health-light {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #6b7280;
+  transition: background .3s;
+}
+.mtx-health-light.ok { background: #22c55e; animation: mtx-pulse-green 2.4s ease infinite; }
+.mtx-health-light.missing { background: #ef4444; animation: mtx-pulse-red 1.6s ease infinite; }
+.mtx-health-light.installing { background: #38bdf8; animation: mtx-pulse-amber 1s ease infinite; }
+.mtx-health-light.optional-missing { background: #9ca3af; opacity: .65; }
+.mtx-health-btn { margin-left: 2px !important; }
+.mtx-health-tip { font-size: 12px; line-height: 1.35; max-width: 240px; }
+.mtx-health-tip-state {
+  display: inline-block;
+  margin-left: 6px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.mtx-health-tip-state.ok { color: #4ade80; }
+.mtx-health-tip-state.missing { color: #f87171; }
+.mtx-health-tip-state.installing { color: #38bdf8; }
+.mtx-health-tip-state.optional-missing { color: #d1d5db; }
+.mtx-health-tip-reason { color: #e5e7eb; margin-top: 2px; opacity: .85; }
+
+/* --- Backend dependencies dialog --- */
+.mtx-health-card { font-family: Inter, system-ui, sans-serif; }
+.mtx-health-titlebar {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #1f2937;
+  padding: 12px 16px !important;
+  display: flex;
+  align-items: center;
+}
+.mtx-health-overall {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  letter-spacing: .02em;
+}
+.mtx-health-overall.ok { background: #dcfce7; color: #15803d; }
+.mtx-health-overall.bad { background: #fee2e2; color: #b91c1c; }
+.mtx-health-body { padding: 16px !important; }
+.mtx-health-offline {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+.mtx-health-env {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mtx-env-chip {
+  display: inline-flex;
+  align-items: center;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #334155;
+}
+.mtx-env-chip.good { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.mtx-env-chip.warn { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+.mtx-env-label { font-weight: 700; margin-right: 6px; text-transform: uppercase; font-size: 10px; letter-spacing: .04em; opacity: .8; }
+.mtx-env-val { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mtx-health-conda-note {
+  font-size: 12px;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px dashed #fcd34d;
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin: 6px 0 12px;
+}
+.mtx-health-conda-note a { color: #b45309; font-weight: 600; }
+.mtx-dep-list { display: flex; flex-direction: column; gap: 10px; }
+.mtx-dep-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  transition: border-color .2s, box-shadow .2s;
+}
+.mtx-dep-card.present { border-color: #bbf7d0; background: #fbfffc; }
+.mtx-dep-card.missing { border-color: #fecaca; background: #fffafa; }
+.mtx-dep-card.optional { border-color: #e5e7eb; }
+.mtx-dep-card.installing { border-color: #bae6fd; box-shadow: 0 0 0 3px rgba(56,189,248,.12); }
+.mtx-dep-main { display: flex; align-items: flex-start; gap: 10px; }
+.mtx-dep-light {
+  width: 11px; height: 11px; border-radius: 50%;
+  margin-top: 4px; flex-shrink: 0; background: #9ca3af;
+}
+.mtx-dep-light.ok { background: #22c55e; animation: mtx-pulse-green 2.4s ease infinite; }
+.mtx-dep-light.missing { background: #ef4444; animation: mtx-pulse-red 1.6s ease infinite; }
+.mtx-dep-light.installing { background: #38bdf8; animation: mtx-pulse-amber 1s ease infinite; }
+.mtx-dep-light.optional-missing { background: #9ca3af; opacity: .6; }
+.mtx-dep-text { flex: 1; min-width: 0; }
+.mtx-dep-name { font-weight: 700; font-size: 13.5px; color: #1f2937; display: flex; align-items: center; gap: 8px; }
+.mtx-dep-tag {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 999px; background: #e0e7ff; color: #3730a3;
+}
+.mtx-dep-tag.optional { background: #f3f4f6; color: #6b7280; }
+.mtx-dep-desc { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.mtx-dep-meta { font-size: 11.5px; color: #15803d; margin-top: 5px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.mtx-dep-meta.missing { color: #b91c1c; }
+.mtx-dep-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px; color: #64748b; background: #f1f5f9;
+  padding: 1px 6px; border-radius: 5px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mtx-dep-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.mtx-dep-install {
+  background: linear-gradient(180deg, #2563eb, #1d4ed8) !important;
+  color: #fff !important;
+  text-transform: none !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  border-radius: 8px !important;
+}
+.mtx-dep-ok { font-weight: 700 !important; }
+.mtx-dep-manual {
+  margin-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 8px;
+}
+.mtx-dep-manual-head { font-size: 11px; font-weight: 600; color: #475569; display: flex; align-items: center; }
+.mtx-dep-docs { margin-left: 8px; color: #2563eb; font-weight: 600; text-decoration: none; }
+.mtx-dep-manual-cmd {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #0f172a; border-radius: 8px; padding: 6px 10px; margin-top: 5px;
+}
+.mtx-dep-manual-cmd code {
+  color: #e2e8f0; font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-x: auto; white-space: nowrap;
+}
+.mtx-dep-manual-cmd .v-btn { color: #94a3b8 !important; }
+.mtx-dep-log { margin-top: 10px; }
+.mtx-dep-log-head { font-size: 11px; font-weight: 600; color: #475569; display: flex; align-items: center; }
+.mtx-dep-log-running { font-size: 11px; color: #0284c7; margin-right: 4px; }
+.mtx-dep-console {
+  margin-top: 5px;
+  background: #0b1220;
+  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* --- Settings dialog --- */

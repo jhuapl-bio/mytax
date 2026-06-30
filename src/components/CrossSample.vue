@@ -405,14 +405,15 @@ export default {
       })
       // axis labels
       samples.forEach((s, i) => {
+        const disp = this.$fmtSample(s)
         g.append('text').attr('x', -8).attr('y', i * cell + cell / 2 + 3).attr('text-anchor', 'end')
-          .attr('font-size', labelFont).attr('fill', '#33485c').text(this.truncate(s, labelChars))
-          .append('title').text(s)
+          .attr('font-size', labelFont).attr('fill', '#33485c').text(this.truncate(disp, labelChars))
+          .append('title').text(disp)
         g.append('text')
           .attr('transform', `translate(${i * cell + cell / 2},${gridW + 8}) rotate(45)`)
           .attr('text-anchor', 'start').attr('font-size', labelFont)
-          .attr('fill', '#33485c').text(this.truncate(s, labelChars))
-          .append('title').text(s)
+          .attr('fill', '#33485c').text(this.truncate(disp, labelChars))
+          .append('title').text(disp)
       })
       this.renderScale(color)
     },

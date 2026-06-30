@@ -25,6 +25,12 @@ export  class Sample {
         this.queueList = []
         this.queueRecords = []
         this.sample = info.sample ? info.sample : "NoNameSample"
+        // Hierarchy metadata. `group` is the parent run/folder this sample was
+        // discovered under (null for standalone single samples); `label` is the
+        // short display name shown within that group (e.g. "barcode01"). The
+        // unique key remains `this.sample`.
+        this.group = info.group !== undefined ? info.group : null
+        this.label = info.label !== undefined && info.label !== null ? info.label : this.sample
         this.path_1 = info.path_1
         this.path_2 = info.path_2
         this.config = info.config
@@ -48,6 +54,8 @@ export  class Sample {
         this.kits = info.kits
         this.samplesheet = {
             sample: this.sample,
+            group: this.group,
+            label: this.label,
             path_1: this.path_1,
             path_2: this.path_2,
             kits: this.kits
@@ -633,7 +641,7 @@ export  class Sample {
             this[key] = info[key]
         }
         // keep the samplesheet projection in sync with any new metadata (lat/long, etc.)
-        this.samplesheet = { ...this.samplesheet, ...info, sample: this.sample, path_1: this.path_1, path_2: this.path_2 }
+        this.samplesheet = { ...this.samplesheet, ...info, sample: this.sample, group: this.group, label: this.label, path_1: this.path_1, path_2: this.path_2 }
         this.updateQueueRecords()
 
         return

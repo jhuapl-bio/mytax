@@ -50,13 +50,25 @@
         @drop.prevent="onDrop(ri)"
         @dragend="onDragEnd"
       >
-        <div class="qb-handle" title="Drag to reorder rotation">
-          <v-icon small>mdi-drag</v-icon>
-        </div>
-        <div class="qb-label" :title="row.sample">
-          <span class="qb-rank">{{ ri + 1 }}</span>
-          {{ row.sample }}
-          <span class="qb-rowcount">{{ row.done }}/{{ row.dots.length }}</span>
+        <div class="qb-anchor">
+          <div class="qb-handle" title="Drag to reorder rotation">
+            <v-icon small>mdi-drag</v-icon>
+          </div>
+          <div class="qb-label" :title="row.sample">
+            <span class="qb-rank">{{ ri + 1 }}</span>
+            {{ row.sample }}
+            <span class="qb-rowcount">{{ row.done }}/{{ row.dots.length }}</span>
+          </div>
+          <button
+            class="qb-rowrerun"
+            v-if="row.dots.length"
+            @click.stop="rerunSample(row.sample)"
+            @mouseenter="showTip($event, 'Rerun the entire sample (' + row.sample + ')')"
+            @mousemove="moveTip($event)"
+            @mouseleave="hideTip"
+          >
+            <v-icon x-small>mdi-replay</v-icon>
+          </button>
         </div>
 
         <div class="qb-line">
@@ -78,16 +90,6 @@
           </div>
         </div>
 
-        <button
-          class="qb-rowrerun"
-          v-if="row.dots.length"
-          @click.stop="rerunSample(row.sample)"
-          @mouseenter="showTip($event, 'Rerun the entire sample (' + row.sample + ')')"
-          @mousemove="moveTip($event)"
-          @mouseleave="hideTip"
-        >
-          <v-icon x-small>mdi-replay</v-icon>
-        </button>
       </div>
 
       <div v-if="!rows.length" class="qb-none">
@@ -344,14 +346,22 @@ export default {
 .qb-chip.done { background:#15803d; color:#fff; }
 .qb-chip.error { background:#b91c1c; color:#fff; }
 .qb-hint { padding:8px 18px; font-size:.78rem; color:#9fb3c8; background:#111d2b; border-bottom:1px solid #1f2f44; }
-.qb-board { flex:1; overflow-y:auto; padding:10px 14px 90px; }
+.qb-board { flex:1; overflow-x:auto; overflow-y:auto; padding:10px 14px 90px; }
 .qb-row {
   display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:8px;
-  transition:background .12s ease, transform .12s ease;
+  transition:background .12s ease, transform .12s ease; min-width:max-content;
 }
 .qb-row:hover { background:#16222f; }
 .qb-row--drag { opacity:.5; }
 .qb-row--over { background:#1c3147; outline:1px dashed #3b82f6; }
+/* sticky left anchor: handle + label + rerun button stay fixed while dots scroll */
+.qb-anchor {
+  position:sticky; left:0; z-index:10;
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  background:inherit; padding-right:8px;
+}
+.qb-row:hover .qb-anchor { background:#16222f; }
+.qb-row--over .qb-anchor { background:#1c3147; }
 .qb-handle { cursor:grab; color:#67809a; display:flex; }
 .qb-handle:active { cursor:grabbing; }
 .qb-label {
@@ -365,17 +375,12 @@ export default {
 .qb-rowcount { color:#7d93a8; font-weight:400; font-size:.74rem; margin-left:4px; }
 .qb-line { position:relative; flex:1; min-width:0; min-height:30px; display:flex; align-items:center; }
 .qb-track { position:absolute; left:0; right:0; top:50%; height:2px; background:#22344a; z-index:0; }
-/* horizontal scroller so a sample with many fastqs scrolls instead of wrapping */
+/* dots flow freely; the whole board scrolls horizontally instead */
 .qb-dots {
-  position:relative; z-index:1; flex:1; min-width:0;
+  position:relative; z-index:1; flex:1;
   display:flex; align-items:center; gap:6px;
-  overflow-x:auto; overflow-y:hidden; padding:7px 4px;
-  scrollbar-width:thin; scrollbar-color:#33485f transparent;
+  overflow:visible; padding:7px 4px;
 }
-.qb-dots::-webkit-scrollbar { height:7px; }
-.qb-dots::-webkit-scrollbar-track { background:transparent; }
-.qb-dots::-webkit-scrollbar-thumb { background:#2c4159; border-radius:4px; }
-.qb-dots::-webkit-scrollbar-thumb:hover { background:#3b5273; }
 .qb-dot {
   position:relative; z-index:1; flex:0 0 auto; width:16px; height:16px; border-radius:50%; border:2px solid transparent;
   padding:0; cursor:pointer; background:#3a4d63; transition:transform .1s ease, box-shadow .1s ease;
@@ -423,14 +428,13 @@ export default {
   box-shadow:0 8px 20px rgba(5,12,22,.5);
 }
 
-/* per-row "rerun whole sample" button */
+/* per-row "rerun whole sample" button (lives in sticky anchor) */
 .qb-rowrerun {
-  flex:0 0 auto; width:26px; height:26px; border-radius:7px; border:1px solid #2c4159;
-  background:#16222f; color:#9fb3c8; cursor:pointer; display:flex; align-items:center; justify-content:center;
-  opacity:0; transition:opacity .12s ease, background .12s ease, color .12s ease;
+  flex:0 0 auto; width:26px; height:26px; border-radius:7px; border:1px solid #d6d9dd;
+  background:#f0f0f0; color:#010306; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:background .12s ease, color .12s ease, border-color .12s ease;
 }
-.qb-row:hover .qb-rowrerun { opacity:1; }
-.qb-rowrerun:hover { background:#1d4ed8; color:#fff; border-color:#1d4ed8; }
+.qb-rowrerun:hover { background:#89a1e4; color:#fff; border-color:#1d4ed8; }
 
 .qb-empty { color:#64788d; font-size:.76rem; font-style:italic; z-index:1; }
 .qb-none { text-align:center; color:#7d93a8; padding:40px; }

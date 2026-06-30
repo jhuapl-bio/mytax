@@ -627,7 +627,7 @@
               .html(`
                 <div class="mtx-tip-title">${d.top}</div>
                 <table class="mtx-tip-table">
-                  <tr><td>Sample</td><td>${d.name}</td></tr>
+                  <tr><td>Sample</td><td>${$this.$fmtSample(d.name)}</td></tr>
                   <tr><td>Rank</td><td>${rankLabel}</td></tr>
                   <tr><td>Value</td><td>${valueText}</td></tr>
                   <tr><td>Metric</td><td>${$this.valueAttr.name}</td></tr>
@@ -656,7 +656,9 @@
         const nCols = samplenames.length
         const maxChars = nCols > 34 ? 12 : nCols > 22 ? 16 : nCols > 14 ? 20 : 26
         const truncateTick = (name) => {
-          const s = `${name || ''}`
+          // show the short, readable label (e.g. "barcode01") on the axis; the
+          // full "Run / barcode" name is available in the hover <title>.
+          const s = `${this.$sampleLabel(name) || ''}`
           return s.length > maxChars ? `${s.slice(0, maxChars - 1)}...` : s
         }
         const maxCharsY = Math.max(10, Math.floor((margin.left - 16) / 7))
@@ -686,7 +688,7 @@
 
         x.selectAll('.tick text')
           .append('title')
-          .text((d) => `${d}`)
+          .text((d) => `${this.$fmtSample(d)}`)
 
         // Keep top labels single-line; wrapped tspans can spill into the first cell row.
         x.selectAll('text')
