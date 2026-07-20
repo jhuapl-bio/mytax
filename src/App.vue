@@ -527,6 +527,8 @@
         :pathOptions2="pathOptions2"
         :pathOptionsDb="pathOptionsDb"
         :autodetectR2Result="autodetectR2Result"
+        :pairWatches="pairWatches"
+        @stopPairWatch="stopPairWatch"
         @updateSampleStatus="updateSampleStatus"
         @sendMessage="sendMessage"
         @updateData="updateData"
@@ -980,6 +982,7 @@ export default {
             pathOptions2: [],
             pathOptionsDb: [],
             autodetectR2Result: null,
+            pairWatches: [],
             db_options: [
               "file",
               "path"
@@ -1281,6 +1284,16 @@ export default {
             "message" : `Download Database ${this.database} `
         });
       },
+      stopPairWatch(payload){
+        // payload: { group } or { dir }
+        this.sendMessage({
+          type: "stopPairWatch",
+          run: this.selectedRun,
+          group: payload && payload.group,
+          dir: payload && payload.dir,
+          message: `Stop watching paired directory ${payload && (payload.group || payload.dir) || ''}`
+        })
+      },
       updateEntry(n, sample){
         try{
           this.sendMessage({
@@ -1342,12 +1355,17 @@ export default {
       },
       deletesample(sample){
         this.$delete(this.selectedData, sample)
+        // Drop the sample's queued jobs too, otherwise the QueueBoard (whose rows
+        // are derived from queueList keys) keeps showing the deleted sample.
+        if (this.queueList && Object.prototype.hasOwnProperty.call(this.queueList, sample)){
+          this.$delete(this.queueList, sample)
+        }
         let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
         if (index > -1){
           this.$delete(this.selectedsamplesAll, index)
-          
+
         }
-        
+
       },
      
       
@@ -1810,6 +1828,11 @@ export default {
               $this.socket.on("autodetectR2Result", (e)=>{
                 this.autodetectR2Result = e
               })
+              $this.socket.on("pairWatches", (e)=>{
+                // only apply updates meant for the run we're viewing
+                if (!e || (e.run && e.run !== this.selectedRun)) return
+                this.pairWatches = Array.isArray(e.watches) ? e.watches : []
+              })
               $this.socket.on("queueJob", (e)=>{
                 try {
                   const sample = e.samplename
@@ -1863,6 +1886,9 @@ export default {
                 // 1600-job run take minutes to load).
                 if (!e) return
                 $this.$set($this, 'samplesheet', e.samplesheet || [])
+                // active paired-directory watches for this run (drives the
+                // "listening" indicator + stop control on group headers)
+                $this.$set($this, 'pairWatches', Array.isArray(e.pairWatches) ? e.pairWatches : [])
                 if (!Array.isArray(e.reportdata)) return
 
                 const pendingReports = []

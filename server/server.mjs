@@ -531,7 +531,8 @@ export  class Orchestrator {
                 run: r.run,
                 reportdata: reportdata,
                 samplesheet: r.samplesheet,
-                config: r.config
+                config: r.config,
+                pairWatches: typeof r.pairWatchSummary === 'function' ? r.pairWatchSummary() : []
             })
         } catch (err){
             logger.error(`${err} error in sending run information`)
@@ -664,6 +665,20 @@ export  class Orchestrator {
                     await r.deleteSamples(Object.keys(r.samples))
                 } catch (err){
                     logger.error(`${err} error deleting samples for run ${run}`)
+                }
+                // Close any live paired-read directory watchers so they don't keep
+                // firing (and re-adding samples) after the run is gone.
+                try{
+                    if (typeof r.stopPairWatch === 'function') await r.stopPairWatch()
+                } catch (err){
+                    logger.error(`${err} error closing pair watchers for run ${run}`)
+                }
+                // Purge the run's scheduler lanes so it (and any leftover empty
+                // lanes) drop off the queue board / all-runs summary immediately.
+                try{
+                    scheduler.clear(run)
+                } catch (err){
+                    logger.error(`${err} error clearing scheduler for run ${run}`)
                 }
                 // Belt-and-suspenders: remove the run's whole output directory too,
                 // in case any files exist there outside of a tracked sample folder.
@@ -1299,15 +1314,27 @@ export  class Orchestrator {
         try{
             let index = this.runs.findIndex((r)=>{
                 return r.run == run
-            }) 
+            })
             if (index != -1){
                 let r = this.runs[index]
                 await r.updateSample(info, run, sample)
                 // this.getRunInformation(run)
                 // broadcastToAllActiveConnections( "runInformation",  returninfo);
-            } 
+            }
         } catch (err){
             logger.error(`${err} failure to update run`)
+        }
+    }
+    // Stop watching a paired-read directory for new pairs, by run + group (the
+    // name shown on the queue/sample group header) or by explicit directory.
+    async stopPairWatch(run, { group, dir } = {}){
+        try{
+            const r = this.runs.find((x) => x.run === run)
+            if (!r) return
+            if (dir) await r.stopPairWatch(dir)
+            else await r.stopPairWatchByGroup(group)
+        } catch (err){
+            logger.error(`${err} failure to stop pair watch for run ${run}`)
         }
     }
     async flush(){

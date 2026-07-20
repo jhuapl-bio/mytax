@@ -77,6 +77,18 @@
                                         <v-icon x-small class="mtx-st-gicon">{{ grp.group ? 'mdi-folder-multiple-outline' : 'mdi-flask-outline' }}</v-icon>
                                         <span class="mtx-st-gname">{{ grp.group || 'Individual samples' }}</span>
                                         <span class="mtx-st-gcount">{{ grp.samples.length }}</span>
+                                        <v-tooltip bottom v-if="!offlineMode && isGroupWatched(grp)">
+                                            <template v-slot:activator="{ on }">
+                                                <span v-on="on" class="mtx-st-listening" @click.stop>
+                                                    <v-icon x-small class="mr-1">mdi-radar</v-icon>listening
+                                                    <v-btn icon x-small class="mtx-st-stopwatch" title="Stop watching this directory for new pairs"
+                                                        @click.stop="stopWatchingGroup(grp)">
+                                                        <v-icon x-small>mdi-close</v-icon>
+                                                    </v-btn>
+                                                </span>
+                                            </template>
+                                            Watching this directory for new R1/R2 pairs — click ✕ to stop
+                                        </v-tooltip>
                                         <span class="mtx-st-gstats" v-if="!offlineMode">
                                             <span v-if="groupStats(grp).running" class="mtx-gpill running">{{ groupStats(grp).running }} running</span>
                                             <span v-if="groupStats(grp).queued" class="mtx-gpill queued">{{ groupStats(grp).queued }} queued</span>
@@ -469,6 +481,7 @@
                                 <div class="mtx-hint mt-2">
                                     Files that match apart from the marker are paired. Sample name = filename with the R1 marker removed
                                     (e.g. <code>2132132_R1.fastq.gz</code> + <code>2132132_R2.fastq.gz</code> → <code>2132132</code>).
+                                    With <strong>watch</strong> on (below), new R1/R2 pairs dropped into this directory are added and classified automatically.
                                 </div>
                             </v-col>
                         </v-row>
@@ -1072,7 +1085,8 @@
         "offlineMode",
         "queueBoard",
         "queueBoardAll",
-        "autodetectR2Result"
+        "autodetectR2Result",
+        "pairWatches"
     ],
     components: {
         VueJsonToCsv,
@@ -1409,6 +1423,18 @@
             return ''
         },
 
+        // Set of group names (and a flag for the ungrouped bucket) that currently
+        // have a live paired-directory watch, so the group header can show a
+        // "listening" chip + a stop control.
+        watchedGroups(){
+            const set = new Set()
+            let individual = false
+            ;(this.pairWatches || []).forEach((w) => {
+                if (w && w.group) set.add(w.group)
+                else if (w) individual = true
+            })
+            return { set, individual }
+        },
         icon () {
             if (this.selectedAllSamples) return 'mdi-checkbox-marked'
             if (this.selectedSomeSamples) return 'mdi-minus-box'
@@ -1919,6 +1945,16 @@
             if (!filepath) return '—'
             try { return filepath.split(/[\\/]/).pop() } catch (e) { return filepath }
         },
+        // Is this grouped/individual bucket backed by a live paired-dir watch?
+        isGroupWatched(grp){
+            if (!grp) return false
+            return grp.group ? this.watchedGroups.set.has(grp.group) : this.watchedGroups.individual
+        },
+        // Tell the server to stop listening on this group's paired directory.
+        stopWatchingGroup(grp){
+            if (this.offlineMode) return
+            this.$emit('stopPairWatch', { group: grp && grp.group ? grp.group : null })
+        },
         isGroupCollapsed(key){
             return !!this.collapsedGroups[key]
         },
@@ -2292,6 +2328,22 @@ code {
 .mtx-qchip.paused  { background: #fef3c7; color: #b45309; }
 .mtx-qchip.empty   { background: transparent; color: #94a3b8; font-weight: 500; padding-left: 0; }
 .mtx-queue-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ===== paired-dir "listening" chip on group headers ===== */
+.mtx-st-listening {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #15803d;
+    background: #dcfce7;
+    border-radius: 999px;
+    padding: 1px 4px 1px 8px;
+    margin-left: 8px;
+    line-height: 1.6;
+    cursor: default;
+}
+.mtx-st-stopwatch { margin-left: 2px; }
 
 /* ===== auto-detect R2 inline message ===== */
 .mtx-autodetect-msg {

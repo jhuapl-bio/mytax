@@ -384,9 +384,17 @@ io.on('connection', (ws) => {
         logger.error(err)
     }
   })
-  ws.on('rerun', (msg) => {  
+  ws.on('rerun', (msg) => {
     logger.info(`${msg.index}: ${msg.sample}, ${msg.run} rerunning....`)
     storage.orchestrator.rerun(msg.index, msg.sample, msg.run)
+  })
+  // Stop listening on a paired-read directory (manual "stop watching" control).
+  ws.on('stopPairWatch', async (msg) => {
+    try{
+        await storage.orchestrator.stopPairWatch(msg.run, { group: msg.group, dir: msg.dir })
+    } catch(err){
+        logger.error(err)
+    }
   })
  
   ws.on('getRuns', (msg) => {

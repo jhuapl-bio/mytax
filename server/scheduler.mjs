@@ -165,6 +165,24 @@ class RoundRobinScheduler {
 		if (!silent && runName) { this.scheduleBoard(runName); this.emitLength(); this.scheduleGlobalBoard() }
 	}
 
+	// Remove a single sample's lane entirely. Cancelling a sample's jobs only
+	// empties its pending list; the lane itself lingers in `lanes`/`laneOrder`, so
+	// getBoard()/getBoardAll() keep showing the (now empty) sample on the queue
+	// board. Call this when a sample is deleted so it disappears from the board.
+	removeSample(runName, sample) {
+		const key = this.laneKeyFor(runName, sample)
+		const existed = this.lanes.delete(key)
+		this.laneOrder = this.laneOrder.filter((k) => k !== key)
+		const beforeLen = this.priorityFront.length
+		this.priorityFront = this.priorityFront.filter((e) => !(e.runName === runName && e.sample === sample))
+		if (this.lastServedKey === key) this.lastServedKey = null
+		if (existed || beforeLen !== this.priorityFront.length) {
+			this.scheduleBoard(runName)
+			this.emitLength()
+			this.scheduleGlobalBoard()
+		}
+	}
+
 	// --- live manipulation (driven by the queue board UI) --------------------
 
 	// Bump a single file to run next.
