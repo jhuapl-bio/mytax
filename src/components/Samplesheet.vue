@@ -91,7 +91,7 @@
                                                 <v-icon small>mdi-format-list-bulleted</v-icon>
                                             </v-btn>
                                             <v-btn icon x-small class="mtx-st-gdelete"
-                                                :title="`Delete all ${grp.samples.length} barcodes in ${grp.group}`"
+                                                :title="`Remove all ${grp.samples.length} samples in ${grp.group}`"
                                                 @click="deleteGroup(grp)">
                                                 <v-icon small>mdi-delete-sweep</v-icon>
                                             </v-btn>
@@ -192,7 +192,10 @@
                 <div class="mtx-queue-summary" v-if="!offlineMode">
                     <div class="mtx-queue-summary-head">
                         <span class="mtx-queue-title">Job queue</span>
-                        <span class="mtx-queue-total">{{ jobStats.total }} job{{ jobStats.total === 1 ? '' : 's' }}</span>
+                        <span class="mtx-queue-total">{{ jobStats.total }} job{{ jobStats.total === 1 ? '' : 's' }} (this run)</span>
+                        <span class="mtx-queue-total-all" v-if="otherRunsPending > 0">
+                            + {{ otherRunsPending }} queued in {{ otherRunsCount }} other run{{ otherRunsCount === 1 ? '' : 's' }}
+                        </span>
                     </div>
                     <div class="mtx-queue-chips">
                         <span class="mtx-qchip running" v-if="jobStats.running">{{ jobStats.running }} running</span>
@@ -347,33 +350,40 @@
                     <v-card-text class="mtx-add-body">
                         <!-- ===== 1. Input mode ===== -->
                         <div class="mtx-sec-label">1 · Input mode</div>
-                        <v-btn-toggle v-model="toggleDemuxRun" mandatory dense class="mb-3 mtx-mode-toggle">
-                            <v-btn :value="false" small>
+                        <v-btn-toggle v-model="inputMode" mandatory dense class="mb-3 mtx-mode-toggle">
+                            <v-btn value="single" small>
                                 <v-icon left small>mdi-file-outline</v-icon> Single sample
                             </v-btn>
-                            <v-btn :value="true" small>
+                            <v-btn value="barcoded" small>
                                 <v-icon left small>mdi-barcode</v-icon> Barcoded run
+                            </v-btn>
+                            <v-btn value="paired" small>
+                                <v-icon left small>mdi-file-multiple-outline</v-icon> Paired directory
                             </v-btn>
                         </v-btn-toggle>
                         <div class="mtx-hint mb-3">
-                            {{ toggleDemuxRun
+                            {{ inputMode === 'barcoded'
                                 ? 'Point at a run directory; each matching sub-directory becomes its own sample.'
-                                : 'Add one sample from a single file or directory of reads.' }}
+                                : inputMode === 'paired'
+                                    ? 'Point at a directory of R1/R2 FASTQ files; every matching pair becomes its own paired-end sample.'
+                                    : 'Add one sample from a single file or directory of reads.' }}
                         </div>
 
                         <!-- ===== 2. Name + inputs ===== -->
-                        <div class="mtx-sec-label">2 · {{ toggleDemuxRun ? 'Run' : 'Sample' }} details</div>
+                        <div class="mtx-sec-label">2 · {{ inputMode === 'barcoded' ? 'Run' : inputMode === 'paired' ? 'Paired-read' : 'Sample' }} details</div>
                         <v-row dense>
-                            <v-col cols="12" :md="toggleDemuxRun ? 6 : 12">
+                            <v-col cols="12" :md="inputMode === 'barcoded' ? 6 : 12">
                                 <v-text-field
                                     v-model="editedItem.sample"
-                                    :label="toggleDemuxRun ? 'Run name' : 'Sample name'"
+                                    :label="inputMode === 'barcoded' ? 'Run name' : inputMode === 'paired' ? 'Group name (optional)' : 'Sample name'"
                                     :error-messages="sampleErrors"
+                                    :hint="inputMode === 'paired' ? 'Leave blank to name each sample by its shared file prefix' : ''"
+                                    :persistent-hint="inputMode === 'paired'"
                                     prepend-inner-icon="mdi-rename-box"
                                     dense outlined hide-details="auto"
                                 ></v-text-field>
                             </v-col>
-                            <v-col cols="12" md="6" v-if="toggleDemuxRun">
+                            <v-col cols="12" md="6" v-if="inputMode === 'barcoded'">
                                 <v-text-field
                                     v-model="editedItem.kits"
                                     label="Barcode kit name (optional)"
@@ -382,20 +392,20 @@
                                 ></v-text-field>
                             </v-col>
 
-                            <v-col cols="12" :md="toggleDemuxRun ? 12 : 6">
+                            <v-col cols="12" :md="inputMode === 'single' ? 6 : 12">
                                 <v-combobox
                                     v-model="editedItem.path_1"
                                     :items="pathOptions1"
                                     :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path; matches are suggested as you go'"
                                     persistent-hint
                                     :error-messages="pathErrors1"
-                                    :label="toggleDemuxRun ? 'Run directory' : 'Reads — R1 (file or directory)'"
+                                    :label="inputMode === 'barcoded' ? 'Run directory' : inputMode === 'paired' ? 'Directory of R1/R2 FASTQ files' : 'Reads — R1 (file or directory)'"
                                     prepend-inner-icon="mdi-folder-search-outline"
                                     dense outlined
                                     @keyup="handleInputPath1"
                                 ></v-combobox>
                             </v-col>
-                            <v-col cols="12" md="6" v-if="!toggleDemuxRun">
+                            <v-col cols="12" md="6" v-if="inputMode === 'single'">
                                 <v-combobox
                                     v-model="editedItem.path_2"
                                     :items="pathOptions2"
@@ -406,10 +416,24 @@
                                     dense outlined
                                     @keyup="handleInputPath2"
                                 ></v-combobox>
+                                <!-- auto-detect the R2 mate for the chosen R1 file -->
+                                <div class="d-flex align-center flex-wrap mt-1">
+                                    <v-btn x-small text color="primary"
+                                        :loading="autodetecting"
+                                        :disabled="!editedItem.path_1 || offlineMode"
+                                        @click="autodetectR2">
+                                        <v-icon x-small left>mdi-auto-fix</v-icon>Auto-detect R2
+                                    </v-btn>
+                                    <span v-if="autodetectMsg" class="mtx-autodetect-msg" :class="autodetectOk ? 'ok' : 'warn'">
+                                        <v-icon x-small class="mr-1" :color="autodetectOk ? 'green darken-1' : 'orange darken-2'">
+                                            {{ autodetectOk ? 'mdi-check-circle-outline' : 'mdi-alert-outline' }}
+                                        </v-icon>{{ autodetectMsg }}
+                                    </span>
+                                </div>
                             </v-col>
 
                             <!-- barcode search pattern (only meaningful in barcoded-run mode) -->
-                            <v-col cols="12" md="6" v-if="toggleDemuxRun">
+                            <v-col cols="12" md="6" v-if="inputMode === 'barcoded'">
                                 <v-text-field
                                     v-model="searchPatternBC"
                                     label="Sub-directory match pattern"
@@ -418,6 +442,34 @@
                                     prepend-inner-icon="mdi-regex"
                                     dense outlined
                                 ></v-text-field>
+                            </v-col>
+
+                            <!-- R1/R2 markers (paired-directory mode) -->
+                            <v-col cols="6" md="3" v-if="inputMode === 'paired'">
+                                <v-text-field
+                                    v-model="pairR1Marker"
+                                    label="R1 marker"
+                                    hint="e.g. _R1"
+                                    persistent-hint
+                                    prepend-inner-icon="mdi-alpha-r-box-outline"
+                                    dense outlined
+                                ></v-text-field>
+                            </v-col>
+                            <v-col cols="6" md="3" v-if="inputMode === 'paired'">
+                                <v-text-field
+                                    v-model="pairR2Marker"
+                                    label="R2 marker"
+                                    hint="e.g. _R2"
+                                    persistent-hint
+                                    prepend-inner-icon="mdi-alpha-r-box"
+                                    dense outlined
+                                ></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6" v-if="inputMode === 'paired'">
+                                <div class="mtx-hint mt-2">
+                                    Files that match apart from the marker are paired. Sample name = filename with the R1 marker removed
+                                    (e.g. <code>2132132_R1.fastq.gz</code> + <code>2132132_R2.fastq.gz</code> → <code>2132132</code>).
+                                </div>
                             </v-col>
                         </v-row>
 
@@ -877,12 +929,15 @@
             <QueueBoard
                 :queueList="queueList"
                 :board="queueBoard"
+                :boardAll="queueBoardAll"
                 :selectedRun="selectedRun"
                 @close="dialogQueueBoard = false"
                 @reorder-lanes="onReorderLanes"
                 @prioritize="onPrioritizeJob"
                 @rerun="(p) => start(p.index, p.sample)"
                 @cancel="(p) => cancelJob(p.index, p.sample)"
+                @remove-all-samples="onRemoveAllSamples"
+                @select-run="(run) => $emit('selectRun', run)"
             />
         </v-dialog>
 
@@ -1015,7 +1070,9 @@
         'pausedServer',
         "statussent",
         "offlineMode",
-        "queueBoard"
+        "queueBoard",
+        "queueBoardAll",
+        "autodetectR2Result"
     ],
     components: {
         VueJsonToCsv,
@@ -1032,6 +1089,23 @@
     watch: {
       dialog (val) {
         val || this.closeItem()
+      },
+      // Result of an "Auto-detect R2" request routed back from the server.
+      autodetectR2Result(val){
+        this.autodetecting = false
+        if (!val) return
+        if (val.found && val.path_2){
+          this.$set(this.editedItem, 'path_2', val.path_2)
+          this.autodetectOk = true
+          this.autodetectMsg = `Found R2: ${this.shortFile(val.path_2)}`
+        } else {
+          this.autodetectOk = false
+          if (val.reason === 'no-marker'){
+            this.autodetectMsg = `R1 marker “${this.pairR1Marker}” not found in the file name — please enter R2 manually.`
+          } else {
+            this.autodetectMsg = `No matching R2 found${val.tried ? ` (looked for ${this.shortFile(val.tried)})` : ''}. Please enter R2 manually.`
+          }
+        }
       },
       dialogJobs(val){
         if (!val){
@@ -1134,8 +1208,11 @@
             ];
         },
         sampleErrors() {
+            // Group name is optional in paired-directory mode (samples are named
+            // from their shared file prefix when left blank).
+            if (this.inputMode === 'paired') return [];
             if (!this.editedItem.sample || this.editedItem.sample === '') {
-                return `${this.toggleDemuxRun ? 'Run Name' : 'Sample Name'} is required`
+                return `${this.inputMode === 'barcoded' ? 'Run Name' : 'Sample Name'} is required`
             }
             return [];
         },
@@ -1147,11 +1224,18 @@
         },
         pathErrors1() {
             if (!this.editedItem.path_1 || this.editedItem.path_1 === '') {
-                return `${this.toggleDemuxRun ? 'Run Location of Barcodes' : 'Directory/Files'} required`
+                const label = this.inputMode === 'barcoded'
+                    ? 'Run Location of Barcodes'
+                    : this.inputMode === 'paired'
+                        ? 'Directory of R1/R2 files'
+                        : 'Directory/Files'
+                return `${label} required`
             }
             return [];
         },
         isFormValid() {
+            // Paired mode only needs the directory; the group name is optional.
+            if (this.inputMode === 'paired') return !!this.editedItem.path_1;
             return this.editedItem.sample  && this.editedItem.path_1 ;
         },
         numberOfPages () {
@@ -1180,6 +1264,61 @@
             this.allJobs.forEach((j) => { c[j._state] = (c[j._state] || 0) + 1; c.total += 1 })
             c.finished = c.done + c.historical
             return c
+        },
+        // Counts pulled from the ALL-runs scheduler summary (queueBoardAll), so
+        // the drawer can surface work queued in runs OTHER than the one currently
+        // selected -- previously that queue was entirely invisible until you
+        // switched runs.
+        otherRunsBoard(){
+            const all = (this.queueBoardAll && this.queueBoardAll.runs) || []
+            return all.filter((r) => r.run !== this.selectedRun)
+        },
+        otherRunsPending(){
+            return this.otherRunsBoard.reduce((sum, r) => sum + (r.pending || 0), 0)
+        },
+        otherRunsCount(){
+            return this.otherRunsBoard.filter((r) => r.pending > 0).length
+        },
+        // ---- memoized lookups (perf) -------------------------------------
+        // The grouped table calls sampleQueue()/sampleHierarchy() many times per
+        // row per render (badges, tooltips, group pills). Computing them inline
+        // re-walked the whole queue/samplesheet on every keystroke and every
+        // delete, freezing the UI. These cached maps recompute only when the
+        // underlying queueList / samplesheet actually changes.
+        sampleQueueMap(){
+            const map = {}
+            const ql = this.queueList || {}
+            Object.keys(ql).forEach((sample) => {
+                const out = { total: 0, done: 0, running: 0, queued: 0, error: 0, pending: 0, percent: 0 }
+                const list = ql[sample]
+                if (Array.isArray(list)){
+                    list.forEach((j) => {
+                        if (!j) return
+                        const st = this.jobState(j)
+                        out.total += 1
+                        if (st === 'running') out.running += 1
+                        else if (st === 'done' || st === 'historical') out.done += 1
+                        else if (st === 'error') out.error += 1
+                        else if (st === 'cancelled') { /* not pending or done */ }
+                        else out.queued += 1
+                    })
+                }
+                out.pending = out.running + out.queued
+                out.percent = out.total ? Math.round((out.done / out.total) * 100) : 0
+                map[sample] = out
+            })
+            return map
+        },
+        // sample id -> { group, label }, built once from the samplesheet.
+        hierarchyMap(){
+            const map = {}
+            const sheet = Array.isArray(this.samplesheet) ? this.samplesheet : []
+            sheet.forEach((e) => {
+                if (e && e.sample && (e.group || e.label)){
+                    map[e.sample] = { group: e.group || null, label: e.label || e.sample }
+                }
+            })
+            return map
         },
         filteredJobs(){
             const f = this.jobFilter
@@ -1330,6 +1469,14 @@
           itemsPerPageArray: [9, 15, 20 ],
           search: '',
           searchPatternBC: 'barcode*',
+          // input mode for the Add-Entry dialog: 'single' | 'barcoded' | 'paired'
+          inputMode: 'single',
+          // user-definable R1/R2 markers for paired-directory + auto-detect
+          pairR1Marker: '_R1',
+          pairR2Marker: '_R2',
+          autodetecting: false,
+          autodetectMsg: null,
+          autodetectOk: false,
           filter: {},
           sortDesc: false,
           dialogAdvanced: false,
@@ -1394,7 +1541,6 @@
         //   ],
           stagedData: [],
           toggleDatabases: true,
-          toggleDemuxRun: false, 
           selectedQueueJob: null,
           selectedQueueSample: null,
           recentDataFileadded: null,
@@ -1565,6 +1711,26 @@
             const value = event.target.value;
             this.$emit("sendMessage", { type: "searchPath2", value: value  })
         },
+        // Ask the server to find the R2 mate for the currently-chosen R1 file in
+        // the same directory. Result arrives via the autodetectR2Result prop.
+        autodetectR2() {
+            if (this.offlineMode) return
+            let p1 = this.editedItem.path_1
+            if (!p1){
+                this.autodetectOk = false
+                this.autodetectMsg = 'Choose an R1 file first.'
+                return
+            }
+            if (typeof p1 === 'string' && p1.startsWith('file://')) p1 = p1.replace('file://', '')
+            this.autodetecting = true
+            this.autodetectMsg = null
+            this.$emit("sendMessage", {
+                type: "autodetectR2",
+                path_1: p1,
+                r1: this.pairR1Marker,
+                r2: this.pairR2Marker
+            })
+        },
         hideSample(sample){
             let index = this.selectedsamplesAll.findIndex(x => x.sample === sample)
             if (index > -1){
@@ -1705,22 +1871,8 @@
         },
         // Per-sample queue breakdown used by the status badge + its hover table.
         sampleQueue(sample){
-            const out = { total: 0, done: 0, running: 0, queued: 0, error: 0, pending: 0, percent: 0 }
-            const list = this.queueList && this.queueList[sample]
-            if (!Array.isArray(list)) return out
-            list.forEach((j) => {
-                if (!j) return
-                const st = this.jobState(j)
-                out.total += 1
-                if (st === 'running') out.running += 1
-                else if (st === 'done' || st === 'historical') out.done += 1
-                else if (st === 'error') out.error += 1
-                else if (st === 'cancelled') { /* not counted as pending or done */ }
-                else out.queued += 1 // queued / paused / preload
-            })
-            out.pending = out.running + out.queued
-            out.percent = out.total ? Math.round((out.done / out.total) * 100) : 0
-            return out
+            return this.sampleQueueMap[sample] ||
+                { total: 0, done: 0, running: 0, queued: 0, error: 0, pending: 0, percent: 0 }
         },
         // Map the breakdown + watch state to a single coloured badge.
         sampleBadge(item){
@@ -1749,11 +1901,8 @@
         // server), then falls back to splitting on the "__" id separator, then to
         // a flat, ungrouped sample.
         sampleHierarchy(sampleId){
-            const sheet = Array.isArray(this.samplesheet) ? this.samplesheet : []
-            const entry = sheet.find(e => e && e.sample === sampleId)
-            if (entry && (entry.group || entry.label)){
-                return { group: entry.group || null, label: entry.label || sampleId }
-            }
+            const cached = this.hierarchyMap[sampleId]
+            if (cached) return cached
             const i = sampleId ? sampleId.indexOf('__') : -1
             if (i > 0){
                 return { group: sampleId.slice(0, i), label: sampleId.slice(i + 2) }
@@ -1791,23 +1940,38 @@
             if (this.offlineMode) return
             ;(grp.samples || []).forEach(s => this.start(-1, s.sample))
         },
-        // Delete every barcode/sample that belongs to a run group.
+        // Remove every barcode/sample that belongs to a run group, in ONE batched
+        // request (not N). Always confirms first.
         deleteGroup(grp){
             if (this.offlineMode) return
             const samples = (grp.samples || []).map(s => s.sample)
             if (!samples.length) return
-            const run = grp.group
-            const proceed = () => samples.forEach(sample => this.deleteRow(sample))
+            const run = grp.group || 'Individual samples'
+            // Split into local-only (uploaded/demo) vs server samples: locals are
+            // removed client-side, server ones go out in a single batch message.
+            const proceed = () => {
+                const serverSamples = []
+                samples.forEach((sample) => {
+                    const item = this.selectedsamplesAll.find(x => x.sample === sample)
+                    if (this.isLocal(item)){
+                        const i = this.selectedsamplesAll.findIndex(x => x.sample === sample)
+                        if (i > -1) this.selectedsamplesAll.splice(i, 1)
+                    } else {
+                        serverSamples.push(sample)
+                    }
+                })
+                if (serverSamples.length) this.$emit('deleteEntries', serverSamples)
+            }
             // Confirm if SweetAlert is available; otherwise delete directly.
             if (this.$swal){
                 this.$swal({
-                    title: `Delete all ${samples.length} barcodes in “${run}”?`,
+                    title: `Remove all ${samples.length} samples in “${run}”?`,
                     text: 'This removes every sample in this run and its reports. This cannot be undone.',
                     icon: 'warning',
                     showCancelButton: true,
                     confirmButtonColor: '#dc2626',
                     cancelButtonColor: '#64748b',
-                    confirmButtonText: `Delete ${samples.length} samples`
+                    confirmButtonText: `Remove ${samples.length} samples`
                 }).then((result) => { if (result && result.isConfirmed) proceed() })
             } else {
                 proceed()
@@ -1818,6 +1982,39 @@
             this.selectedQueueSample = null
             this.selectedQueueGroup = grp.group
             this.dialogJobs = true
+        },
+        // QueueBoard "Remove all" for a run/group: confirm, then batch-delete.
+        onRemoveAllSamples(payload){
+            if (this.offlineMode) return
+            const samples = (payload && payload.samples) || []
+            if (!samples.length) return
+            const run = (payload && payload.run) || 'Individual samples'
+            const proceed = () => {
+                const serverSamples = []
+                samples.forEach((sample) => {
+                    const item = this.selectedsamplesAll.find(x => x.sample === sample)
+                    if (this.isLocal(item)){
+                        const i = this.selectedsamplesAll.findIndex(x => x.sample === sample)
+                        if (i > -1) this.selectedsamplesAll.splice(i, 1)
+                    } else {
+                        serverSamples.push(sample)
+                    }
+                })
+                if (serverSamples.length) this.$emit('deleteEntries', serverSamples)
+            }
+            if (this.$swal){
+                this.$swal({
+                    title: `Remove all ${samples.length} samples in “${run}”?`,
+                    text: 'This removes every sample in this run and its reports. This cannot be undone.',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc2626',
+                    cancelButtonColor: '#64748b',
+                    confirmButtonText: `Remove ${samples.length} samples`
+                }).then((result) => { if (result && result.isConfirmed) proceed() })
+            } else {
+                proceed()
+            }
         },
         // QueueBoard: drag-reorder the barcode/sample rotation
         onReorderLanes(samples){
@@ -1988,7 +2185,9 @@
                     this.$set(this.editedItem, k, cfg[k])
                 }
             })
-            this.toggleDemuxRun = false
+            this.inputMode = 'single'
+            this.autodetectMsg = null
+            this.autodetectOk = false
             // treat as an edit whenever the sample exists in either source
             this.editedIndex = editedIndex > -1
                 ? editedIndex
@@ -2011,10 +2210,19 @@
             })
         },
         saveItem() {
-            if (this.toggleDemuxRun){
+            // Route the entry to the right backend expansion based on input mode:
+            //  - barcoded: searchPatternBC -> checkSubdirs (one sample per barcode dir)
+            //  - paired:   pairReads       -> checkReadPairs (one sample per R1/R2 pair)
+            //  - single:   neither         -> a single sample
+            if (this.inputMode === 'barcoded'){
                 this.editedItem.searchPatternBC = this.searchPatternBC
+                this.editedItem.pairReads = null
+            } else if (this.inputMode === 'paired'){
+                this.editedItem.searchPatternBC = null
+                this.$set(this.editedItem, 'pairReads', { r1: this.pairR1Marker, r2: this.pairR2Marker })
             } else {
                 this.editedItem.searchPatternBC = null
+                this.editedItem.pairReads = null
             }
             // watch on ⇒ keep watching the directory for new reads in real time
             this.$set(this.editedItem, 'watch', this.editedItem.watch !== false)
@@ -2071,6 +2279,7 @@ code {
 }
 .mtx-queue-title { font-size: 12px; font-weight: 700; letter-spacing: .03em; color: #334155; text-transform: uppercase; }
 .mtx-queue-total { font-size: 11px; color: #64748b; }
+.mtx-queue-total-all { font-size: 10.5px; color: #b45309; font-weight: 600; }
 .mtx-queue-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
 .mtx-qchip {
     font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
@@ -2083,6 +2292,17 @@ code {
 .mtx-qchip.paused  { background: #fef3c7; color: #b45309; }
 .mtx-qchip.empty   { background: transparent; color: #94a3b8; font-weight: 500; padding-left: 0; }
 .mtx-queue-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ===== auto-detect R2 inline message ===== */
+.mtx-autodetect-msg {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11.5px;
+    margin-left: 8px;
+    line-height: 1.3;
+}
+.mtx-autodetect-msg.ok { color: #15803d; }
+.mtx-autodetect-msg.warn { color: #b45309; }
 
 /* ===== full-width jobs dialog ===== */
 .mtx-jobs-toolbar {

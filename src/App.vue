@@ -514,6 +514,7 @@
         :queueLength="queueLength"
         :queueList="queueList"
         :queueBoard="queueBoard"
+        :queueBoardAll="queueBoardAll"
         :databases="databases"
         :selectedsamples="selectedsamples"
         :bundleconfig="bundleconfig"
@@ -525,15 +526,18 @@
         :pathOptions1="pathOptions1"
         :pathOptions2="pathOptions2"
         :pathOptionsDb="pathOptionsDb"
+        :autodetectR2Result="autodetectR2Result"
         @updateSampleStatus="updateSampleStatus"
         @sendMessage="sendMessage"
         @updateData="updateData"
         @updateEntry="updateEntry"
         @updateMeta="setSampleMeta"
         @deleteEntry="deleteEntry"
+        @deleteEntries="deleteEntries"
         @barcode="barcode"
         @sampleStatus="sampleStatus"
         @rerun="rerun"
+        @selectRun="(run) => { selectedRun = run }"
         :anyRunning="anyRunning"
         @pausedChange="pausedChange"
         :pausedServer="pausedServer"
@@ -975,6 +979,7 @@ export default {
             pathOptions1: [],
             pathOptions2: [],
             pathOptionsDb: [],
+            autodetectR2Result: null,
             db_options: [
               "file",
               "path"
@@ -1021,6 +1026,10 @@ export default {
             statussent: null,
             queueList: {},
             queueBoard: {},
+            // Counts-only queue summary across EVERY run (see queueBoardAll socket
+            // handler); unlike queueBoard/queueList this is never dropped just
+            // because a different run is selected.
+            queueBoardAll: { runs: [], total: 0, active: 0 },
             drawerDragging: false,
             tabs: [
                 {
@@ -1289,9 +1298,14 @@ export default {
        
       },
       deleteEntry(sample){
+        // Optimistic UI: drop the row locally *immediately* so the user can keep
+        // clicking without waiting on the backend round-trip (deleteReports +
+        // run-file write took 3-5s per click). The server still echoes
+        // "deletedSample", which is now a harmless no-op (row already gone).
+        this.deletesample(sample)
         try{
           this.sendMessage({
-                type: "deleteEntry", 
+                type: "deleteEntry",
                 sample: sample,
                 run: this.selectedRun,
                 "message" : `Delete Entry ${sample} `
@@ -1299,10 +1313,25 @@ export default {
           );
         } catch (err){
           console.error(err)
-        } 
-        // finally {
-        //   this.deletesample(sample)
-        // }
+        }
+      },
+      // Batch-delete every sample in a run/group in ONE round-trip. Removes the
+      // rows locally up front, then asks the backend to delete + persist once
+      // (instead of N separate messages each rewriting the run file).
+      deleteEntries(samples){
+        if (!Array.isArray(samples) || !samples.length) return
+        samples.forEach((s) => this.deletesample(s))
+        try{
+          this.sendMessage({
+                type: "deleteEntries",
+                samples: samples,
+                run: this.selectedRun,
+                "message" : `Delete ${samples.length} entries`
+            }
+          );
+        } catch (err){
+          console.error(err)
+        }
       },
       saveRun(){
         this.sendMessage({
@@ -1693,6 +1722,8 @@ export default {
               $this.sendMessage({ type: "getHealth" })
               // Resync GPU preference on every (re)connect, like the emits above.
               $this.socket.emit("gpu", {type: "gpu", gpu: $this.gpu })
+              // Refresh the all-runs queue summary on every (re)connect too.
+              $this.sendMessage({ type: "getQueueBoardAll" })
 
               // IMPORTANT: only bind the message listeners ONCE. Previously every
               // 'connect' (including every reconnect after a blip) re-ran all the
@@ -1775,6 +1806,9 @@ export default {
               })
               $this.socket.on("sendPaths2", (e)=>{
                 this.pathOptions2 = e.data
+              })
+              $this.socket.on("autodetectR2Result", (e)=>{
+                this.autodetectR2Result = e
               })
               $this.socket.on("queueJob", (e)=>{
                 try {
@@ -1928,7 +1962,12 @@ export default {
               })
               $this.socket.on('queueLength', (e)=>{
                 this.queueLength = e.data
-              }) 
+              })
+              // ALL-runs queue summary (counts only, every run, not just the one
+              // currently selected) so the queue board can show the full picture.
+              $this.socket.on('queueBoardAll', (e)=>{
+                this.queueBoardAll = e
+              })
               $this.socket.on('logs', (e)=>{
                 this.logs.push(e.data)
                 const lasts = this.logs.slice(-100);

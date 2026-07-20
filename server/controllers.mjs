@@ -81,6 +81,117 @@ export function searchPath(dir, fileallowed) {
         });
     });
 }
+// ---------------------------------------------------------------------------
+// Paired-read (R1/R2) helpers
+//
+// Sequencers commonly emit two files per sample that differ only by an R1/R2
+// marker, e.g. "2132132_R1.fastq.gz" + "2132132_R2.fastq.gz". These helpers let
+// the UI (a) auto-detect the R2 mate for a chosen R1 file and (b) scan a whole
+// directory and pair every R1 with its R2 in one shot. The markers are
+// user-definable (defaults "_R1"/"_R2") so schemes like ".R1."/".R2." or
+// "_1"/"_2" work too.
+// ---------------------------------------------------------------------------
+const READ_EXTS = ['.fastq.gz', '.fq.gz', '.fastq', '.fq'];
+
+// Strip a known fastq extension, returning [stem, ext] ('' ext if none matched).
+export function splitReadExt(basename){
+    const lower = String(basename || '').toLowerCase();
+    for (const ext of READ_EXTS){
+        if (lower.endsWith(ext)){
+            return [basename.slice(0, basename.length - ext.length), basename.slice(basename.length - ext.length)];
+        }
+    }
+    return [basename, ''];
+}
+
+// Replace the LAST occurrence of the R1 marker with the R2 marker in a basename.
+// Returns null when the marker isn't present.
+export function swapReadMarker(basename, r1Marker, r2Marker){
+    if (!r1Marker) return null;
+    const i = String(basename).lastIndexOf(r1Marker);
+    if (i === -1) return null;
+    return basename.slice(0, i) + r2Marker + basename.slice(i + r1Marker.length);
+}
+
+// Derive the shared sample name from an R1 basename: drop the fastq extension,
+// then remove the R1 marker. "2132132_R1.fastq.gz" + "_R1" -> "2132132".
+export function deriveSampleName(basename, r1Marker){
+    let [stem] = splitReadExt(basename);
+    if (r1Marker){
+        let i = stem.lastIndexOf(r1Marker);
+        let markerLen = r1Marker.length;
+        if (i === -1){
+            // The marker's own separator may have been absorbed by the extension
+            // (e.g. ".R1." against a stem ending "...R1"). Retry with trailing
+            // separators trimmed off the marker so the name still comes out clean.
+            const alt = r1Marker.replace(/[._-]+$/, '');
+            if (alt && alt !== r1Marker){
+                i = stem.lastIndexOf(alt);
+                markerLen = alt.length;
+            }
+        }
+        if (i !== -1){
+            stem = stem.slice(0, i) + stem.slice(i + markerLen);
+        }
+    }
+    // trim a trailing separator left behind (e.g. "sample_" -> "sample")
+    const trimmed = stem.replace(/[._-]+$/, '');
+    return trimmed || stem;
+}
+
+// Given an absolute R1 file path, compute its R2 mate in the SAME directory and
+// report whether that mate exists on disk.
+export function autodetectMate(r1Path, r1Marker = '_R1', r2Marker = '_R2'){
+    try{
+        if (!r1Path) return { found: false, reason: 'no-r1' };
+        const dir = path.dirname(r1Path);
+        const base = path.basename(r1Path);
+        const mateBase = swapReadMarker(base, r1Marker, r2Marker);
+        if (!mateBase || mateBase === base){
+            return { found: false, reason: 'no-marker', r1: base };
+        }
+        const matePath = path.join(dir, mateBase);
+        const exists = fs.existsSync(matePath);
+        return { found: exists, path_2: exists ? matePath : null, tried: matePath, mateBase };
+    } catch (err){
+        return { found: false, reason: 'error', error: String(err) };
+    }
+}
+
+// Scan a directory and pair every R1 file with its R2 mate.
+// Returns { pairs: [{ sample, path_1, path_2, r2Found }], unpaired: [basename...] }.
+// R1 files with no mate are still returned (path_2 null, r2Found false) so they
+// can be added single-ended, and are also listed in `unpaired` for a warning.
+export function findReadPairs(dir, r1Marker = '_R1', r2Marker = '_R2'){
+    const pairs = [];
+    const unpaired = [];
+    if (!dir) return { pairs, unpaired };
+    let entries = [];
+    try{
+        entries = fs.readdirSync(dir).filter((name) => splitReadExt(name)[1] !== '');
+    } catch (err){
+        logger.error(`${err} reading directory for read pairs ${dir}`);
+        return { pairs, unpaired, error: String(err) };
+    }
+    const present = new Set(entries);
+    entries.forEach((name) => {
+        // Only start from R1 files so each pair is emitted once.
+        if (!r1Marker || name.indexOf(r1Marker) === -1) return;
+        const mateBase = swapReadMarker(name, r1Marker, r2Marker);
+        const sample = deriveSampleName(name, r1Marker);
+        const path_1 = path.join(dir, name);
+        if (mateBase && mateBase !== name && present.has(mateBase)){
+            pairs.push({ sample, path_1, path_2: path.join(dir, mateBase), r2Found: true });
+        } else {
+            pairs.push({ sample, path_1, path_2: null, r2Found: false });
+            unpaired.push(name);
+        }
+    });
+    const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    pairs.sort((a, b) => coll.compare(a.sample, b.sample));
+    return { pairs, unpaired };
+}
+
 export function getReportName(path_1, outpath, illumina){
     try{
         let path_reports = removeExtension(path_1)
@@ -101,12 +212,27 @@ export function getReportName(path_1, outpath, illumina){
 }
 export function rmDir(directoryPath){
     return new Promise((resolve, reject)=>{
-        fs.rm(directoryPath, { recursive: true }, (err)=>{
+        if (!directoryPath){
+            resolve()
+            return
+        }
+        // force:true makes this a no-op (instead of an ENOENT rejection) when the
+        // directory never existed (e.g. a sample that never received any reads),
+        // so callers can always await this without extra existence checks.
+        fs.rm(directoryPath, { recursive: true, force: true }, (err)=>{
             if (err){
+                logger.error(`${err} error removing directory ${directoryPath}`)
                 reject(err)
-            } else {
-                resolve()
+                return
             }
+            // Verify the removal actually took (defensive: surfaces permission /
+            // busy-file failures that fs.rm can silently swallow on some platforms).
+            fs.stat(directoryPath, (statErr)=>{
+                if (!statErr){
+                    logger.error(`Directory ${directoryPath} still exists after rmDir`)
+                }
+                resolve()
+            })
         })
     })
 }
@@ -115,15 +241,20 @@ export function rmDir(directoryPath){
 
 export function rmFile(filepath){
     return new Promise((resolve, reject)=>{
+        if (!filepath){
+            resolve()
+            return
+        }
         fs.stat(filepath, (err)=>{
             if (!err){
-                fs.unlink(filepath, (err, data)=>{
+                fs.unlink(filepath, (err)=>{
                     if (err){
+                        logger.error(`${err} error removing file ${filepath}`)
                         reject(err)
                     } else {
                         resolve()
                     }
-                })  
+                })
             } else {
                 resolve()
             }

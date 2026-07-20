@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url'
 import {Barcoder} from "./barcoder.mjs"
 import { Downloader } from "./downloader.mjs"
 import { Run  } from "./run.mjs";
-import {  globFiles, getKrakenConfigDefault , openPath,  rmFile, resolveKrakenDbDirSync } from './controllers.mjs';
+import {  globFiles, getKrakenConfigDefault , openPath,  rmFile, rmDir, resolveKrakenDbDirSync } from './controllers.mjs';
 import fs from "fs"
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -634,6 +634,21 @@ export  class Orchestrator {
             logger.error(err)
         }
     }
+    async deleteEntries(run, samples){
+        try{
+            let index = this.runs.findIndex((r)=>{
+                return r.run == run
+            })
+            if (index != -1){
+                let r = this.runs[index]
+                await r.deleteSamples(samples)
+            }
+        }
+        catch (err){
+            logger.error("Error in batch-deleting samples from the run")
+            logger.error(err)
+        }
+    }
     async deleteRun(run){
         try{
             let index = this.runs.findIndex((r)=>{
@@ -641,6 +656,22 @@ export  class Orchestrator {
             })
             if (index != -1){
                 let r = this.runs[index]
+                // Cancel every in-flight/queued job and remove each sample's report
+                // directory from disk. Previously deleteRun only deleted the saved
+                // run JSON, leaving every sample's output folder (and any still-
+                // running/queued kraken2 jobs) orphaned on the filesystem.
+                try{
+                    await r.deleteSamples(Object.keys(r.samples))
+                } catch (err){
+                    logger.error(`${err} error deleting samples for run ${run}`)
+                }
+                // Belt-and-suspenders: remove the run's whole output directory too,
+                // in case any files exist there outside of a tracked sample folder.
+                try{
+                    if (r.outrun) await rmDir(r.outrun)
+                } catch (err){
+                    logger.error(`${err} error deleting run output directory ${r.outrun}`)
+                }
                 this.runs.splice(index, 1)
                 let outfile = r.filepath
                 await rmFile(outfile)
@@ -1066,6 +1097,17 @@ export  class Orchestrator {
             return { run, laneOrder: [], lanes: [], upNext: [] }
         }
     }
+    // Lightweight, ALL-runs summary (counts + rotation order only, no per-job
+    // status payloads) so the queue board can show what's queued across every
+    // run, not just whichever one is currently selected.
+    getQueueBoardAll(){
+        try{
+            return scheduler.getBoardAll()
+        } catch (err){
+            logger.error(`${err} error building all-runs queue board`)
+            return { runs: [], total: 0, active: 0 }
+        }
+    }
     setLaneOrder(run, samples){
         try{
             scheduler.setLaneOrder(run, samples)
@@ -1272,18 +1314,30 @@ export  class Orchestrator {
         logger.info("flushing queue, canceling job(s)")
         const $this = this
         try{
-            
-            // iterate through all runs and cancel all jobs
+            // Iterate through all runs and cancel all jobs. cancelAll() is async
+            // (it awaits each sample's cancel), so these MUST be awaited together
+            // before we clear the scheduler/PQueue below -- otherwise clear() can
+            // race ahead of the per-job cancellation work and jobs that were still
+            // mid-cancel never get their "cancelled" status set or broadcast.
+            const cancellations = []
             for (let [key, value] of Object.entries(this.runs)){
                 try{
-                    value.cancelAll()
+                    cancellations.push(Promise.resolve(value.cancelAll()))
                 } catch (err){
                     logger.error(`${err} error in canceling run ${key}`)
                 }
             }
+            await Promise.all(cancellations)
 
             try { scheduler.clear() } catch (e) { logger.error(`${e} clearing scheduler`) }
             await storage.queue.clear()
+
+            // Force out any buffered per-job/per-sample updates immediately instead
+            // of waiting on the next 400ms runUpdate tick, and reset the queue-length
+            // badge for every connected client right away -- this is what makes
+            // "Stop All Jobs" feel instant instead of appearing to do nothing.
+            try { flushThrottled() } catch (e) { logger.error(`${e} flushing throttled updates`) }
+            broadcastToAllActiveConnections('queueLength', { data: 0 })
 
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)

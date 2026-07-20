@@ -80,6 +80,7 @@ class RoundRobinScheduler {
 		else lane.pending.splice(at, 0, entry)
 		this.pump()
 		this.scheduleBoard(entry.runName)
+		this.scheduleGlobalBoard()
 	}
 
 	// Pull the next entry to run, honouring priority-front then round-robin.
@@ -130,6 +131,7 @@ class RoundRobinScheduler {
 					this.active -= 1
 					this.scheduleBoard(entry.runName)
 					this.emitLength()
+					this.scheduleGlobalBoard()
 					this.pump()
 				})
 		}
@@ -160,7 +162,7 @@ class RoundRobinScheduler {
 			const i = lane.pending.findIndex((e) => e.jobId === jobId)
 			if (i > -1) { runName = lane.runName; lane.pending.splice(i, 1); break }
 		}
-		if (!silent && runName) { this.scheduleBoard(runName); this.emitLength() }
+		if (!silent && runName) { this.scheduleBoard(runName); this.emitLength(); this.scheduleGlobalBoard() }
 	}
 
 	// --- live manipulation (driven by the queue board UI) --------------------
@@ -202,10 +204,18 @@ class RoundRobinScheduler {
 
 	clear(runName) {
 		if (!runName) {
+			// Remember which runs had lanes so their viewers get an immediate
+			// "empty" board pushed to them, instead of silently going stale until
+			// something else happens to trigger a rebuild.
+			const affectedRuns = new Set()
+			for (const lane of this.lanes.values()) affectedRuns.add(lane.runName)
 			this.lanes.clear()
 			this.laneOrder = []
 			this.priorityFront = []
 			this.lastServedKey = null
+			this.emitLength()
+			for (const r of affectedRuns) this.scheduleBoard(r)
+			this.scheduleGlobalBoard()
 			return
 		}
 		for (const [key, lane] of Array.from(this.lanes.entries())) {
@@ -215,6 +225,8 @@ class RoundRobinScheduler {
 		this.priorityFront = this.priorityFront.filter((e) => e.runName !== runName)
 		this.lastServedKey = null
 		this.scheduleBoard(runName)
+		this.emitLength()
+		this.scheduleGlobalBoard()
 	}
 
 	// --- board snapshot for the UI ------------------------------------------
@@ -277,6 +289,48 @@ class RoundRobinScheduler {
 		}, wait)
 		if (typeof timer.unref === 'function') timer.unref()
 		this._boardTimers.set(runName, timer)
+	}
+
+	// --- ALL-runs summary ----------------------------------------------------
+	//
+	// The per-run board (getBoard) carries full lane/upNext detail and is only
+	// ever pushed to clients actively viewing that run -- that scoping is what
+	// keeps a 1000-job run from flooding every other connection. But that also
+	// meant the queue board UI could only ever show the ONE selected run, even
+	// though jobs from every run share the same round-robin scheduler.
+	//
+	// getBoardAll() is the cheap counterpart: just counts (pending/lanes) per
+	// run plus a grand total, no per-job payloads, so it's safe to broadcast to
+	// every connected client regardless of which run they're looking at.
+	getBoardAll() {
+		const runs = new Map()
+		const bump = (runName, by) => {
+			if (!runName) return
+			let r = runs.get(runName)
+			if (!r) { r = { run: runName, pending: 0, lanes: 0 }; runs.set(runName, r) }
+			r.pending += by
+		}
+		for (const lane of this.lanes.values()) {
+			bump(lane.runName, lane.pending.length)
+			const r = runs.get(lane.runName)
+			if (r) r.lanes += 1
+		}
+		for (const e of this.priorityFront) bump(e.runName, 1)
+		return {
+			runs: Array.from(runs.values()),
+			total: this.totalPending() + this.active,
+			active: this.active
+		}
+	}
+
+	// Throttled broadcast of the ALL-runs summary to every connected client
+	// (not run-scoped -- it's small and everyone benefits from seeing it).
+	scheduleGlobalBoard(wait = 300) {
+		try {
+			broadcastThrottled('queueBoardAll', this.getBoardAll(), 'queueBoardAll', wait)
+		} catch (err) {
+			logger.error(`${err} error scheduling global queue board`)
+		}
 	}
 }
 

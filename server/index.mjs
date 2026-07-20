@@ -3,7 +3,7 @@ import path from 'path'
 import {logger} from './logger.js'
 import http from 'http'
 import { fileURLToPath } from 'url'
-import { searchPath, openPath } from './controllers.mjs'
+import { searchPath, openPath, autodetectMate } from './controllers.mjs'
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import express from 'express'
@@ -289,6 +289,15 @@ io.on('connection', (ws) => {
       logger.error(err)
     }
   })
+  // ALL-runs queue summary (counts only) so the queue board can show every
+  // run's queue depth, not just whichever run happens to be selected.
+  ws.on('getQueueBoardAll', () => {
+    try {
+      ws.emit('queueBoardAll', storage.orchestrator.getQueueBoardAll())
+    } catch (err) {
+      logger.error(err)
+    }
+  })
   // Drag-reorder the barcode/sample rotation (tier-1 order).
   ws.on('setLaneOrder', (msg) => {
     try {
@@ -345,6 +354,17 @@ io.on('connection', (ws) => {
     } catch(err){
         logger.error(err)
     } 
+  })
+  // Given a chosen R1 file, find its R2 mate in the same directory (single-sample
+  // "auto-detect" button). Returns { found, path_2, tried, reason } to the client.
+  ws.on("autodetectR2", async (msg) => {
+    try{
+        let res = autodetectMate(msg.path_1, msg.r1 || '_R1', msg.r2 || '_R2')
+        ws.emit("autodetectR2Result", res)
+    } catch(err){
+        logger.error(err)
+        ws.emit("autodetectR2Result", { found: false, reason: 'error', error: String(err) })
+    }
   })
   ws.on("openPath", async (msg) => {
     try{
@@ -429,6 +449,16 @@ io.on('connection', (ws) => {
         let run = msg.run
         logger.info(`Deleting entry ${sample} from run ${run}`)
         await storage.orchestrator.deleteEntry(run, sample)
+    } catch(err){
+        logger.error(err)
+    }
+  })
+  ws.on("deleteEntries", async (msg) => {
+    try{
+        let samples = Array.isArray(msg.samples) ? msg.samples : []
+        let run = msg.run
+        logger.info(`Batch deleting ${samples.length} entries from run ${run}`)
+        await storage.orchestrator.deleteEntries(run, samples)
     } catch(err){
         logger.error(err)
     }

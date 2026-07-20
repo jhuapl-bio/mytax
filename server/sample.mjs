@@ -521,41 +521,62 @@ export  class Sample {
             return hasIndex ? null : []
         }
     }
-    cancel(index){ 
+    cancel(index){
         const $this = this
-        if (index >=0 && index){
+        // NOTE: this used to be `if (index >= 0 && index)`, which treats index 0
+        // (the very first file of a sample) as falsy and silently fell through to
+        // the "cancel everything" branch below -- cancelling a single job at
+        // index 0 nuked the whole sample's queue instead. Compare against
+        // null/undefined explicitly so 0 is a valid single-job index.
+        if (index !== null && index !== undefined && index >= 0){
             try{
                 // drop it from the round-robin buffer if it hasn't started yet
                 try { scheduler.removeJob(`${this.run}::${this.sample}::${index}`) } catch (e) { logger.error(`${e} scheduler removeJob`) }
-                let job = this.queueList[index].job
+                let entry = this.queueList[index]
+                let job = entry && entry.job
+                if (!job){
+                    logger.error(`No job found at index ${index} for sample ${this.sample}`)
+                    return
+                }
                 logger.info(`${job.name} stopping job at index ${index} `)
                 if (job.controller && typeof job.controller.abort === 'function') job.controller.abort()
                 job.status.cancelled = true
+                job.status.running = false
                 job.stop()
+                // Broadcast immediately so the queue board / job panel flips this
+                // dot to "cancelled" right away instead of waiting on some other
+                // event to happen to trigger a refresh.
+                queueJobUpdate(this.run, this.sample, index, { status: job.status })
             } catch (err){
                 logger.error(`${err}, error in stopping job`)
                 throw err
+            } finally {
+                this.sendData()
             }
         } else {
             logger.info(`stopping All jobs  for sample ${this.sample} `)
             // get storage.queue length and iterate through all jobs and stop them
- 
-            if (this.queueList.length > 0) { 
+            if (this.queueList.length > 0) {
                 this.fullstop = true
-                this.queueList.map((f, i)=>{
+                this.queueList.forEach((f)=>{
                     try{
-                        // let job = $this.queueList[i].job
                         let job = f.job
+                        if (!job) return
                         logger.info(`${job.name} stopping job for full sample #: ${job.jobnumber}`)
                         // remove any not-yet-started copy from the round-robin buffer
                         try { scheduler.removeJob(`${this.run}::${this.sample}::${job.index}`) } catch (e) { logger.error(`${e} scheduler removeJob`) }
                         if (job.controller && typeof job.controller.abort === 'function') job.controller.abort()
                         job.status.cancelled = true
+                        job.status.running = false
                         job.stop()
+                        queueJobUpdate(this.run, this.sample, job.index, { status: job.status })
                     } catch (err){
                         logger.error(`${err}, error in stopping job`)
                     }
                 })
+                // one coalesced sample-level refresh for the whole batch, instead
+                // of relying on a later, unrelated event to push the update.
+                this.sendData()
             }
         }
     }

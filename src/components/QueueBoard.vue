@@ -22,6 +22,9 @@
       <div class="qb-title">
         <v-icon left color="white">mdi-rotate-3d-variant</v-icon>
         Live queue &mdash; round-robin across {{ rows.length }} {{ rows.length === 1 ? 'sample' : 'samples' }}
+        <span class="qb-title-all" v-if="boardAll && boardAll.total">
+          &middot; {{ boardAll.total }} job{{ boardAll.total === 1 ? '' : 's' }} queued across all runs
+        </span>
       </div>
       <div class="qb-counts">
         <span class="qb-chip running" v-if="totals.running">{{ totals.running }} running</span>
@@ -39,61 +42,117 @@
     </div>
 
     <div class="qb-board">
-      <div
-        v-for="(row, ri) in rows"
-        :key="row.sample"
-        class="qb-row"
-        :class="{ 'qb-row--drag': dragIndex === ri, 'qb-row--over': overIndex === ri }"
-        draggable="true"
-        @dragstart="onDragStart(ri, $event)"
-        @dragover.prevent="onDragOver(ri)"
-        @drop.prevent="onDrop(ri)"
-        @dragend="onDragEnd"
-      >
-        <div class="qb-anchor">
-          <div class="qb-handle" title="Drag to reorder rotation">
-            <v-icon small>mdi-drag</v-icon>
-          </div>
-          <div class="qb-label" :title="row.sample">
-            <span class="qb-rank">{{ ri + 1 }}</span>
-            {{ row.sample }}
-            <span class="qb-rowcount">{{ row.done }}/{{ row.dots.length }}</span>
-          </div>
+      <template v-for="group in groups">
+        <!-- run/group header: collapse toggle + aggregate counts + remove-all -->
+        <div
+          class="qb-group"
+          :class="{ 'qb-group--sel': group.name && group.name === selectedRun }"
+          :key="'g-' + group.key"
+          @click="toggleGroup(group.key)"
+        >
+          <v-icon small class="qb-group-caret">{{ isCollapsed(group.key) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+          <v-icon small class="qb-group-icon">{{ group.name ? 'mdi-folder-multiple-outline' : 'mdi-flask-outline' }}</v-icon>
+          <span class="qb-group-name">{{ group.name || 'Individual samples' }}</span>
+          <span class="qb-group-n">{{ group.rows.length }} {{ group.rows.length === 1 ? 'sample' : 'samples' }}</span>
+          <span class="qb-group-stats">
+            <span class="qb-chip running" v-if="group.running">{{ group.running }} running</span>
+            <span class="qb-chip queued" v-if="group.queued">{{ group.queued }} queued</span>
+            <span class="qb-chip error" v-if="group.error">{{ group.error }} err</span>
+            <span class="qb-chip done" v-if="group.done">{{ group.done }} done</span>
+          </span>
+          <v-spacer></v-spacer>
           <button
-            class="qb-rowrerun"
-            v-if="row.dots.length"
-            @click.stop="rerunSample(row.sample)"
-            @mouseenter="showTip($event, 'Rerun the entire sample (' + row.sample + ')')"
-            @mousemove="moveTip($event)"
-            @mouseleave="hideTip"
+            class="qb-group-removeall"
+            v-if="group.samples.length"
+            @click.stop="removeAllInGroup(group)"
+            title="Remove all samples in this run"
           >
-            <v-icon x-small>mdi-replay</v-icon>
+            <v-icon x-small left>mdi-delete-sweep</v-icon>Remove all
           </button>
         </div>
 
-        <div class="qb-line">
-          <div class="qb-track"></div>
-          <div class="qb-dots">
-            <button
-              v-for="dot in row.dots"
-              :key="dot.index"
-              class="qb-dot"
-              :class="[dot.state, { selected: isSelected(row.sample, dot.index) }]"
-              @click="selectDot(row.sample, dot)"
-              @mouseenter="showTip($event, dotTooltip(row.sample, dot))"
-              @mousemove="moveTip($event)"
-              @mouseleave="hideTip"
-            >
-              <span v-if="dot.state === 'running'" class="qb-dot-pulse"></span>
-            </button>
-            <span v-if="!row.dots.length" class="qb-empty">listening for reads&hellip;</span>
-          </div>
-        </div>
+        <!-- child sample rows (hidden when the group is collapsed) -->
+        <template v-if="!isCollapsed(group.key)">
+          <div
+            v-for="row in group.rows"
+            :key="row.sample"
+            class="qb-row"
+            :class="{ 'qb-row--drag': dragIndex === row._gindex, 'qb-row--over': overIndex === row._gindex }"
+            draggable="true"
+            @dragstart="onDragStart(row._gindex, $event)"
+            @dragover.prevent="onDragOver(row._gindex)"
+            @drop.prevent="onDrop(row._gindex)"
+            @dragend="onDragEnd"
+          >
+            <div class="qb-anchor">
+              <div class="qb-handle" title="Drag to reorder rotation">
+                <v-icon small>mdi-drag</v-icon>
+              </div>
+              <div class="qb-label" :title="row.sample">
+                <span class="qb-rank">{{ row._gindex + 1 }}</span>
+                {{ row.sample }}
+                <span class="qb-rowcount">{{ row.done }}/{{ row.dots.length }}</span>
+              </div>
+              <button
+                class="qb-rowrerun"
+                v-if="row.dots.length"
+                @click.stop="rerunSample(row.sample)"
+                @mouseenter="showTip($event, 'Rerun the entire sample (' + row.sample + ')')"
+                @mousemove="moveTip($event)"
+                @mouseleave="hideTip"
+              >
+                <v-icon x-small>mdi-replay</v-icon>
+              </button>
+            </div>
 
-      </div>
+            <div class="qb-line">
+              <div class="qb-track"></div>
+              <div class="qb-dots">
+                <button
+                  v-for="dot in row.dots"
+                  :key="dot.index"
+                  class="qb-dot"
+                  :class="[dot.state, { selected: isSelected(row.sample, dot.index) }]"
+                  @click="selectDot(row.sample, dot)"
+                  @mouseenter="showTip($event, dotTooltip(row.sample, dot))"
+                  @mousemove="moveTip($event)"
+                  @mouseleave="hideTip"
+                >
+                  <span v-if="dot.state === 'running'" class="qb-dot-pulse"></span>
+                </button>
+                <span v-if="!row.dots.length" class="qb-empty">listening for reads&hellip;</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </template>
 
       <div v-if="!rows.length" class="qb-none">
         No samples in the queue yet. Add a barcode run or samples to begin.
+      </div>
+
+      <!-- Other runs' queues. Detailed per-file dots only exist for the run the
+           app has currently loaded (selectedRun) -- pulling full job detail for
+           every run at once is what used to flood the socket with 1000s of job
+           frames. This section instead shows the lightweight ALL-runs counts
+           (queueBoardAll) so queued work in other runs is at least visible;
+           clicking one switches to it and loads its full detail. -->
+      <div v-if="otherRuns.length" class="qb-otherruns">
+        <div class="qb-otherruns-head">Other runs with queued jobs</div>
+        <div
+          v-for="r in otherRuns"
+          :key="'other-' + r.run"
+          class="qb-otherrun-row"
+          @click="$emit('select-run', r.run)"
+          title="Switch to this run to see full job detail"
+        >
+          <v-icon small class="qb-group-icon">mdi-folder-multiple-outline</v-icon>
+          <span class="qb-group-name">{{ r.run }}</span>
+          <span class="qb-group-n">{{ r.lanes }} {{ r.lanes === 1 ? 'sample' : 'samples' }}</span>
+          <v-spacer></v-spacer>
+          <span class="qb-chip queued">{{ r.pending }} queued</span>
+          <v-icon small class="qb-otherrun-arrow">mdi-chevron-right</v-icon>
+        </div>
       </div>
     </div>
 
@@ -159,6 +218,8 @@ export default {
     queueList: { type: Object, default: () => ({}) },
     // server round-robin snapshot: { laneOrder:[sample], lanes:[{sample,pending:[idx]}], upNext, total }
     board: { type: Object, default: () => ({}) },
+    // ALL-runs counts-only summary: { runs:[{run,pending,lanes}], total, active }
+    boardAll: { type: Object, default: () => ({ runs: [], total: 0, active: 0 }) },
     selectedRun: { type: [String, Number], default: null }
   },
   data() {
@@ -171,7 +232,10 @@ export default {
       tip: { show: false, x: 0, y: 0, text: '' },
       // local rotation order (sample names) so dragging feels instant; synced
       // from the server board whenever it changes.
-      laneOrder: []
+      laneOrder: [],
+      // per-group collapsed state (groupKey -> true). Non-selected runs start
+      // collapsed so the board stays readable across many barcode runs.
+      collapsedGroups: {}
     }
   },
   watch: {
@@ -180,7 +244,9 @@ export default {
       handler(val) {
         if (Array.isArray(val) && val.length) this.laneOrder = val.slice()
       }
-    }
+    },
+    groups: { immediate: true, handler() { this.syncCollapsed(false) } },
+    selectedRun() { this.syncCollapsed(true) }
   },
   computed: {
     // every sample we know about, ordered by the rotation (laneOrder) first,
@@ -211,6 +277,35 @@ export default {
         return { sample, dots, done }
       })
     },
+    // Bucket rows into their parent run/group (the "<group>__<label>" id prefix),
+    // preserving the rotation order. Each row keeps its global index so drag
+    // reordering still maps back into the flat laneOrder.
+    groups() {
+      const SEP = '__'
+      const order = []
+      const map = new Map()
+      this.rows.forEach((row, gi) => {
+        const i = row.sample ? row.sample.indexOf(SEP) : -1
+        const name = i > 0 ? row.sample.slice(0, i) : null
+        const key = name || '__individual__'
+        if (!map.has(key)) {
+          const g = { key, name, rows: [], samples: [], total: 0, done: 0, running: 0, queued: 0, error: 0 }
+          map.set(key, g); order.push(g)
+        }
+        const g = map.get(key)
+        g.rows.push(Object.assign({}, row, { _gindex: gi }))
+        g.samples.push(row.sample)
+        row.dots.forEach((d) => {
+          g.total++
+          if (d.state === 'running') g.running++
+          else if (d.state === 'error') g.error++
+          else if (d.state === 'done' || d.state === 'historical') g.done++
+          else if (d.state === 'cancelled') { /* ignore */ }
+          else g.queued++
+        })
+      })
+      return order
+    },
     totals() {
       const c = { running: 0, queued: 0, done: 0, error: 0 }
       this.rows.forEach((r) => r.dots.forEach((d) => {
@@ -220,6 +315,14 @@ export default {
         else c.queued++
       }))
       return c
+    },
+    // Other runs (besides the one currently loaded) that have jobs sitting in
+    // the scheduler, from the lightweight ALL-runs summary.
+    otherRuns() {
+      const all = (this.boardAll && this.boardAll.runs) || []
+      return all
+        .filter((r) => r && r.run !== this.selectedRun && r.pending > 0)
+        .sort((a, b) => b.pending - a.pending)
     },
     // live dot for the current selection, re-read from rows so logs/state stay
     // fresh as the backend streams updates for a running job.
@@ -290,6 +393,31 @@ export default {
       this.hideTip()
       this.$emit('rerun', { sample, index: -1 })
     },
+    // ---- group collapse ----
+    isCollapsed(key) { return !!this.collapsedGroups[key] },
+    toggleGroup(key) { this.$set(this.collapsedGroups, key, !this.collapsedGroups[key]) },
+    // Decide which groups are open: the one matching the selected run stays open
+    // and the rest collapse. If nothing matches the selected run, the first group
+    // is left open so the board is never entirely empty. `force` re-applies the
+    // rule even to groups the user has already toggled (used when selectedRun
+    // changes); otherwise only newly-seen groups get a default.
+    syncCollapsed(force) {
+      const groups = this.groups
+      if (!groups.length) return
+      const anyMatch = groups.some((g) => g.name && g.name === this.selectedRun)
+      groups.forEach((g, i) => {
+        if (force || !(g.key in this.collapsedGroups)) {
+          const expanded = anyMatch ? (g.name === this.selectedRun) : (i === 0)
+          this.$set(this.collapsedGroups, g.key, !expanded)
+        }
+      })
+    },
+    // Ask the host to remove every sample in this run (host shows the confirm
+    // dialog + batches the delete).
+    removeAllInGroup(group) {
+      this.hideTip()
+      this.$emit('remove-all-samples', { run: group.name, samples: group.samples.slice() })
+    },
     // ---- floating cursor tooltip ----
     showTip(ev, text) {
       this.tip = { show: true, text, x: ev.clientX, y: ev.clientY }
@@ -353,6 +481,26 @@ export default {
 }
 .qb-row:hover { background:#16222f; }
 .qb-row--drag { opacity:.5; }
+/* run/group header */
+.qb-group {
+  position:sticky; left:0; z-index:11;
+  display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+  padding:8px 10px; margin:6px 0 2px; border-radius:8px;
+  background:#16263a; border:1px solid #21344a; min-width:max-content;
+}
+.qb-group:hover { background:#1b2f47; }
+.qb-group--sel { border-color:#3b82f6; box-shadow:inset 3px 0 0 #3b82f6; }
+.qb-group-caret, .qb-group-icon { color:#9fb3c8; }
+.qb-group-name { font-weight:700; font-size:.9rem; color:#e6edf3; }
+.qb-group-n { color:#7d93a8; font-size:.75rem; }
+.qb-group-stats { display:flex; gap:5px; margin-left:4px; }
+.qb-group-removeall {
+  display:flex; align-items:center; gap:2px; flex:0 0 auto;
+  background:#3a1d1d; color:#fca5a5; border:1px solid #6b2b2b; border-radius:7px;
+  padding:3px 9px; font-size:.74rem; font-weight:600; cursor:pointer;
+  transition:background .12s ease, color .12s ease, border-color .12s ease;
+}
+.qb-group-removeall:hover { background:#dc2626; color:#fff; border-color:#dc2626; }
 .qb-row--over { background:#1c3147; outline:1px dashed #3b82f6; }
 /* sticky left anchor: handle + label + rerun button stay fixed while dots scroll */
 .qb-anchor {
@@ -438,6 +586,19 @@ export default {
 
 .qb-empty { color:#64788d; font-size:.76rem; font-style:italic; z-index:1; }
 .qb-none { text-align:center; color:#7d93a8; padding:40px; }
+.qb-title-all { font-size:.78rem; font-weight:500; color:#9fc4e6; margin-left:6px; }
+
+/* ---- other runs (counts-only) section ---- */
+.qb-otherruns { margin-top:14px; padding-top:10px; border-top:1px solid #1f2f44; }
+.qb-otherruns-head { font-size:.72rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:#7d93a8; padding:0 10px 6px; }
+.qb-otherrun-row {
+  display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+  padding:8px 10px; margin:2px 0; border-radius:8px;
+  background:#111d2b; border:1px solid #1f2f44; min-width:max-content;
+  transition:background .12s ease, border-color .12s ease;
+}
+.qb-otherrun-row:hover { background:#16263a; border-color:#3b82f6; }
+.qb-otherrun-arrow { color:#67809a; }
 
 /* selected-dot dock (logs panel stacked above the action bar) */
 .qb-dock { position:absolute; left:0; right:0; bottom:0; display:flex; flex-direction:column; }
