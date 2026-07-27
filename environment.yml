@@ -15,6 +15,13 @@ dependencies:
   - gawk=5.1.0
   - kraken2=2.1.2
   - krakentools=1.2
+  # Optional per-sample preprocessing / alternative classifiers, selectable in
+  # the samplesheet: fastp (low-quality read filtering), minimap2 (reference
+  # alignment) and bracken (abundance re-estimation on top of kraken2).
+  - fastp
+  - minimap2
+  - samtools
+  - bracken
   - make=4.3
   - ncurses=6.3
   - nodejs=17.4.0
@@ -22,4 +29,3 @@ dependencies:
   - pandas=1.4.1
   - pip=22.0.4
   - python=3.8.12
-

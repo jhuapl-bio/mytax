@@ -3,7 +3,7 @@ import path from 'path'
 import {logger} from './logger.js'
 import http from 'http'
 import { fileURLToPath } from 'url'
-import { searchPath, openPath, autodetectMate } from './controllers.mjs'
+import { searchPath, openPath, autodetectMate, browsePath, filterReferencePaths } from './controllers.mjs'
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import express from 'express'
@@ -347,13 +347,34 @@ io.on('connection', (ws) => {
         logger.error(err)
     } 
   })
-  ws.on("searchPathDb", async (msg) => { 
+  ws.on("searchPathDb", async (msg) => {
     try{
         let path_1 = await searchPath(msg.value, false)
         ws.emit("sendPathsDb", { data: path_1 });
     } catch(err){
         logger.error(err)
-    } 
+    }
+  })
+  // minimap2 reference typeahead: return sub-directories + FASTA/MMI files so a
+  // fasta reference is actually selectable (searchPathDb only lists directories).
+  ws.on("searchPathRef", async (msg) => {
+    try{
+        let matches = await searchPath(msg.value, true)
+        ws.emit("sendPathsRef", { data: filterReferencePaths(matches) });
+    } catch(err){
+        logger.error(err)
+    }
+  })
+  // Native OS file/folder picker so users can point-and-click an input instead
+  // of typing it. `target` is echoed back so the client knows which field to fill.
+  ws.on("browsePath", async (msg) => {
+    try{
+        const res = await browsePath(msg && msg.kind)
+        ws.emit("browsePathResult", { target: msg && msg.target, kind: msg && msg.kind, ...res });
+    } catch(err){
+        logger.error(err)
+        ws.emit("browsePathResult", { target: msg && msg.target, error: String(err) });
+    }
   })
   // Given a chosen R1 file, find its R2 mate in the same directory (single-sample
   // "auto-detect" button). Returns { found, path_2, tried, reason } to the client.

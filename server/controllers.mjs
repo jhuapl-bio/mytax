@@ -311,6 +311,59 @@ export function openPath(directoryPath) {
         }
     })
 }
+// ---------------------------------------------------------------------------
+// browsePath(kind)
+//
+// Pop the OS-native file/folder chooser on the machine running the backend so a
+// user can point-and-click an input instead of typing a path. macOS uses
+// osascript (`choose file` / `choose folder`); Linux uses zenity. Resolves to
+// { path } on success, { cancelled: true } if the user dismissed the dialog, or
+// { error } if no dialog tool is available. Never rejects, so the websocket
+// handler can always emit a clean result.
+// ---------------------------------------------------------------------------
+export function browsePath(kind = 'file'){
+    return new Promise((resolve) => {
+        const wantDir = kind === 'directory'
+        const isDarwin = process.platform === 'darwin'
+        let cmd
+        if (isDarwin){
+            const chooser = wantDir ? 'choose folder' : 'choose file'
+            cmd = `osascript -e 'POSIX path of (${chooser} with prompt "Select a ${wantDir ? 'folder' : 'file'}")'`
+        } else {
+            const flag = wantDir ? '--directory' : ''
+            cmd = `zenity --file-selection ${flag} --title="Select a ${wantDir ? 'folder' : 'file'}"`
+        }
+        try {
+            exec(cmd, (err, stdout, stderr) => {
+                if (err){
+                    // osascript returns -128 and zenity exits 1 when the user cancels.
+                    const msg = String(stderr || err)
+                    const cancelled = err.code === 1 || /-128|cancel/i.test(msg)
+                    resolve({ cancelled, error: cancelled ? null : msg })
+                    return
+                }
+                const p = String(stdout || '').trim()
+                resolve(p ? { path: p } : { cancelled: true })
+            })
+        } catch (e){
+            resolve({ cancelled: false, error: String(e) })
+        }
+    })
+}
+
+// Reference-file suggestions for minimap2: keep sub-directories (so the user can
+// keep navigating) plus FASTA/MMI reference files; drop everything else. Used by
+// the "searchPathRef" typeahead so the minimap2 custom-path box lists fasta files
+// instead of only kraken2 database directories.
+export function filterReferencePaths(matches){
+    const exts = ['.fasta', '.fa', '.fna', '.fasta.gz', '.fa.gz', '.fna.gz', '.mmi']
+    return (matches || []).filter((m) => {
+        if (m.endsWith('/')) return true            // directories (glob marks with trailing '/')
+        const lower = m.toLowerCase()
+        return exts.some((e) => lower.endsWith(e))
+    })
+}
+
 export async function writeRun(filepath, config){
     try{
         // set a configuration with run name, smaplesheet, and the bundle config information in it as a json

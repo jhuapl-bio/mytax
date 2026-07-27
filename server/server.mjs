@@ -105,6 +105,39 @@ export  class Orchestrator {
                 fullpath: path.join(this.databasespath, "16S_RDP_k2db")
             },
 
+            // ---- minimap2 reference databases (FASTA / MMI) -----------------
+            // Unlike kraken2 (which needs a built index directory), minimap2
+            // aligns against a nucleotide reference: a single FASTA/MMI file,
+            // optionally gzipped (minimap2 reads .gz directly). These are pulled
+            // to the SAME databases directory as the kraken2 sets and are NOT
+            // extracted (decompress:false). Users can also point a sample at any
+            // local FASTA via a custom path in the samplesheet dialog. Drop a
+            // `<ref>.seqid2taxid.map` beside the file to get real NCBI taxids in
+            // the generated report (otherwise deterministic synthetic ids are used).
+            {
+                url: "https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.1.1.genomic.fna.gz",
+                decompress: false,
+                type: 'minimap2',
+                final: 'viral.1.1.genomic.fna.gz',
+                key: 'minimap2_refseq_viral',
+                fullpath: path.join(this.databasespath, "viral.1.1.genomic.fna.gz")
+            },
+
+            // ---- NCBI taxonomy dump (nodes.dmp / names.dmp) -----------------
+            // Not a classifier database: it lets the minimap2 report converter
+            // build full taxonomic lineages (so the hierarchy / heatmap / sunburst
+            // views work) from a reference's seqid2taxid.map. Auto-pulled to
+            // databases/taxdump/ the same way as the kraken2 sets, and hidden from
+            // the per-sample classifier selectors (filtered out client-side).
+            {
+                url: "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz",
+                decompress: true,
+                type: 'taxdump',
+                final: 'taxdump',
+                key: 'ncbi_taxdump',
+                fullpath: path.join(this.databasespath, "taxdump")
+            },
+
             // Add other databases here
         ];
         this.defaultLocation = ""
@@ -234,9 +267,60 @@ export  class Orchestrator {
         }
         return bytes
     }
+    // minimap2 references are single files (not kraken2 index directories), so
+    // presence == the file exists on disk and size == the file's own size.
+    checkFileDatabase(value){
+        let filePath = value.fullpath || path.join(this.databasespath, value.final)
+        try{
+            if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()){
+                value.exists = true
+                value.fullpath = filePath
+                value.size = this.formatSize(fs.statSync(filePath).size)
+            } else {
+                value.exists = false
+                value.size = 0
+            }
+        } catch (err){
+            value.exists = false
+            value.size = 0
+        }
+        return value
+    }
+    // The NCBI taxdump is a directory of *.dmp files; presence == nodes.dmp exists.
+    checkTaxdumpDatabase(value){
+        const dir = value.fullpath || path.join(this.databasespath, value.final)
+        try{
+            if (fs.existsSync(path.join(dir, 'nodes.dmp'))){
+                value.exists = true
+                value.fullpath = dir
+                let bytes = 0
+                for (const f of ['nodes.dmp', 'names.dmp']){
+                    try { bytes += fs.statSync(path.join(dir, f)).size } catch (e){ /* skip */ }
+                }
+                value.size = this.formatSize(bytes)
+            } else {
+                value.exists = false
+                value.size = 0
+            }
+        } catch (err){
+            value.exists = false
+            value.size = 0
+        }
+        return value
+    }
     async checkdatabases(){
         try{
             for (let [ key, value ] of Object.entries(this.databases)){
+                if (value.type === 'minimap2'){
+                    this.checkFileDatabase(value)
+                    broadcastToAllActiveConnections('databaseStatus', { status: value })
+                    continue
+                }
+                if (value.type === 'taxdump'){
+                    this.checkTaxdumpDatabase(value)
+                    broadcastToAllActiveConnections('databaseStatus', { status: value })
+                    continue
+                }
                 let topPath = this.resolveTopDir(value)
                 if (fs.existsSync(topPath)){
                     // Resolve to the actual kraken2 index dir (handles nested 16S sets).
@@ -272,6 +356,14 @@ export  class Orchestrator {
                 return
             }
             let database = this.databases[databaseIdx]
+            if (database.type === 'minimap2'){
+                this.checkFileDatabase(database)
+                return
+            }
+            if (database.type === 'taxdump'){
+                this.checkTaxdumpDatabase(database)
+                return
+            }
             // Pick the on-disk top dir (canonical name or a legacy alias).
             let topPath = this.resolveTopDir(database)
             let exists = fs.existsSync(topPath)
@@ -348,6 +440,10 @@ export  class Orchestrator {
         try{
             if (!db || !db.fullpath) return false
             if (!fs.existsSync(db.fullpath)) return false
+            // minimap2 references are single files: existence is enough.
+            if (db.type === 'minimap2') return fs.statSync(db.fullpath).isFile()
+            // taxdump is a directory containing nodes.dmp.
+            if (db.type === 'taxdump') return fs.existsSync(path.join(db.fullpath, 'nodes.dmp'))
             // Treat a non-zero `size` OR a present hash.k2d as "already downloaded".
             if (db.size && db.size !== 0) return true
             return fs.existsSync(path.join(db.fullpath, 'hash.k2d'))

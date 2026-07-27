@@ -52,16 +52,30 @@ export  class Sample {
         this.format = info.format ? info.format : 'file'
         this.pattern = info.pattern
         this.kits = info.kits
+        // Classification engine for this sample: 'kraken2' (default), 'minimap2'
+        // or 'bracken'. Chosen per-sample, editable after the fact, and re-runnable.
+        this.classifier = info.classifier ? info.classifier : 'kraken2'
+        // Optional fastp low-quality-read filtering before classification (default off).
+        this.fastp = info.fastp === true || info.fastp === 'true'
+        this.fastpConfig = info.fastpConfig || null
+        // FASTA/MMI reference used when classifier === 'minimap2'.
+        this.minimapDatabase = info.minimapDatabase || null
+        this.brackenConfig = info.brackenConfig || null
         this.samplesheet = {
             sample: this.sample,
             group: this.group,
             label: this.label,
             path_1: this.path_1,
             path_2: this.path_2,
-            kits: this.kits
+            kits: this.kits,
+            classifier: this.classifier,
+            fastp: this.fastp,
+            fastpConfig: this.fastpConfig,
+            minimapDatabase: this.minimapDatabase,
+            brackenConfig: this.brackenConfig
         }
         this.database = info.database
-    
+
     }
 
     async initialize(){
@@ -364,7 +378,16 @@ export  class Sample {
         return 
     }
     updateparams(classifier){
+        // Keep the live Classifier's sample view in sync with the latest sample
+        // settings so an edit to the database, chosen classifier, fastp toggle or
+        // minimap2 reference is picked up on the next (re)run without recreating
+        // the job.
         classifier.sample.database = this.database
+        classifier.sample.classifier = this.classifier
+        classifier.sample.fastp = this.fastp
+        classifier.sample.fastpConfig = this.fastpConfig
+        classifier.sample.minimapDatabase = this.minimapDatabase
+        classifier.sample.brackenConfig = this.brackenConfig
         classifier.generateKrakenCommand()
         return classifier
     }
@@ -386,21 +409,64 @@ export  class Sample {
             recombine: false, 
             reportPath: getReportName(filepath, this.outputdir),
             database: this.database,
+            classifier: this.classifier,
+            fastp: this.fastp,
+            fastpConfig: this.fastpConfig,
+            minimapDatabase: this.minimapDatabase,
+            brackenConfig: this.brackenConfig,
             outputdir: this.outputdir,
             gpu: process.env.GPU,
             priority: ( priority ? priority : 0)
 
         }
         let classifier = new Classifier(sampleObj)
-        classifier.ws = this.ws 
-        let msg;  
+        classifier.ws = this.ws
+        let msg;
 
         msg = this.defineQueueMessage(classifier)
         classifier.index = msg.index
-        this.updateStatusQueueList(classifier) 
+        // Skip re-queuing files that are already fully classified. On startup the
+        // sequencing watcher's initial scan re-emits EVERY existing FASTQ; without
+        // this, each already-done file is pushed through the scheduler/queue only to
+        // no-op inside start() -- which is what produced the misleading
+        // "+N queued in M other runs" counts for finished samples. If the per-file
+        // report AND the sample's combined full.report already exist on disk (and
+        // we're not force-overwriting), mark the job complete/historical and DON'T
+        // enqueue it. Genuine reruns pass overwrite=true and go through
+        // rerun()->defineQueueJob, so they still re-run as before.
+        if (!overwrite && this.isAlreadyClassified(filepath)){
+            classifier.status.running = false
+            classifier.status.waiting = false
+            classifier.status.historical = true
+            classifier.status.success = true
+            classifier.status.cancelled = false
+            // IMPORTANT: still record the job in queueRecords (keyed by its index)
+            // even though we didn't enqueue it. rerun() iterates queueRecords to
+            // re-queue work, so without this a reloaded, already-finished sample
+            // would have an empty queueRecords and the ▶ rerun button would do
+            // nothing ("... index == -1 RERUN 0").
+            this.queueRecords[classifier.index] = classifier
+            this.updateStatusQueueList(classifier)
+            try { classifier.sendJobStatus() } catch (err){ logger.error(`${err} sending historical job status for ${filepath}`) }
+            return classifier
+        }
+        this.updateStatusQueueList(classifier)
         logger.info(`CALLED DEFINE QUEUE JOB IN DEFINECLASSIFIER`)
         this.defineQueueJob(classifier )
         return classifier
+    }
+    // True when this file has already been classified in a previous run: its
+    // per-file report and the sample's combined full.report both exist and are
+    // non-empty. Used to avoid re-queuing finished work on startup.
+    isAlreadyClassified(filepath){
+        try {
+            const reportPath = getReportName(filepath, this.outputdir)
+            const perFile = fs.existsSync(reportPath) && fs.statSync(reportPath).size > 0
+            const full = fs.existsSync(this.fullreport) && fs.statSync(this.fullreport).size > 0
+            return perFile && full
+        } catch (err){
+            return false
+        }
     }
     
     stop(index){

@@ -526,6 +526,9 @@
         :pathOptions1="pathOptions1"
         :pathOptions2="pathOptions2"
         :pathOptionsDb="pathOptionsDb"
+        :pathOptionsRef="pathOptionsRef"
+        :browsePathResult="browsePathResult"
+        :sampleMeta="sampleMeta"
         :autodetectR2Result="autodetectR2Result"
         :pairWatches="pairWatches"
         @stopPairWatch="stopPairWatch"
@@ -981,6 +984,14 @@ export default {
             pathOptions1: [],
             pathOptions2: [],
             pathOptionsDb: [],
+            pathOptionsRef: [],
+            browsePathResult: null,
+            // Just-deleted samples (name -> timestamp). Deleting is async on the
+            // backend (cancel + report removal), and the cancel broadcasts in-flight
+            // job/status frames that would otherwise re-add the row (with a "0"
+            // badge) right after the optimistic removal. We ignore re-adds for a
+            // short window so a single trash click actually sticks.
+            recentlyDeleted: {},
             autodetectR2Result: null,
             pairWatches: [],
             db_options: [
@@ -1295,6 +1306,9 @@ export default {
         })
       },
       updateEntry(n, sample){
+        // an explicit add/edit of this sample clears any delete tombstone so the
+        // row can legitimately come back
+        if (n && n.sample && this.recentlyDeleted[n.sample]) delete this.recentlyDeleted[n.sample]
         try{
           this.sendMessage({
                 type: "updateEntry", 
@@ -1354,6 +1368,9 @@ export default {
         );
       },
       deletesample(sample){
+        // tombstone this sample so late queue/status frames from the backend's
+        // async delete don't re-add the row (see recentlyDeleted / addSample)
+        this.recentlyDeleted[sample] = Date.now()
         this.$delete(this.selectedData, sample)
         // Drop the sample's queued jobs too, otherwise the QueueBoard (whose rows
         // are derived from queueList keys) keeps showing the deleted sample.
@@ -1825,6 +1842,14 @@ export default {
               $this.socket.on("sendPaths2", (e)=>{
                 this.pathOptions2 = e.data
               })
+              $this.socket.on("sendPathsRef", (e)=>{
+                this.pathOptionsRef = e.data
+              })
+              $this.socket.on("browsePathResult", (e)=>{
+                // new object each time so the Samplesheet watcher always fires,
+                // even if the same path is chosen twice in a row
+                this.browsePathResult = Object.assign({ _ts: Date.now() }, e)
+              })
               $this.socket.on("autodetectR2Result", (e)=>{
                 this.autodetectR2Result = e
               })
@@ -2291,6 +2316,17 @@ export default {
           // local directories), 'upload' (a K2 report the user dropped/selected),
           // or 'demo' (canned offline sample data).
           origin = origin || 'server'
+          // Ignore re-adds for a sample that was just deleted: the backend's async
+          // delete emits a few trailing job/status frames that would otherwise
+          // resurrect the row with a "0" badge until the delete fully lands.
+          const deletedAt = this.recentlyDeleted[sample]
+          if (deletedAt){
+            if (Date.now() - deletedAt < 8000){
+              return
+            }
+            // window elapsed — allow future (genuine) re-adds
+            delete this.recentlyDeleted[sample]
+          }
           // check if object with sample attribute equals the sample , get index
           let indx = this.selectedsamplesAll.findIndex(x => x.sample === sample );
           // check if thisqueueList has sample if not then add it
