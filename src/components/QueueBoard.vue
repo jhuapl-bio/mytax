@@ -160,16 +160,16 @@
     <v-slide-y-reverse-transition>
       <div class="qb-dock" v-if="selected">
         <div class="qb-logpanel" v-if="showLogs">
-          <div class="qb-log-head">
-            <v-icon small color="#9fb3c8">mdi-text-box-outline</v-icon>
-            <span class="qb-log-ttl">{{ selected.sample }} &middot; {{ shortFile(selected.filepath) || 'file #' + selected.index }}</span>
-            <span class="qb-sel-state" :class="liveState">{{ stateLabel(liveState) }}</span>
-            <v-spacer></v-spacer>
-            <button class="qb-log-x" @click="showLogs = false" title="Hide logs">&times;</button>
-          </div>
-          <pre v-if="selCommand" class="qb-log-cmd">{{ selCommand }}</pre>
-          <pre v-if="selLogText" class="qb-log-body">{{ selLogText }}</pre>
-          <div v-else class="qb-log-empty">No log output captured for this job yet.</div>
+          <LogViewer
+            :title="selected.sample"
+            :subtitle="shortFile(selected.filepath) || ('file #' + selected.index)"
+            :state="liveState"
+            :command="selCommand"
+            :lines="selLines"
+            max-height="38vh"
+            closable
+            @close="showLogs = false"
+          />
         </div>
 
         <div class="qb-actionbar">
@@ -211,8 +211,11 @@
 </template>
 
 <script>
+import LogViewer from '@/components/LogViewer'
+
 export default {
   name: 'QueueBoard',
+  components: { LogViewer },
   props: {
     // { sampleName: [ { index, filepath, status }, ... ] }
     queueList: { type: Object, default: () => ({}) },
@@ -344,6 +347,13 @@ export default {
       const lines = (this.selDot.logs || []).map((l) => (typeof l === 'string' ? l : JSON.stringify(l)))
       if (this.selDot.error) lines.push(this.selDot.error)
       return lines.join('\n').trim()
+    },
+    // array form for the LogViewer component
+    selLines() {
+      if (!this.selDot) return []
+      const lines = (this.selDot.logs || []).map((l) => (typeof l === 'string' ? l : JSON.stringify(l)))
+      if (this.selDot.error) lines.push(this.selDot.error)
+      return lines
     },
     logCount() {
       return this.selDot ? (this.selDot.logs || []).length : 0
@@ -617,27 +627,9 @@ export default {
   border-radius:8px; padding:0 6px; font-size:.66rem; line-height:1.5;
 }
 
-/* logs panel */
+/* logs panel — now hosts the shared <LogViewer>; keep it as a thin wrapper
+   so the component's own border/background aren't doubled up. */
 .qb-logpanel {
-  background:#0c141e; border-top:1px solid #24384f; padding:10px 16px 12px;
-  max-height:42vh; overflow:auto;
+  background:#16263a; border-top:1px solid #24384f; padding:10px 12px;
 }
-.qb-log-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.qb-log-ttl { font-size:.82rem; font-weight:600; color:#e6edf3; }
-.qb-log-x {
-  background:transparent; border:none; color:#7d93a8; font-size:18px; line-height:1;
-  cursor:pointer; padding:0 4px;
-}
-.qb-log-x:hover { color:#e6edf3; }
-.qb-log-cmd {
-  margin:0 0 8px; padding:7px 10px; background:#13202f; border:1px solid #21344a; border-radius:7px;
-  color:#8fd1ff; font-size:.74rem; white-space:pre-wrap; word-break:break-all;
-  font-family:"SFMono-Regular", Menlo, Consolas, monospace;
-}
-.qb-log-body {
-  margin:0; padding:9px 11px; background:#0a121b; border:1px solid #1c2c3e; border-radius:7px;
-  color:#c4d2e0; font-size:.74rem; line-height:1.45; white-space:pre-wrap; word-break:break-word;
-  font-family:"SFMono-Regular", Menlo, Consolas, monospace;
-}
-.qb-log-empty { color:#64788d; font-size:.78rem; font-style:italic; padding:6px 2px; }
 </style>

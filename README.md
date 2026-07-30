@@ -199,6 +199,39 @@ Each run is backed by a samplesheet (you can also import a CSV). Columns:
 | `path_2` | Full path to the FASTQ for Illumina read 2 (paired-end only). |
 | `format` | `file` or `directory`. As a UI toggle: when on, the entry auto-detects everything matching the regex pattern and makes **one sample per match** in that directory (e.g. `barcode01`, `barcode02`, …). |
 | `pattern` | Regex used to match items for barcoded runs (optional; default `barcode[0-9]+`). |
+| `classifier` | Classification engine for the sample: `kraken2` (default), `bracken` or `minimap2`. Chosen per-sample and editable/re-runnable afterwards. |
+| `fastp` | `true`/`false` (default `false`). When on, [fastp](https://github.com/OpenGene/fastp) filters low-quality reads into `<sample>/fastp/…` before the classifier runs. |
+| `minimapDatabase` | FASTA/MMI reference used when `classifier` is `minimap2` (a downloaded reference or any local file). |
+
+### Per-sample classifiers and fastp
+
+Every sample chooses its own **classifier** and whether to **pre-filter reads with fastp** in the
+add/edit dialog (section _3 · Classifier_). Both are editable on an existing sample — change them and
+hit **rerun** to re-classify with the new settings. All three engines are normalised to emit a
+Kraken2-style `.report`, so the sunburst / Sankey / heatmap / map views keep working regardless of
+which one you pick.
+
+- **Kraken2** (default) — unchanged behaviour.
+- **Bracken** — runs Kraken2 first, then Bracken re-estimates abundances and writes a fresh
+  Kraken2-style report. Requires a **Bracken-built database** (the `databaseXXmers.kmer_distrib` files);
+  if they're missing, Mytax2 logs a warning and falls back to the raw Kraken2 report so the run still
+  completes.
+- **minimap2** — aligns reads to a FASTA/MMI reference (`map-ont` preset for ONT, `sr` for Illumina)
+  and produces a sorted, indexed **BAM** (via `samtools`) as the durable per-file alignment output,
+  then converts it to a Kraken2-style report. Provide a `seqid2taxid.map` (two columns:
+  `seqid<TAB>taxid`) next to the reference to get real NCBI taxids; otherwise deterministic synthetic
+  ids are used so the same reference merges consistently across files. When an NCBI **taxdump**
+  (`nodes.dmp`/`names.dmp`) is available, the converter builds the **full lineage** so the
+  hierarchy/heatmap/sunburst views populate (root → domain → … → species) instead of a flat list.
+  The reference index (`<ref>.<preset>.mmi`) and per-reference lineages (`<ref>.lineage.json`) are
+  cached on first use so subsequent files are fast.
+
+  Taxdump is discovered next to the reference, in a `taxonomy/` or `taxdump/` subfolder beside it, or
+  in `~/.config/mytax2/databases/taxdump/`. It can be auto-pulled from the in-app **Databases** panel
+  (`ncbi_taxdump`), the same way as the kraken2 sets.
+
+`fastp`, `minimap2` and `bracken` are installed by the Conda environment and also appear in the in-app
+**Backend dependencies** panel for one-click install.
 
 ---
 
@@ -219,6 +252,16 @@ confirmation before overwriting. Available out of the box:
 You can also use any Kraken2 database you already have on disk. Nested index layouts (e.g. the 16S
 Silva/RDP sets that extract into a `<name>_k2db` subfolder) are resolved automatically to the directory
 that actually contains `hash.k2d` / `taxo.k2d`.
+
+### minimap2 references
+
+`minimap2`-classified samples align against a **FASTA/MMI reference** rather than a Kraken2 index. These
+are single files (optionally gzipped — minimap2 reads `.gz` directly), so the download manager pulls
+them to `~/.config/mytax2/databases/` **without extracting** them. One reference ships out of the box
+(`minimap2_refseq_viral`, NCBI RefSeq viral genomes); add more entries to the `databases` array in
+`server/server.mjs` with `type: 'minimap2'` and `decompress: false`, or just point a sample at any local
+FASTA/MMI via the custom-path field. To get real NCBI taxids in the report, place a `seqid2taxid.map`
+next to the reference file.
 
 To fetch the classic MiniKraken2 database manually:
 

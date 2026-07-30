@@ -126,6 +126,19 @@
                                                     <v-icon small>mdi-play-circle</v-icon>
                                                 </v-btn>
                                                 <span class="mtx-st-label" :title="item.sample">{{ item._label }}</span>
+                                                <v-tooltip bottom>
+                                                    <template v-slot:activator="{ on }">
+                                                        <v-icon v-on="on" x-small class="mtx-st-clf" :color="classifierInfo(item).color">{{ classifierInfo(item).icon }}</v-icon>
+                                                    </template>
+                                                    <span>{{ classifierInfo(item).tip }}</span>
+                                                </v-tooltip>
+                                                <v-tooltip bottom v-if="!offlineMode && isStale(item.sample)">
+                                                    <template v-slot:activator="{ on }">
+                                                        <v-icon v-on="on" small color="amber darken-3" class="mtx-st-stale-ico"
+                                                            @click="start(-1, item.sample)">mdi-alert-circle</v-icon>
+                                                    </template>
+                                                    <span>Settings changed since the last run — this report is out of date. Click to re-run with the new settings.</span>
+                                                </v-tooltip>
                                                 <v-btn v-if="!offlineMode && item.status && item.status.running" icon x-small color="orange darken-1"
                                                     title="Cancel running" @click="cancelJob(-1, item.sample)">
                                                     <v-icon small>mdi-cancel</v-icon>
@@ -238,7 +251,7 @@
                 <div class="mtx-quick-actions" v-if="!offlineMode">
                     <v-tooltip bottom>
                         <template v-slot:activator="{ on }">
-                            <v-btn small depressed color="primary" v-on="on" @click="dialog = true" class="mr-2">
+                            <v-btn small depressed color="primary" v-on="on" @click="openAddDialog" class="mr-2">
                                 <v-icon small left>mdi-plus</v-icon>Add Entry to Samplesheet
                             </v-btn>
                         </template>
@@ -408,14 +421,29 @@
                                 <v-combobox
                                     v-model="editedItem.path_1"
                                     :items="pathOptions1"
-                                    :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path; matches are suggested as you go'"
+                                    :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path or browse (file or folder); matches are suggested as you go'"
                                     persistent-hint
                                     :error-messages="pathErrors1"
                                     :label="inputMode === 'barcoded' ? 'Run directory' : inputMode === 'paired' ? 'Directory of R1/R2 FASTQ files' : 'Reads — R1 (file or directory)'"
                                     prepend-inner-icon="mdi-folder-search-outline"
                                     dense outlined
                                     @keyup="handleInputPath1"
-                                ></v-combobox>
+                                >
+                                    <template v-slot:append-outer>
+                                        <v-tooltip bottom>
+                                            <template v-slot:activator="{ on }">
+                                                <v-icon v-on="on" :disabled="offlineMode" @click="openBrowse('path_1', 'file')">mdi-file-outline</v-icon>
+                                            </template>
+                                            <span>Browse for a file</span>
+                                        </v-tooltip>
+                                        <v-tooltip bottom>
+                                            <template v-slot:activator="{ on }">
+                                                <v-icon v-on="on" :disabled="offlineMode" class="ml-1" @click="openBrowse('path_1', 'directory')">mdi-folder-outline</v-icon>
+                                            </template>
+                                            <span>Browse for a folder</span>
+                                        </v-tooltip>
+                                    </template>
+                                </v-combobox>
                             </v-col>
                             <v-col cols="12" md="6" v-if="inputMode === 'single'">
                                 <v-combobox
@@ -425,6 +453,8 @@
                                     persistent-hint
                                     label="Reads — R2 (paired-end, optional)"
                                     prepend-inner-icon="mdi-file-multiple-outline"
+                                    append-outer-icon="mdi-folder-open-outline"
+                                    @click:append-outer="openBrowse('path_2', 'file')"
                                     dense outlined
                                     @keyup="handleInputPath2"
                                 ></v-combobox>
@@ -503,59 +533,134 @@
                             </div>
                         </v-sheet>
 
-                        <!-- ===== 3. Database ===== -->
-                        <div class="mtx-sec-label">3 · Reference database</div>
-                        <v-switch
-                            v-model="toggleDatabases"
-                            dense hide-details class="mt-0 mb-2"
-                            :label="toggleDatabases ? 'Use a standard (downloaded) database' : 'Use a custom database path'"
-                        ></v-switch>
-                        <v-select v-if="toggleDatabases" chips
-                            v-model="editedItem.database" class="truncate-text"
-                            :items="databases" :error-messages="dbErrors"
-                            label="Database" item-text="key" item-value="fullpath"
-                            dense outlined persistent-hint
-                        >
-                            <template v-slot:selection="{ item }">
-                                <v-tooltip bottom>
-                                <template v-slot:activator="{ on, attrs }">
-                                    <span v-bind="attrs" v-on="on" class="tooltip-content">
-                                    <span v-if="item.downloading">
-                                        <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
-                                        {{ item.key }}
-                                    </span>
-                                    <span v-else-if="item.size == 0">
-                                        <v-chip>
-                                        <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
-                                        {{ item.key }}; Size is empty
-                                        </v-chip>
-                                    </span>
-                                    <span v-else>
-                                        <v-chip>
-                                        <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
-                                        {{ item.key }}
-                                        </v-chip>
-                                    </span>
-                                    </span>
-                                </template>
-                                <span>{{ item.key }}</span>
-                                </v-tooltip>
-                            </template>
-                        </v-select>
-                        <v-combobox v-else
-                            v-model="editedItem.database"
-                            :items="pathOptionsDb"
-                            :hint="editedItem.database ? `Database path: ${editedItem.database}` : 'Path to a Kraken2 database directory'"
-                            persistent-hint
-                            label="Kraken2 database path"
-                            prepend-inner-icon="mdi-database-search-outline"
-                            :error-messages="dbErrors"
-                            dense outlined
-                            @keyup="handleInputPathDb"
-                        ></v-combobox>
+                        <!-- ===== 3. Classifier ===== -->
+                        <div class="mtx-sec-label">3 · Classifier</div>
+                        <v-select
+                            v-model="editedItem.classifier"
+                            :items="classifierOptions" item-text="text" item-value="value"
+                            label="Classification engine"
+                            prepend-inner-icon="mdi-dna"
+                            dense outlined hide-details class="mb-2"
+                        ></v-select>
+                        <div class="mtx-hint mb-2" v-if="editedItem.classifier === 'bracken'">
+                            Runs Kraken2 then Bracken to re-estimate abundances. Needs a Bracken-built
+                            database (kmer_distrib files); if absent, the Kraken2 report is used.
+                        </div>
+                        <div class="mtx-hint mb-2" v-else-if="editedItem.classifier === 'minimap2'">
+                            Aligns reads to a FASTA/MMI reference. Drop a <code>seqid2taxid.map</code>
+                            next to the reference for true NCBI taxids (otherwise per-reference tallies).
+                        </div>
+                        <!-- fastp low-quality read filtering (default off) -->
+                        <div class="d-flex align-center mt-1 mb-1">
+                            <v-icon :color="editedItem.fastp ? 'green darken-1' : 'grey'" class="mr-3">
+                                {{ editedItem.fastp ? 'mdi-filter-check-outline' : 'mdi-filter-outline' }}
+                            </v-icon>
+                            <div class="flex-grow-1">
+                                <div style="font-weight:600;font-size:13px;">Pre-filter reads with fastp</div>
+                                <div class="mtx-hint">
+                                    Remove low-quality reads before classification. Default off.
+                                </div>
+                            </div>
+                            <v-switch v-model="editedItem.fastp" inset hide-details class="ma-0 pa-0"></v-switch>
+                        </div>
 
-                        <!-- ===== 4. Location ===== -->
-                        <div class="mtx-sec-label mt-4">4 · Location <span class="mtx-opt">optional</span></div>
+                        <!-- ===== 4. Reference database ===== -->
+                        <div class="mtx-sec-label mt-3">4 · Reference {{ editedItem.classifier === 'minimap2' ? 'reference (FASTA/MMI)' : 'database' }}</div>
+
+                        <!-- Kraken2 / Bracken: kraken2 index directory -->
+                        <template v-if="editedItem.classifier !== 'minimap2'">
+                            <v-switch
+                                v-model="toggleDatabases"
+                                dense hide-details class="mt-0 mb-2"
+                                :label="toggleDatabases ? 'Use a standard (downloaded) database' : 'Use a custom database path'"
+                            ></v-switch>
+                            <v-select v-if="toggleDatabases" chips
+                                v-model="editedItem.database" class="truncate-text"
+                                :items="kraken2Databases" :error-messages="dbErrors"
+                                label="Database" item-text="key" item-value="fullpath"
+                                dense outlined persistent-hint
+                            >
+                                <template v-slot:selection="{ item }">
+                                    <v-tooltip bottom>
+                                    <template v-slot:activator="{ on, attrs }">
+                                        <span v-bind="attrs" v-on="on" class="tooltip-content">
+                                        <span v-if="item.downloading">
+                                            <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
+                                            {{ item.key }}
+                                        </span>
+                                        <span v-else-if="item.size == 0">
+                                            <v-chip>
+                                            <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
+                                            {{ item.key }}; Size is empty
+                                            </v-chip>
+                                        </span>
+                                        <span v-else>
+                                            <v-chip>
+                                            <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
+                                            {{ item.key }}
+                                            </v-chip>
+                                        </span>
+                                        </span>
+                                    </template>
+                                    <span>{{ item.key }}</span>
+                                    </v-tooltip>
+                                </template>
+                            </v-select>
+                            <v-combobox v-else
+                                v-model="editedItem.database"
+                                :items="pathOptionsDb"
+                                :hint="editedItem.database ? `Database path: ${editedItem.database}` : 'Type or browse to a Kraken2 database directory'"
+                                persistent-hint
+                                label="Kraken2 database path"
+                                prepend-inner-icon="mdi-database-search-outline"
+                                append-outer-icon="mdi-folder-open-outline"
+                                @click:append-outer="openBrowse('database', 'directory')"
+                                :error-messages="dbErrors"
+                                dense outlined
+                                @keyup="handleInputPathDb"
+                            ></v-combobox>
+                        </template>
+
+                        <!-- minimap2: FASTA/MMI reference file (downloaded or local) -->
+                        <template v-else>
+                            <v-switch
+                                v-model="toggleMinimapDb"
+                                dense hide-details class="mt-0 mb-2"
+                                :label="toggleMinimapDb ? 'Use a standard (downloaded) reference' : 'Use a custom FASTA/MMI path'"
+                            ></v-switch>
+                            <v-select v-if="toggleMinimapDb" chips
+                                v-model="editedItem.minimapDatabase" class="truncate-text"
+                                :items="minimap2Databases" :error-messages="dbErrors"
+                                label="minimap2 reference" item-text="key" item-value="fullpath"
+                                dense outlined persistent-hint
+                                no-data-text="No downloaded minimap2 references — add one from the Databases panel or use a custom path"
+                            >
+                                <template v-slot:selection="{ item }">
+                                    <v-chip>
+                                        <v-icon :color="item.size == 0 ? 'orange lighten-1' : 'green lighten-1'" class="mr-1">
+                                            {{ item.size == 0 ? 'mdi-alert-circle-outline' : 'mdi-check-circle-outline' }}
+                                        </v-icon>
+                                        {{ item.key }}
+                                    </v-chip>
+                                </template>
+                            </v-select>
+                            <v-combobox v-else
+                                v-model="editedItem.minimapDatabase"
+                                :items="pathOptionsRef"
+                                :hint="editedItem.minimapDatabase ? `Reference: ${editedItem.minimapDatabase}` : 'Type or browse to a FASTA/MMI reference (e.g. references.fasta or references.mmi)'"
+                                persistent-hint
+                                label="minimap2 reference path (FASTA/MMI)"
+                                prepend-inner-icon="mdi-file-document-outline"
+                                append-outer-icon="mdi-folder-open-outline"
+                                @click:append-outer="openBrowse('minimapDatabase', 'file')"
+                                :error-messages="dbErrors"
+                                dense outlined
+                                @keyup="handleInputPathRef"
+                            ></v-combobox>
+                        </template>
+
+                        <!-- ===== 5. Location ===== -->
+                        <div class="mtx-sec-label mt-4">5 · Location <span class="mtx-opt">optional</span></div>
                         <div class="mtx-hint mb-2">Adds this sample to the Map tab.</div>
                         <v-row dense>
                             <v-col cols="6">
@@ -664,42 +769,17 @@
         <v-spacer></v-spacer>
         <v-dialog
             v-model="sheet"
-            inset
+            max-width="1000"
+            scrollable
         >
-            <v-card
-                class="text-left logDiv "
-                style="overflow:auto"
-            >
-                <v-toolbar  dark>
-                    <v-toolbar-title>Server Logs</v-toolbar-title>
-
-                    <v-spacer></v-spacer>
-
-                    <v-btn icon @click="sheet = false" x-large fab>
-                        <v-icon large >mdi-close-circle</v-icon>
-                    </v-btn>
-                </v-toolbar>
-                <v-card-text class="my-0 mb-2" style="max-height: 80vh; overflow-y:auto">
-                    
-                    <span v-for="(row,index) in logs.slice().reverse()" :key="'sheet'+index">
-                    <v-icon
-                        dark v-if="row.level == 'error'"
-                        left color="red"
-                    >
-                        mdi-alert-circle-outline
-                    </v-icon>
-                    <v-icon
-                        dark v-else
-                        left color="blue"
-                    >
-                        mdi-information
-                    </v-icon>
-                    <code>{{row.message}}</code>
-                    <br>
-                    </span>
-                </v-card-text>
-            
-            </v-card>
+            <LogViewer
+                title="Server Logs"
+                :lines="logs"
+                :reverse="true"
+                max-height="78vh"
+                closable
+                @close="sheet = false"
+            />
         </v-dialog>
         <v-navigation-drawer
             v-model="drawerSample"
@@ -764,97 +844,20 @@
             </v-list-item>
         </v-navigation-drawer>
         <v-dialog
-            style="overflow-x:auto; width:100%" absolute v-model="dialogQueue" v-if="selectedQueueJob"
+            v-model="dialogQueue" v-if="selectedQueueJob"
+            max-width="1000" scrollable
         >
-       
-        <v-card class="mx-auto"
-            outlined style="overflow-y:auto; width: 100%"
-        >
-            <v-list-item dense three-line>
-                <v-list-item-content dense>
-                    <div class="">
-                           
-                        <v-progress-circular
-                            indeterminate v-if="selectedQueueJob.status.running "
-                            color="primary"  size="15"
-                        ></v-progress-circular>
-                        <v-tooltip  v-else-if="selectedQueueJob.status.success && selectedQueueJob.status.historical "
-                            dark left
-                        >
-                            <template v-slot:activator="{ on }">
-                                <v-icon
-                                    class="" large
-                                    :color="'green'"
-                                    dark v-on="on"
-                                >
-                                    mdi-history
-                                </v-icon>
-                            </template>
-                            Already run
-                        </v-tooltip>
-                        <v-tooltip  v-else-if="selectedQueueJob.status.success"
-                            dark left
-                        >
-                            <template v-slot:activator="{ on }">
-                                <v-icon 
-                                    class="" large
-                                    :color="'green'"
-                                    dark v-on="on"
-                                >
-                                    mdi-check-circle
-                                </v-icon>
-                            </template>
-                            Completed Successfully 
-                        </v-tooltip>
-                        <v-tooltip  v-else-if="!selectedQueueJob.status.success "
-                            dark left
-                        >
-                            <template v-slot:activator="{ on }">
-                                <v-icon 
-                                    class="" large
-                                    :color="'orange'"
-                                    dark v-on="on"
-                                >
-                                    mdi-alert-box
-                                </v-icon>
-                            </template>
-                            Error in Completing Job, Check Logs
-                        </v-tooltip>    
-                                      
-                    </div>
-                    <v-list-item-title class="text-h5 mb-1">
-                        {{ selectedQueueJob.name }} 
-                    </v-list-item-title>
-                    <v-list-item-subtitle>
-                        {{ selectedQueueJob.filepath  }}
-                    </v-list-item-subtitle>
-                </v-list-item-content>
-
-            </v-list-item>
-            <v-card-actions>
-                <v-spacer></v-spacer>
-                <v-btn
-                    color="primary"
-                    text
-                    @click="dialogQueue = false"
-                >
-                    Close
-                </v-btn> 
-            </v-card-actions>
-            <v-card-text class="text-sm-left" style="white-space: pre-wrap;" >
-                <code class="text-sm-left " style="white-space: pre-wrap;">{{ selectedQueueJob.command }}</code>
-                <v-divider class="my-20"></v-divider>
-                
-                
-                <code v-for="(log, index) in selectedQueueJob.status.logs"
-                    :key="`${index}-logQueue`" style="white-space: pre-wrap;">
-                    {{ log }}
-                    <v-divider></v-divider>
-                </code>
-            </v-card-text>
-            <v-divider></v-divider>
-        </v-card>
-        </v-dialog> 
+            <LogViewer
+                :title="selectedQueueJob.name || 'Job'"
+                :subtitle="selectedQueueJob.filepath"
+                :state="selectedJobState"
+                :command="selectedQueueJob.command"
+                :lines="selectedJobLines"
+                max-height="68vh"
+                closable
+                @close="dialogQueue = false"
+            />
+        </v-dialog>
         
         <!-- ===== per-sample / per-group jobs panel =====
              Replaces the old card-grid popup. Shows every file/job for the
@@ -1059,6 +1062,7 @@
   import path from "path"
   import _ from 'lodash';
   import QueueBoard from '@/components/QueueBoard'
+  import LogViewer from '@/components/LogViewer'
 
   export default {
     name: 'Samplesheet',
@@ -1086,11 +1090,15 @@
         "queueBoard",
         "queueBoardAll",
         "autodetectR2Result",
+        "pathOptionsRef",
+        "browsePathResult",
+        "sampleMeta",
         "pairWatches"
     ],
     components: {
         VueJsonToCsv,
         QueueBoard,
+        LogViewer,
     },
     updated: function(){
       const $this = this;
@@ -1103,6 +1111,35 @@
     watch: {
       dialog (val) {
         val || this.closeItem()
+      },
+      // Reload the per-run "needs rerun" flags whenever the selected run changes.
+      selectedRun (){
+        this.loadStale()
+      },
+      // In single-sample mode, derive the sample name from the chosen input
+      // file/directory when the name hasn't been set yet — so distinct inputs get
+      // distinct sample names instead of every add sharing one leftover name.
+      'editedItem.path_1'(val){
+        if (this.inputMode !== 'single') return
+        if (this.editedIndex > -1) return                       // don't rename an existing sample
+        const cur = this.editedItem.sample
+        if (cur && String(cur).trim() !== '') return            // respect a name the user typed
+        const derived = this.deriveSampleFromPath(val)
+        if (derived) this.$set(this.editedItem, 'sample', derived)
+      },
+      // Result of a native file/folder picker: drop the chosen path into the
+      // field that requested it (val.target is an editedItem key). Cancels are
+      // ignored so the field keeps its current value.
+      browsePathResult(val){
+        if (!val || !val.target) return
+        if (val.error){
+          // e.g. no native picker available on the host (osascript/zenity missing)
+          console.warn(`File browser unavailable: ${val.error}`)
+          return
+        }
+        if (val.cancelled || !val.path) return
+        let p = String(val.path).replace(/\/+$/, '')   // trim trailing slash from folder picks
+        this.$set(this.editedItem, val.target, p)
       },
       // Result of an "Auto-detect R2" request routed back from the server.
       autodetectR2Result(val){
@@ -1230,7 +1267,24 @@
             }
             return [];
         },
+        // Split the DB list by engine: kraken2/bracken use kraken2 index dirs,
+        // minimap2 uses FASTA/MMI reference files (type: 'minimap2'). Entries with
+        // no `type` are treated as kraken2 for backwards compatibility.
+        kraken2Databases() {
+            // kraken2/bracken use kraken2 index dirs; exclude minimap2 references
+            // and the taxdump support resource (entries with no type are kraken2).
+            return (this.databases || []).filter((d) => d && (!d.type || d.type === 'kraken2'));
+        },
+        minimap2Databases() {
+            return (this.databases || []).filter((d) => d && d.type === 'minimap2');
+        },
         dbErrors() {
+            if (this.editedItem.classifier === 'minimap2') {
+                if (!this.editedItem.minimapDatabase || this.editedItem.minimapDatabase === '') {
+                    return 'A minimap2 reference (FASTA/MMI) is required';
+                }
+                return [];
+            }
             if (!this.editedItem.database || this.editedItem.database === '') {
                 return 'Database Name/Path is required';
             }
@@ -1271,6 +1325,22 @@
                 })
             })
             return out
+        },
+        // Derived state for the currently-reviewed job (falls back to a fresh
+        // computation if the object wasn't tagged with _state).
+        selectedJobState(){
+            const j = this.selectedQueueJob
+            if (!j) return ''
+            return j._state || this.jobState(j)
+        },
+        // Combined log body for the per-job LogViewer: captured log lines plus any
+        // stderr the backend stored on status.error (kraken2 streams progress there).
+        selectedJobLines(){
+            const j = this.selectedQueueJob
+            if (!j || !j.status) return []
+            const lines = (j.status.logs || []).map(l => (typeof l === 'string' ? l : JSON.stringify(l)))
+            if (j.status.error) lines.push(j.status.error)
+            return lines
         },
         // Counts per state for the summary chips / filters.
         jobStats(){
@@ -1566,7 +1636,16 @@
         //     { text: 'Delete', value: 'delete', sortable: false },
         //   ],
           stagedData: [],
+          // Samples whose classification-relevant settings changed since their last
+          // run (needs-rerun). Keyed by sample name; persisted per-run in localStorage.
+          staleSamples: {},
           toggleDatabases: true,
+          toggleMinimapDb: true,
+          classifierOptions: [
+            { text: 'Kraken2 (default)', value: 'kraken2' },
+            { text: 'Bracken (Kraken2 → Bracken)', value: 'bracken' },
+            { text: 'minimap2 (reference alignment)', value: 'minimap2' },
+          ],
           selectedQueueJob: null,
           selectedQueueSample: null,
           recentDataFileadded: null,
@@ -1586,6 +1665,9 @@
             watch: true,
             lat: null,
             lon: null,
+            classifier: 'kraken2',
+            fastp: false,
+            minimapDatabase: null,
           },
           defaultItem: {
             sample: '',
@@ -1597,6 +1679,9 @@
             watch: true,
             lat: null,
             lon: null,
+            classifier: 'kraken2',
+            fastp: false,
+            minimapDatabase: null,
           },
           selectedSample: null,
           selectedSampleObj: {},
@@ -1691,6 +1776,7 @@
     },
     async mounted() {
         this.runName = "No_Name"
+        this.loadStale()
         this.config['memory-mapping']={ value: true, type: 'boolean' }
         this.config['gzip-compressed'] = { value: false, type: 'boolean' }
         this.config['bzip2-compressed'] = { value: false, type: 'boolean' }
@@ -1712,6 +1798,9 @@
                 config[key] = this.config[key].value
             })
             this.$emit("updateConfig", (type == 'bundle' ? this.stagedBundleConfig : config ), type)
+            // A run-level config change affects every sample's classification but
+            // doesn't re-run them, so flag them all as needing a rerun.
+            ;(this.selectedsamplesAll || []).forEach((s) => { if (s && s.sample) this.markStale(s.sample) })
         },
         pasteLine(arr){
             if (Array.isArray(arr) && arr.length > 0){
@@ -1721,6 +1810,61 @@
             } else {
                 return arr
             }
+        },
+        handleInputPathRef(event) {
+            let value = event.target.value
+            this.$emit("sendMessage", { type: "searchPathRef", value: value })
+        },
+        // --- "needs rerun" (stale) tracking -------------------------------------
+        // A sample is stale when its classification-relevant settings (engine,
+        // fastp, database/reference, advanced kraken2 config, …) were changed but
+        // the report hasn't been re-run with them yet. lat/long and other metadata
+        // are deliberately excluded — they don't affect the classification output.
+        classificationSignature(item){
+            if (!item) return ''
+            const norm = (v) => (v === undefined || v === '' ? null : v)
+            const relevant = {
+                classifier: norm(item.classifier) || 'kraken2',
+                fastp: item.fastp === true || item.fastp === 'true',
+                fastpConfig: item.fastpConfig || null,
+                database: norm(item.database),
+                minimapDatabase: norm(item.minimapDatabase),
+                brackenConfig: item.brackenConfig || null
+            }
+            try { return JSON.stringify(relevant) } catch (e){ return '' }
+        },
+        isStale(sample){
+            return !!this.staleSamples[sample]
+        },
+        markStale(sample){
+            if (!sample) return
+            this.$set(this.staleSamples, sample, true)
+            this.persistStale()
+        },
+        clearStale(sample){
+            if (sample == null){ this.staleSamples = {}; this.persistStale(); return }
+            if (this.staleSamples[sample] !== undefined){
+                this.$delete(this.staleSamples, sample)
+                this.persistStale()
+            }
+        },
+        staleKey(){
+            return `mytax_stale_${this.selectedRun || 'default'}`
+        },
+        loadStale(){
+            try {
+                const raw = localStorage.getItem(this.staleKey())
+                this.staleSamples = raw ? JSON.parse(raw) : {}
+            } catch (err){ this.staleSamples = {} }
+        },
+        persistStale(){
+            try { localStorage.setItem(this.staleKey(), JSON.stringify(this.staleSamples)) } catch (err){ /* ignore */ }
+        },
+        // Ask the backend to pop a native OS file/folder picker for `target`
+        // (an editedItem key). The result comes back via the browsePathResult prop.
+        openBrowse(target, kind) {
+            if (this.offlineMode) return
+            this.$emit("sendMessage", { type: "browsePath", target: target, kind: kind || 'file' })
         },
         handleInputPathDb(event) {
             // Send current input value to the server
@@ -1865,8 +2009,10 @@
         
         start(index, sample ){
             if (this.offlineMode) return;
+            // rerunning applies the current settings -> no longer stale
+            this.clearStale(sample)
             this.$emit("sendMessage", {
-                type: "rerun", 
+                type: "rerun",
                 run: this.selectedRun,
                 overwrite: true,
                 sample: sample,
@@ -1921,6 +2067,36 @@
                 return { color: 'green', num: 0, label: 'Listening for new reads' }
             }
             return { color: 'red', num: 0, label: 'Not able to establish watching / read reports' }
+        },
+        // Which classifier a sample ran (or is configured to run) with. Prefers the
+        // live job config (what it actually ran), then the persisted samplesheet
+        // entry, defaulting to kraken2.
+        sampleClassifier(item){
+            let c = null
+            if (item){
+                if (item.config && item.config.classifier) c = item.config.classifier
+                else if (item.classifier) c = item.classifier
+            }
+            if (!c && Array.isArray(this.samplesheet) && item){
+                const entry = this.samplesheet.find(e => e && e.sample === item.sample)
+                if (entry && entry.classifier) c = entry.classifier
+            }
+            return String(c || 'kraken2').toLowerCase()
+        },
+        // Icon + colour + tooltip describing a sample's classifier, for the badge
+        // shown next to its name in the table.
+        classifierInfo(item){
+            const c = this.sampleClassifier(item)
+            if (c === 'minimap2'){
+                return { icon: 'mdi-map-marker-path', color: 'deep-purple', label: 'minimap2',
+                    tip: 'Classified with minimap2 (reference alignment → BAM)' }
+            }
+            if (c === 'bracken'){
+                return { icon: 'mdi-sprout-outline', color: 'green darken-2', label: 'Bracken',
+                    tip: 'Classified with Bracken (Kraken2 → Bracken abundance re-estimation)' }
+            }
+            return { icon: 'mdi-jellyfish-outline', color: 'blue darken-1', label: 'Kraken2',
+                tip: 'Classified with Kraken2' }
         },
         // Resolve a sample id into { group, label } for the hierarchy view.
         // Prefers explicit group/label on the samplesheet entry (sent by the
@@ -2116,8 +2292,10 @@
         },
         forceRestart(){
             if (this.offlineMode) return;
+            // rerunning everything clears all "needs rerun" flags for this run
+            this.clearStale(null)
             this.$emit("sendMessage", {
-                type: "rerun", 
+                type: "rerun",
                 run: this.selectedRun,
                 overwrite: true,
                 sample: null,
@@ -2201,6 +2379,29 @@
                 // }
             // });
         },
+        // Turn an input path into a sensible sample name: take the basename, drop
+        // fastq/fasta extensions (incl. .gz) and any trailing _R1/_R2 read marker.
+        // Falls back to a directory's own name. e.g.
+        //   /data/x_miseq/sample7_spike1000_R1.fastq.gz -> sample7_spike1000
+        //   /data/ebola/                                -> ebola
+        deriveSampleFromPath(p){
+            if (!p) return ''
+            let s = String(p).replace(/^file:\/\//, '').replace(/\\/g, '/').replace(/\/+$/, '')
+            let base = s.split('/').pop() || ''
+            base = base.replace(/\.(fastq|fq|fasta|fa|fna)(\.gz)?$/i, '')   // strip fastq/fasta ext
+            base = base.replace(/[._-][Rr][12]$/, '')                         // strip _R1 / .R2 style marker
+            return base.trim()
+        },
+        // Open the dialog for a NEW sample: reset the form (the Add button used to
+        // just flip `dialog` on, leaving the previously-edited sample's values and
+        // editedIndex behind, which also confused the coord/needs-rerun tracking).
+        openAddDialog(){
+            this.editedItem = Object.assign({}, this.defaultItem)
+            this.editedIndex = -1
+            this._coordOriginal = { lat: null, lon: null }
+            this._editSignatureOriginal = null
+            this.dialog = true
+        },
         editItem (item) {
             // Pull the canonical samplesheet row (path_1/path_2/database/…) AND the
             // live in-memory sample so the edit form prefills every field even when
@@ -2221,6 +2422,27 @@
                     this.$set(this.editedItem, k, cfg[k])
                 }
             })
+            // New multi-classifier / fastp fields — default them for legacy samples
+            // that predate these options so the selects/switches render sensibly.
+            if (!this.editedItem.classifier) this.$set(this.editedItem, 'classifier', 'kraken2')
+            this.$set(this.editedItem, 'fastp', this.editedItem.fastp === true || this.editedItem.fastp === 'true')
+            if (this.editedItem.minimapDatabase === undefined) this.$set(this.editedItem, 'minimapDatabase', null)
+            // Prefill lat/long from the sample's metadata (the Map's source of truth)
+            // so editing shows existing coordinates instead of a blank field — and a
+            // save doesn't silently wipe them.
+            const meta = (this.sampleMeta && this.sampleMeta[item]) || {}
+            const curLat = this.editedItem.lat
+            const curLon = this.editedItem.lon
+            if ((curLat === undefined || curLat === null || curLat === '') && meta.lat != null) this.$set(this.editedItem, 'lat', meta.lat)
+            if ((curLon === undefined || curLon === null || curLon === '') && meta.lon != null) this.$set(this.editedItem, 'lon', meta.lon)
+            // remember the coords the dialog opened with, to detect real changes on save
+            this._coordOriginal = {
+                lat: this.editedItem.lat == null || this.editedItem.lat === '' ? null : Number(this.editedItem.lat),
+                lon: this.editedItem.lon == null || this.editedItem.lon === '' ? null : Number(this.editedItem.lon)
+            }
+            // remember the classification-relevant settings, to flag "needs rerun"
+            // if any of them change on save (see saveItem)
+            this._editSignatureOriginal = this.classificationSignature(this.editedItem)
             this.inputMode = 'single'
             this.autodetectMsg = null
             this.autodetectOk = false
@@ -2274,19 +2496,38 @@
             if (this.editedItem.database && this.editedItem.database.startsWith('file://')){
                 this.editedItem.database = this.editedItem.database.replace('file://', '')
             }
+            // same for a minimap2 reference dragged in as a file:// URL
+            if (this.editedItem.minimapDatabase && this.editedItem.minimapDatabase.startsWith('file://')){
+                this.editedItem.minimapDatabase = this.editedItem.minimapDatabase.replace('file://', '')
+            }
             if (this.editedItem.path_2 && this.editedItem.path_2.startsWith('file://')){
                 this.editedItem.path_2 = this.editedItem.path_2.replace('file://', '')
             }
             this.$emit("updateEntry", this.editedItem)
-            // propagate lat/long to sample metadata so it shows on Map / Metadata tabs
-            if (this.editedItem.sample &&
-                (this.editedItem.lat !== undefined && this.editedItem.lat !== null && this.editedItem.lat !== '' ||
-                 this.editedItem.lon !== undefined && this.editedItem.lon !== null && this.editedItem.lon !== '')) {
-                this.$emit("updateMeta", {
-                    sample: this.editedItem.sample,
-                    lat: this.editedItem.lat === '' || this.editedItem.lat === undefined ? null : parseFloat(this.editedItem.lat),
-                    lon: this.editedItem.lon === '' || this.editedItem.lon === undefined ? null : parseFloat(this.editedItem.lon)
-                })
+            // Keep the sample's map coordinates in sync with the dialog. lat/long
+            // live in the metadata store (the same channel the Metadata tab uses),
+            // NOT the classifier config, so they take effect immediately and never
+            // require a rerun. Emit whenever the dialog has coordinates or they were
+            // changed/cleared vs what it opened with, so adding, editing and
+            // clearing all work reliably.
+            if (this.editedItem.sample){
+                const parse = (v) => (v === '' || v === undefined || v === null) ? null : parseFloat(v)
+                const lat = parse(this.editedItem.lat)
+                const lon = parse(this.editedItem.lon)
+                const orig = this._coordOriginal || { lat: null, lon: null }
+                const changed = lat !== orig.lat || lon !== orig.lon
+                if (lat !== null || lon !== null || changed){
+                    this.$emit("updateMeta", { sample: this.editedItem.sample, lat, lon })
+                }
+            }
+            // Flag the sample as "needs rerun" if any classification-relevant setting
+            // changed on an existing single sample. New samples run fresh, and
+            // barcoded/paired expansions re-scan on save, so neither is flagged.
+            if (this.editedIndex > -1 && this.inputMode === 'single' && this.editedItem.sample){
+                const newSig = this.classificationSignature(this.editedItem)
+                if (this._editSignatureOriginal != null && newSig !== this._editSignatureOriginal){
+                    this.markStale(this.editedItem.sample)
+                }
             }
             this.dialog = null
             this.closeItem()
@@ -2344,6 +2585,8 @@ code {
     cursor: default;
 }
 .mtx-st-stopwatch { margin-left: 2px; }
+.mtx-st-stale-ico { cursor: pointer; margin-left: 4px; }
+.mtx-st-clf { margin-left: 4px; }
 
 /* ===== auto-detect R2 inline message ===== */
 .mtx-autodetect-msg {

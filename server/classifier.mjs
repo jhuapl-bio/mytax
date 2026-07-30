@@ -21,6 +21,13 @@ export  class Classifier {
         this.dirpath = path.dirname(this.filepath)
         this.sampleReport = sample.reportPath
         this.database = sample.database
+        // Which classification engine to run for this sample: 'kraken2' (default),
+        // 'minimap2' (reference alignment) or 'bracken' (kraken2 -> bracken chain).
+        this.classifier = (sample.classifier || 'kraken2')
+        // Optional low-quality-read filtering with fastp BEFORE classification.
+        this.fastp = sample.fastp === true || sample.fastp === 'true'
+        // FASTA/MMI reference used when classifier === 'minimap2'.
+        this.minimapDatabase = sample.minimapDatabase || null
         this.paired = ( sample.path_1 && sample.path_2 && sample.path_2 != sample.path_1 ? true : false)
         this.gpu = ''
         this.reportPath = sample.reportPath
@@ -64,6 +71,9 @@ export  class Classifier {
             index: this.index,
             run: this.run,
             sample: this.sample.sample,
+            classifier: this.classifier,
+            fastp: this.fastp,
+            minimapDatabase: this.minimapDatabase,
         }
         // Previously this broadcast an unthrottled 'status' frame to every socket
         // for EACH job, twice (on start + exit). With 2000+ jobs that alone
@@ -192,55 +202,174 @@ export  class Classifier {
         
         })
     }
+    // Build the full per-file shell pipeline. Depending on the sample's
+    // `classifier` and `fastp` settings this expands to:
+    //
+    //   [ mkdir ] &&
+    //   [ fastp (optional low-quality read filtering) ] &&
+    //   [ kraken2 | (kraken2 -> bracken) | (minimap2 -> kreport) ] &&
+    //   [ combine_kreports.py -> full.report ]
+    //
+    // Every classifier is normalised so it writes a Kraken2-style report to
+    // `this.sampleReport`, which keeps the downstream combine step + all the
+    // sunburst/Sankey/heatmap visualisations working unchanged.
     generateKrakenCommand(){
-        let dirname = path.dirname(this.sampleReport)
-        // Some DBs (e.g. Silva/RDP 16S) nest the kraken2 index in a subfolder, so
-        // the configured path won't contain taxo.k2d directly. Resolve to the
-        // actual index directory so kraken2 doesn't error out mid-run.
-        let dbpath = resolveKrakenDbDirSync(this.sample.database)
-        let command = `mkdir -p ${dirname}; kraken2 --db '${dbpath}'  --report "${this.sampleReport}" --out ${this.sampleReport}.out `
-        this.database = dbpath
-        if (this.sample.path_2 && this.sample.path_2 != this.sample.path_1 && this.sample.path_2 != ""){ 
-            command=`${command} \\
-            --paired ` 
-            this.paired = true 
-        } else {
-            this.paired = false
-        }
-        let additionals = ""   
-        if (this.config){
-            for(let [key, value] of Object.entries(this.config))
-            {   
-                if (key == "minimum-hit-groups" && value >=0 && value != "" && value ){
-                    additionals = `${additionals}  \\
-                    --${key} ${value}`
-                }  else if (value && value == true && typeof value == 'boolean'){
-                    additionals = `${additionals}  \\
-                    --${key}`   
-                } else if (value && value !== true){
-                    if (Array.isArray(value)){
-                        if (value.length >0){
-                            additionals = `${additionals}  \\
-                            --${key} ${value.join(",")}`
-                        }
-                    } else {
-                        additionals = `${additionals}   --${key} ${value}`
-                    }
-                } 
-            }
+        const s = this.sample
+        const dirname = path.dirname(this.sampleReport)
+        const classifier = String(s.classifier || 'kraken2').toLowerCase()
+        this.classifier = classifier
+        this.fastp = (s.fastp === true || s.fastp === 'true')
+        this.minimapDatabase = s.minimapDatabase || null
+        const threads = (this.config && this.config.threads) ? this.config.threads : 1
+        const paired = (s.path_2 && s.path_2 != s.path_1 && s.path_2 != "") ? true : false
+        this.paired = paired
 
+        // step 0: ensure the output dir exists
+        const steps = [`mkdir -p '${dirname}'`]
+
+        // step 1: optional fastp preprocessing. When on, the classifier reads the
+        // filtered fastq(s) instead of the raw input.
+        let input1 = this.filepath
+        let input2 = paired ? s.path_2 : ''
+        let fastpUsed = false
+        if (this.fastp){
+            const fp = this.buildFastpStep(dirname, input1, input2, paired, threads)
+            steps.push(fp.cmd)
+            input1 = fp.out1
+            input2 = fp.out2
+            fastpUsed = true
         }
-        
-        command = `${command } ${additionals} ${this.filepath} ${this.sample.path_2 ? this.sample.path_2 : ''}`
-        
-        let kreportcombined = this.generateKReportCommand()
-        command = {
+
+        // step 2: the classifier itself
+        if (classifier === 'minimap2'){
+            steps.push(this.buildMinimap2Cmd(input1, input2, paired, threads))
+        } else if (classifier === 'bracken'){
+            steps.push(this.buildBrackenCmd(input1, input2, paired, threads, fastpUsed))
+        } else {
+            steps.push(this.buildKraken2Cmd(input1, input2, paired, fastpUsed, this.sampleReport))
+        }
+
+        // step 3: merge this file's report into the sample-level full.report
+        steps.push(this.generateKReportCommand())
+
+        const command = {
             main: "bash",
-            args: ['-c', `${command} && ${kreportcombined}`]
+            args: ['-c', steps.join(' && \\\n')]
         }
         this.command = command
         return command
-
+    }
+    // fastp: drop low-quality reads before classification. Outputs plain (un-gzipped)
+    // fastq into <outputdir>/fastp so the compression flags handed to kraken2 stay
+    // consistent (see buildKraken2Cmd, which drops the gzip/bzip flags when fastp
+    // ran). Returns the command plus the filtered input path(s).
+    buildFastpStep(dirname, in1, in2, paired, threads){
+        const cfg = this.sample.fastpConfig || {}
+        const q = (cfg.quality !== undefined && cfg.quality !== null && cfg.quality !== '') ? cfg.quality : 20
+        const minlen = (cfg.minLength !== undefined && cfg.minLength !== null && cfg.minLength !== '') ? cfg.minLength : 15
+        const fpdir = path.join(dirname, 'fastp')
+        const base = path.basename(this.sampleReport).replace(/\.report$/, '')
+        const out1 = path.join(fpdir, `${base}.fastp.R1.fastq`)
+        const out2 = paired ? path.join(fpdir, `${base}.fastp.R2.fastq`) : ''
+        const json = path.join(fpdir, `${base}.fastp.json`)
+        const html = path.join(fpdir, `${base}.fastp.html`)
+        let cmd = `mkdir -p '${fpdir}' && fastp -i '${in1}' -o '${out1}'`
+        if (paired && in2){
+            cmd += ` -I '${in2}' -O '${out2}'`
+        }
+        cmd += ` -q ${q} -l ${minlen} --thread ${threads} -j '${json}' -h '${html}'`
+        return { cmd, out1, out2 }
+    }
+    // Assemble the kraken2 `--key value` / `--flag` string from this.config.
+    // When fastp ran, the intermediate fastq is plain text, so the gzip/bzip
+    // compression flags are skipped to avoid kraken2 mis-reading the input.
+    buildKrakenAdditionals(fastpUsed){
+        let additionals = ""
+        if (this.config){
+            for (let [key, value] of Object.entries(this.config)){
+                if (fastpUsed && (key === 'gzip-compressed' || key === 'bzip2-compressed')) continue
+                if (key == "minimum-hit-groups" && value >= 0 && value != "" && value){
+                    additionals = `${additionals}  --${key} ${value}`
+                } else if (value && value === true && typeof value == 'boolean'){
+                    additionals = `${additionals}  --${key}`
+                } else if (value && value !== true){
+                    if (Array.isArray(value)){
+                        if (value.length > 0){
+                            additionals = `${additionals}  --${key} ${value.join(",")}`
+                        }
+                    } else {
+                        additionals = `${additionals}  --${key} ${value}`
+                    }
+                }
+            }
+        }
+        return additionals
+    }
+    // kraken2 -> Kraken2-style report at `outReport`.
+    buildKraken2Cmd(input1, input2, paired, fastpUsed, outReport){
+        // Some DBs (e.g. Silva/RDP 16S) nest the kraken2 index in a subfolder, so
+        // resolve to the directory that actually holds taxo.k2d.
+        const dbpath = resolveKrakenDbDirSync(this.sample.database)
+        this.database = dbpath
+        let cmd = `kraken2 --db '${dbpath}' --report "${outReport}" --out "${outReport}.out"`
+        if (paired) cmd += ` --paired`
+        cmd += this.buildKrakenAdditionals(fastpUsed)
+        cmd += ` '${input1}'${input2 ? ` '${input2}'` : ''}`
+        return cmd
+    }
+    // bracken: run kraken2 first, then re-estimate abundance with bracken, writing
+    // a fresh Kraken2-style report (bracken -w) to this.sampleReport. Bracken needs
+    // the DB to carry kmer_distrib files; if they're absent we log a warning and
+    // fall back to the raw kraken2 report so the pipeline still produces output.
+    buildBrackenCmd(input1, input2, paired, threads, fastpUsed){
+        const k2report = `${this.sampleReport}.k2`
+        const kcmd = this.buildKraken2Cmd(input1, input2, paired, fastpUsed, k2report)
+        const dbpath = this.database   // set by buildKraken2Cmd above
+        const bcfg = this.sample.brackenConfig || {}
+        const readlen = bcfg.readLength || 100
+        const level = bcfg.level || 'S'
+        const thresh = (bcfg.threshold !== undefined && bcfg.threshold !== null && bcfg.threshold !== '') ? bcfg.threshold : 10
+        const bracken = `bracken -d '${dbpath}' -i "${k2report}" -o "${this.sampleReport}.bracken" -w "${this.sampleReport}" -r ${readlen} -l ${level} -t ${thresh}`
+        return `${kcmd} && ( if ls '${dbpath}'/database*mers.kmer_distrib >/dev/null 2>&1 || ls '${dbpath}'/*kmer_distrib >/dev/null 2>&1; then ${bracken}; else echo "WARNING: no Bracken kmer_distrib files in '${dbpath}'; falling back to kraken2 report" >&2; cp "${k2report}" "${this.sampleReport}"; fi )`
+    }
+    // minimap2: align reads to a FASTA/MMI reference producing a sorted+indexed
+    // BAM (via samtools), then convert the BAM alignments into a Kraken2-style
+    // report. References map to NCBI taxids via a seqid2taxid.map beside the
+    // reference, and — when a taxdump (nodes.dmp/names.dmp) is available — the
+    // converter builds the full lineage so the hierarchy views work.
+    buildMinimap2Cmd(input1, input2, paired, threads){
+        const ref = this.sample.minimapDatabase || this.sample.database
+        this.database = ref
+        const platform = String(this.sample.platform || '').toLowerCase()
+        // Short-read presets for Illumina-family platforms; long-read (ONT) otherwise.
+        const shortRead = /^(ill|mis|next|nova|hiseq|sr|short)/.test(platform)
+        const preset = shortRead ? 'sr' : 'map-ont'
+        const bam = `${this.sampleReport}.bam`
+        const inputs = `'${input1}'${input2 ? ` '${input2}'` : ''}`
+        const conv = path.join(__dirname, 'scripts', 'minimap2_to_kreport.py')
+        // Index caching: building the minimap2 index from a large FASTA can take
+        // many seconds, and this command runs once PER FASTQ file. Without caching,
+        // a real-time run rebuilds the whole index for every read file -> the queue
+        // looks "stuck" grinding through repeated index builds. So we build a
+        // preset-specific `.mmi` next to the reference ONCE (k/w are baked into the
+        // index, hence per-preset), then every subsequent file loads it in seconds.
+        // The whole thing stays &&-chained; if the reference dir is read-only the
+        // build quietly fails (|| true) and we fall back to mapping the FASTA.
+        const mmi = `${ref}.${preset}.mmi`
+        // Emit a clear, human one-time notice to STDOUT (logged as info, so it
+        // isn't styled as an error like minimap2's own stderr progress) only when
+        // the index is actually being built -- so the first file doesn't look idle.
+        const buildMsg = `echo "[mytax] Building minimap2 ${preset} index (one-time; subsequent files reuse it)…"`
+        const doneMsg = `echo "[mytax] minimap2 ${preset} index ready — classifying reads"`
+        const buildOnce = `( [ -s '${mmi}' ] || ( ${buildMsg} ; minimap2 -x ${preset} -t ${threads} -d '${mmi}.tmp.'"$$" '${ref}' && mv '${mmi}.tmp.'"$$" '${mmi}' && ${doneMsg} ) || true )`
+        // Prefer the cached index; fall back to the FASTA if it never got created.
+        const target = `$( [ -s '${mmi}' ] && printf %s '${mmi}' || printf %s '${ref}' )`
+        // Align (SAM) -> sort -> BAM -> index. pipefail in a subshell so a minimap2
+        // failure aborts instead of leaving a truncated BAM look "successful".
+        const align = `( set -o pipefail; minimap2 -a -x ${preset} -t ${threads} --secondary=no "${target}" ${inputs} | samtools sort -@ ${threads} -o "${bam}" - ) && samtools index "${bam}"`
+        let cmd = `${buildOnce} && ${align}`
+        cmd += ` && python3 '${conv}' --bam "${bam}" --report "${this.sampleReport}" --ref '${ref}'`
+        return cmd
     }
     generateKReportCommand(){ 
         let combinedfiles = this.reportfiles_seen.length > 0 ? `${this.reportfiles_seen.join(" ")} ${this.reportPath}` : this.reportPath
