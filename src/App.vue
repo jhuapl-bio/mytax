@@ -181,7 +181,37 @@
                     {{ db.size ? 'mdi-check-circle' : 'mdi-alert-circle-outline' }}
                   </v-icon>
                   <span class="mtx-set-db-key">{{ db.key }}</span>
-                  <span class="mtx-set-db-path">{{ db.final || db.url || '—' }}</span>
+                  <span class="mtx-set-db-path">{{ db.fullpath || db.final || db.url || '—' }}</span>
+                  <v-spacer></v-spacer>
+                  <!-- Open the database folder in the OS file browser -->
+                  <v-tooltip bottom>
+                    <template v-slot:activator="{ on, attrs }">
+                      <v-btn
+                        x-small icon v-bind="attrs" v-on="on"
+                        class="mtx-set-db-btn"
+                        :disabled="!isOnline"
+                        @click="openDatabasePath(db)"
+                      >
+                        <v-icon x-small>mdi-folder-open-outline</v-icon>
+                      </v-btn>
+                    </template>
+                    Open this database's folder on the server
+                  </v-tooltip>
+                  <!-- Delete the downloaded database from disk (asks first) -->
+                  <v-tooltip bottom>
+                    <template v-slot:activator="{ on, attrs }">
+                      <v-btn
+                        x-small icon v-bind="attrs" v-on="on"
+                        class="mtx-set-db-btn"
+                        color="red darken-1"
+                        :disabled="!isOnline || db.downloading || !dbIsOnDisk(db)"
+                        @click="confirmDeleteDatabase(db)"
+                      >
+                        <v-icon x-small>mdi-delete-outline</v-icon>
+                      </v-btn>
+                    </template>
+                    Delete this database from disk
+                  </v-tooltip>
                 </div>
               </div>
               <div v-else class="mtx-set-empty">No database info received yet</div>
@@ -206,6 +236,30 @@
             </div>
 
           </v-card-text>
+        </v-card>
+      </v-dialog>
+
+      <!-- Confirm before deleting a reference database. Kept as a sibling of the
+           settings dialog (not nested inside it) so the overlay stacks cleanly. -->
+      <v-dialog v-model="dbDeleteDialog" max-width="460" persistent>
+        <v-card>
+          <v-card-title class="text-subtitle-1">
+            <v-icon color="red darken-1" class="mr-2">mdi-alert-outline</v-icon>
+            Delete database?
+          </v-card-title>
+          <v-card-text>
+            <p class="mb-2">
+              This permanently removes
+              <strong>{{ dbPendingDelete ? dbPendingDelete.key : '' }}</strong>
+              from disk. You'll have to re-download it before you can classify with it again.
+            </p>
+            <code class="mtx-set-db-path">{{ dbPendingDelete ? dbLocalPath(dbPendingDelete) : '' }}</code>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn text small @click="cancelDeleteDatabase()">Cancel</v-btn>
+            <v-btn color="red darken-1" dark small @click="deleteDatabase()">Delete</v-btn>
+          </v-card-actions>
         </v-card>
       </v-dialog>
 
@@ -381,17 +435,21 @@
                 Offline — databases require a backend connection
               </div>
               <div class="mtx-sec-body mtx-row-end" v-else>
+                <!-- Options are grouped by the engine that consumes them
+                     (kraken2 index dirs vs minimap2 FASTA refs vs support
+                     resources) so it's obvious which classifier a database
+                     belongs to before you pick it. -->
                 <v-select
                   v-model="database"
-                  :items="databases"
+                  :items="groupedDatabases"
                   label="Database"
                   item-key="url"
                   item-value="key"
                   return-object
-                  item-text="final"
+                  item-text="key"
                   :hint="`${database.size}`"
                   dense outlined
-                  persistent-hint class="flex" >
+                  persistent-hint class="flex mtx-db-select" >
                   <template v-slot:prepend>
                     <v-tooltip bottom>
                     <template v-slot:activator="{ on }">
@@ -421,10 +479,66 @@
                       >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
                       </v-icon>
                   </template>
+                  <!-- Each option shows its name, on-disk state and a one-line
+                       description of what it actually covers. -->
+                  <template v-slot:item="{ item, on, attrs }">
+                    <v-list-item v-bind="attrs" v-on="on" class="mtx-db-option">
+                      <v-list-item-content>
+                        <v-list-item-title class="mtx-db-option-title">
+                          <span>{{ item.label || item.key }}</span>
+                          <v-progress-circular
+                            v-if="item.downloading"
+                            :indeterminate="item.progress == null"
+                            :value="item.progress || 0"
+                            :rotate="-90"
+                            size="14" width="2" color="blue lighten-2" class="ml-2" >
+                          </v-progress-circular>
+                          <v-icon v-else x-small class="ml-2"
+                            :color="item.size != 0 ? 'green' : 'orange lighten-1'"
+                          >{{ item.size != 0 ? 'mdi-check-circle' : 'mdi-download-circle-outline' }}</v-icon>
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="mtx-db-option-desc">
+                          {{ item.description || item.final || item.url }}
+                        </v-list-item-subtitle>
+                      </v-list-item-content>
+                    </v-list-item>
+                  </template>
                 </v-select>
                 <v-btn class="ml-1" @click="canceldownload" v-if="database.downloading" icon small>
                   <v-icon>mdi-cancel</v-icon>
                 </v-btn>
+              </div>
+
+              <!-- What the selected database actually covers, plus quick access
+                   to its folder on disk. -->
+              <div v-if="isOnline && database && database.key" class="mtx-db-meta">
+                <div v-if="database.description" class="mtx-db-desc">{{ database.description }}</div>
+                <div class="mtx-db-actions">
+                  <v-chip x-small label outlined class="mtx-db-engine">
+                    {{ classifierLabel(database) }}
+                  </v-chip>
+                  <v-spacer></v-spacer>
+                  <v-tooltip bottom>
+                    <template v-slot:activator="{ on, attrs }">
+                      <v-btn x-small icon v-bind="attrs" v-on="on" @click="openDatabasePath(database)">
+                        <v-icon x-small>mdi-folder-open-outline</v-icon>
+                      </v-btn>
+                    </template>
+                    Open this database's folder on the server
+                  </v-tooltip>
+                  <v-tooltip bottom>
+                    <template v-slot:activator="{ on, attrs }">
+                      <v-btn
+                        x-small icon color="red darken-1" v-bind="attrs" v-on="on"
+                        :disabled="database.downloading || !dbIsOnDisk(database)"
+                        @click="confirmDeleteDatabase(database)"
+                      >
+                        <v-icon x-small>mdi-delete-outline</v-icon>
+                      </v-btn>
+                    </template>
+                    Delete this database from disk
+                  </v-tooltip>
+                </div>
               </div>
               <v-progress-linear
                 v-if="isOnline && database.downloading"
@@ -806,6 +920,44 @@ export default {
       isConnected() {
         return !!(this.socket && this.socket.connected);
       },
+      // Reference databases split by the engine that consumes them, flattened
+      // into the { header } / { divider } / item shape v-select renders as
+      // grouped options. Entries with no `type` are kraken2 (legacy default).
+      groupedDatabases() {
+        const groups = [
+          {
+            label: 'Kraken2 / Bracken',
+            match: (d) => !d.type || d.type === 'kraken2'
+          },
+          {
+            label: 'minimap2 (alignment references)',
+            match: (d) => d.type === 'minimap2'
+          },
+          {
+            label: 'Support resources (not classifiers)',
+            match: (d) => d.type === 'taxdump'
+          }
+        ]
+        const all = this.databases || []
+        const claimed = new Set()
+        const items = []
+        groups.forEach((g) => {
+          const members = all.filter((d) => d && g.match(d))
+          if (!members.length) return
+          members.forEach((m) => claimed.add(m.key))
+          if (items.length) items.push({ divider: true })
+          items.push({ header: g.label })
+          members.forEach((m) => items.push(m))
+        })
+        // Anything with an unrecognised `type` still needs to be selectable.
+        const rest = all.filter((d) => d && !claimed.has(d.key))
+        if (rest.length) {
+          if (items.length) items.push({ divider: true })
+          items.push({ header: 'Other' })
+          rest.forEach((d) => items.push(d))
+        }
+        return items
+      },
       // Rank selector items with explicit subspecies depth labels (S1, S2, ...).
       rankItems() {
         return this.sortRankCodes(this.defaultsList)
@@ -980,6 +1132,9 @@ export default {
             sampleStatus: {},
             databases: [],
             database: {},
+            // Reference-database delete confirmation
+            dbDeleteDialog: false,
+            dbPendingDelete: null,
             pathOptions: [],
             pathOptions1: [],
             pathOptions2: [],
@@ -1520,6 +1675,49 @@ export default {
           this.sendMessage({ type: 'getbundleconfig' })
           this.sendMessage({ type: 'getReportPath' })
           this.sendMessage({ type: 'getDbs' })
+        },
+        // --- reference database folder / delete ----------------------------
+        // Best on-disk location for a database entry. `fullpath` is only set by
+        // the server once the DB has actually been found on disk, so fall back
+        // to the canonical `final` folder name for entries not downloaded yet.
+        dbLocalPath(db) {
+          if (!db) return null
+          return db.fullpath || db.final || null
+        },
+        // Only offer delete for databases the server has actually found on disk.
+        dbIsOnDisk(db) {
+          if (!db) return false
+          return !!(db.exists || (db.size && db.size !== 0))
+        },
+        // Human-readable engine name for a database entry.
+        classifierLabel(db) {
+          if (!db) return ''
+          if (db.type === 'minimap2') return 'minimap2'
+          if (db.type === 'taxdump') return 'support resource'
+          return 'kraken2 / bracken'
+        },
+        // Ask the server to reveal the database folder in the OS file browser.
+        // Sending the key (not a client-built path) lets the server resolve
+        // aliases and nested kraken2 index dirs itself.
+        openDatabasePath(db) {
+          if (!db) return
+          this.sendMessage({ type: 'openPath', path: db.fullpath || null, database: db.key })
+        },
+        confirmDeleteDatabase(db) {
+          if (!db) return
+          this.dbPendingDelete = db
+          this.dbDeleteDialog = true
+        },
+        cancelDeleteDatabase() {
+          this.dbDeleteDialog = false
+          this.dbPendingDelete = null
+        },
+        deleteDatabase() {
+          const db = this.dbPendingDelete
+          this.dbDeleteDialog = false
+          this.dbPendingDelete = null
+          if (!db) return
+          this.sendMessage({ type: 'deleteDatabase', database: db.key })
         },
         // --- backend dependency manager ------------------------------------
         openHealth() {
@@ -2968,6 +3166,46 @@ th, td {
 }
 .mtx-set-db-key { font-weight: 700; color: #1e3a5f; min-width: 90px; }
 .mtx-set-db-path { color: #64748b; word-break: break-all; font-size: 11.5px; }
+.mtx-set-db-btn { flex: 0 0 auto; }
+
+/* ---- Reference database selector (sidebar) ---- */
+.mtx-db-option-title {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+/* v-list-item__subtitle truncates to one line by default — let the
+   description wrap and the option row grow to fit it. */
+.mtx-db-option-desc {
+  font-size: 11px !important;
+  line-height: 1.35;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  color: #64748b !important;
+  margin-top: 2px;
+}
+.mtx-db-option {
+  max-width: 440px;
+  height: auto;
+  min-height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.mtx-db-meta { margin-top: 6px; }
+.mtx-db-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.mtx-db-actions { display: flex; align-items: center; gap: 2px; }
+.mtx-db-engine {
+  font-size: 10px !important;
+  letter-spacing: .03em;
+  color: #475569 !important;
+}
 .mtx-set-empty { font-size: 12px; color: #94a3b8; font-style: italic; }
 .mtx-set-config-preview { margin-top: 10px; }
 .mtx-set-config-label { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }

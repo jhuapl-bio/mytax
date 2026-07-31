@@ -27,25 +27,38 @@ export  class Orchestrator {
         this.configuration = path.join(this.savePath, "config.json")
         this.historyPath = path.join(this.savePath, "runs")
         this.databasespath = path.join(this.homepath, ".config", "mytax2", "databases")
+        // Each entry declares the engine it feeds (`type`) and a short
+        // `description`; the frontend groups the database selectors by `type`
+        // and shows the description under each option. `type: 'kraken2'` is the
+        // implicit default for legacy entries that omit it.
         this.databases = [
             {
                 url: 'https://genome-idx.s3.amazonaws.com/kraken/k2_viral_20231009.tar.gz',
                 decompress: true,
-                final: 'k2_viral_20231009', 
+                type: 'kraken2',
+                label: 'Viral (RefSeq, 2023-10-09)',
+                description: 'RefSeq viral genomes only. Small and fast — good for viral screening, but anything non-viral comes back unclassified.',
+                final: 'k2_viral_20231009',
                 key: 'k2_viral_20231009',
                 fullpath: path.join(this.databasespath, "k2_viral_20231009")
             },
             {
                 url: 'https://genome-idx.s3.amazonaws.com/kraken/k2_viral_20250714.tar.gz',
                 decompress: true,
-                final: 'k2_viral_20250714', 
+                type: 'kraken2',
+                label: 'Viral (RefSeq, 2025-07-14)',
+                description: 'Same scope as the 2023 viral set with a newer RefSeq build. Prefer this one unless you need to reproduce older results.',
+                final: 'k2_viral_20250714',
                 key: 'k2_viral_20250714',
                 fullpath: path.join(this.databasespath, "k2_viral_20250714")
             },
             {
                 url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/flukraken2.tar.gz",
                 decompress: true,
-                final: 'flukraken2', 
+                type: 'kraken2',
+                label: 'Influenza (flukraken2)',
+                description: 'Purpose-built influenza database with segment and subtype-level labels. Use for flu typing, not general metagenomics.',
+                final: 'flukraken2',
                 nested: true,
                 key: 'flukraken2',
                 fullpath: path.join(this.databasespath, "flukraken2")
@@ -53,22 +66,42 @@ export  class Orchestrator {
             {
                 url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/marine_mammal_mitochondrion-refseq-20210629.tar.gz",
                 decompress: true,
-                final: 'marine_mammal_mitochondrion-refseq-20210629', 
-                nested: true, 
+                type: 'kraken2',
+                label: 'Marine mammal mitogenomes (2021-06-29)',
+                description: 'Marine mammal mitochondrial genomes from RefSeq. Intended for eDNA / mitochondrial barcoding work.',
+                final: 'marine_mammal_mitochondrion-refseq-20210629',
+                nested: true,
                 key: 'MarineMitogenome20210629',
                 fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20210629")
             },
             {
+                url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08_GB_20260626.tar.gz",
+                decompress: true,
+                type: 'kraken2',
+                label: 'PlusPFP 8 GB (2026-06-26)',
+                description: 'Broad-spectrum: bacteria, archaea, viruses, plasmids, protozoa, fungi and human, capped at 8 GB. The general-purpose default.',
+                final: 'k2_pluspfp_08_GB_20260626',
+                nested: false,
+                key: 'pluspfp8 20260626',
+                fullpath: path.join(this.databasespath, "k2_pluspfp_08_GB_20260626")
+            },
+            {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08gb_20250714.tar.gz",
                 decompress: true,
+                type: 'kraken2',
+                label: 'PlusPFP 8 GB (2025-07-14)',
+                description: 'Same broad-spectrum scope as the 2026 PlusPFP build, one release older.',
                 final: 'k2_pluspfp_08gb_20250714',
                 nested: false,
-                key: 'pluspf8',
+                key: 'pluspf8_20250714',
                 fullpath: path.join(this.databasespath, "k2_pluspfp_08gb_20250714")
             },
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Greengenes13.5_20200326.tgz",
                 decompress: true,
+                type: 'kraken2',
+                label: '16S — Greengenes 13.5',
+                description: '16S rRNA amplicon reference. Only classifies 16S reads — shotgun data will come back mostly unclassified.',
                 final: '16S_Greengenes_k2db',
                 nested: true,
                 key: 'Greengenes13.5',
@@ -80,6 +113,9 @@ export  class Orchestrator {
                 // name; `aliases` keeps detecting any legacy / renamed copies.
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Silva132_20200326.tgz",
                 decompress: true,
+                type: 'kraken2',
+                label: '16S — SILVA r132',
+                description: '16S rRNA amplicon reference (SILVA release 132). 16S reads only.',
                 final: '16S_SILVA132_k2db',
                 nested: true,
                 key: 'SILVA132',
@@ -89,6 +125,9 @@ export  class Orchestrator {
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_Silva138_20200326.tgz",
                 decompress: true,
+                type: 'kraken2',
+                label: '16S — SILVA r138',
+                description: '16S rRNA amplicon reference (SILVA release 138, newer curation than r132). 16S reads only.',
                 final: '16S_SILVA138_k2db',
                 nested: true,
                 key: 'SILVA138',
@@ -98,6 +137,9 @@ export  class Orchestrator {
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/16S_RDP11.5_20200326.tgz",
                 decompress: true,
+                type: 'kraken2',
+                label: '16S — RDP 11.5',
+                description: '16S rRNA amplicon reference (Ribosomal Database Project 11.5). 16S reads only.',
                 final: '16S_RDP_k2db',
                 nested: true,
                 key: 'RDP11.5',
@@ -118,6 +160,8 @@ export  class Orchestrator {
                 url: "https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.1.1.genomic.fna.gz",
                 decompress: false,
                 type: 'minimap2',
+                label: 'RefSeq viral genomes (FASTA)',
+                description: 'Nucleotide FASTA of RefSeq viral genomes for alignment-based classification. Pair with the NCBI taxdump for full lineages.',
                 final: 'viral.1.1.genomic.fna.gz',
                 key: 'minimap2_refseq_viral',
                 fullpath: path.join(this.databasespath, "viral.1.1.genomic.fna.gz")
@@ -133,6 +177,8 @@ export  class Orchestrator {
                 url: "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz",
                 decompress: true,
                 type: 'taxdump',
+                label: 'NCBI taxonomy dump',
+                description: 'Not a classifier database. Supplies nodes.dmp / names.dmp so minimap2 reports can be given full taxonomic lineages.',
                 final: 'taxdump',
                 key: 'ncbi_taxdump',
                 fullpath: path.join(this.databasespath, "taxdump")
@@ -223,6 +269,68 @@ export  class Orchestrator {
         } catch (err){
             logger.error(err)
             broadcastToAllActiveConnections("alert", { message: `Could not open ${directoryPath ? directoryPath : this.savePath}` })
+        }
+    }
+    // Reveal a reference database's folder in the host OS file browser. Resolved
+    // server-side from the db key so aliases / nested kraken2 index dirs are
+    // handled, and so the client can never point this at an arbitrary path.
+    async openDatabasePath(dbkey){
+        let db = this.databases.find((d)=>{ return d.key == dbkey })
+        if (!db){
+            logger.error(`Database ${dbkey} not found, cannot open path`)
+            broadcastToAllActiveConnections("alert", { message: `Unknown database "${dbkey}"` })
+            return
+        }
+        // For single-file references (minimap2) open the containing folder.
+        let target = db.type === 'minimap2'
+            ? path.dirname(db.fullpath || path.join(this.databasespath, db.final))
+            : (db.fullpath || this.resolveTopDir(db))
+        if (!fs.existsSync(target)){
+            // Not downloaded yet — fall back to the databases root so the user
+            // still lands somewhere useful.
+            target = this.databasespath
+        }
+        await this.openPath(target)
+    }
+    // Delete a downloaded reference database from disk. Destructive and
+    // unconditional; the frontend is responsible for confirming with the user.
+    async deleteDatabase(dbkey){
+        let index = this.databases.findIndex((d)=>{ return d.key == dbkey })
+        if (index === -1){
+            logger.error(`Database ${dbkey} not found, cannot delete`)
+            broadcastToAllActiveConnections("alert", { message: `Unknown database "${dbkey}"` })
+            return
+        }
+        let db = this.databases[index]
+        if (db.downloading){
+            broadcastToAllActiveConnections("alert", { message: `Database "${dbkey}" is downloading — cancel the download first.` })
+            return
+        }
+        try{
+            if (db.type === 'minimap2'){
+                // Single reference file.
+                await rmFile(db.fullpath || path.join(this.databasespath, db.final))
+            } else {
+                // Remove the whole top-level folder (not the resolved nested index
+                // dir) so no orphaned taxonomy/library files are left behind.
+                await rmDir(this.resolveTopDir(db))
+            }
+            logger.info(`Deleted database ${dbkey}`)
+            // Drop the stale on-disk pointer; checkdatabase only refreshes it when
+            // the folder still exists.
+            this.databases[index].fullpath = null
+            this.databases[index].exists = false
+            this.databases[index].size = 0
+            this.databases[index].progress = null
+            this.databases[index].error = null
+            await this.checkdatabase(dbkey)
+            broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
+            broadcastToAllActiveConnections('databases', this.databases)
+        } catch (err){
+            logger.error(`Could not delete database ${dbkey}: ${err}`)
+            this.databases[index].error = `${err && err.message ? err.message : err}`
+            broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
+            broadcastToAllActiveConnections("alert", { message: `Could not delete database "${dbkey}": ${this.databases[index].error}` })
         }
     }
     getDefaultSettings() {

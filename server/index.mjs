@@ -389,10 +389,27 @@ io.on('connection', (ws) => {
   })
   ws.on("openPath", async (msg) => {
     try{
+      // When a database key is supplied, let the orchestrator resolve the
+      // on-disk folder (handles aliases / nested kraken2 index dirs) rather
+      // than trusting a client-side path.
+      if (msg && msg.database){
+        await storage.orchestrator.openDatabasePath(msg.database)
+        return
+      }
       storage.orchestrator.openPath(msg.path)
     } catch(err){
         logger.error(err)
-    } 
+    }
+  })
+  // Delete a downloaded reference database from disk. The frontend confirms
+  // with the user first; this is unconditional and irreversible.
+  ws.on("deleteDatabase", async (msg) => {
+    try{
+      await storage.orchestrator.deleteDatabase(msg.database)
+    } catch(err){
+        logger.error(err)
+        ws.emit("alert", { type: 'error', message: `Could not delete database: ${err && err.message ? err.message : err}` })
+    }
   })
   ws.on("updateEntry", async (msg) => {
     try{
