@@ -1,79 +1,76 @@
-// messenger.mjs
-import { storage } from './storage.mjs';
-import {logger} from './logger.js'
-export function broadcastToAllActiveConnections(message, data) {
-    if (storage['activeConnections']) {
-        // if (message !== 'status') {
-        //     console.log(`Broadcasting ${message} to all active connections`);
-        // }
-        const activeConnections = storage['activeConnections'];
-        let i = 0
-        activeConnections.forEach((connection) => {
-            try {
-                connection.emit(message, data);
-            } catch (err) {
-                console.error(`${err} error in broadcasting to connection`);
-            } 
-            i+=1
-        });
-    } else {
-        console.error('No active connections found');
-    }
-}
+// ---------------------------------------------------------------------------
+// messenger.mjs — control-plane messaging only.
+//
+// This file used to carry the whole live-update system: an ad-hoc throttler, a
+// run-scoped batcher, and a fan-out broadcaster, all fighting each other. The
+// data plane (reports, job status, queue counters — everything that fires once
+// per fastq) now lives in protocol.mjs behind a single acked, delta-encoded
+// frame channel.
+//
+// What is left here is the CONTROL plane: rare, small, must-not-drop events
+// like alerts, run lists, database installs and health. These are fine to
+// broadcast immediately, because there are a handful of them per session rather
+// than tens of thousands.
+//
+// The queueSampleUpdate / queueJobUpdate / broadcastThrottled names are kept as
+// thin adapters so the classification pipeline did not need rewriting; they
+// simply hand off to the bus.
+// ---------------------------------------------------------------------------
 
-// Emit an event only to the connections currently viewing `run` (same scoping
-// rule the batched runUpdate flusher uses). Used for run-scoped frames like the
-// live queue board so other runs' viewers aren't spammed.
-export function emitToRunViewers(run, event, data) {
-    if (!run || !storage.activeConnections || !storage.selectedRuns) return;
-    storage.activeConnections.forEach((conn, userId) => {
-        if (storage.selectedRuns.get(userId) === run) {
-            try {
-                conn.emit(event, data);
-            } catch (err) {
-                console.error(`${err} error emitting ${event} to run viewers`);
-            }
+import { storage } from './storage.mjs';
+import { logger } from './logger.js'
+import { protocol } from './protocol.mjs'
+
+// ---- control plane ---------------------------------------------------------
+
+export function broadcastToAllActiveConnections(message, data) {
+    if (!storage.activeConnections) {
+        logger.error('No active connections found');
+        return;
+    }
+    storage.activeConnections.forEach((connection) => {
+        try {
+            connection.emit(message, data);
+        } catch (err) {
+            logger.error(`${err} error in broadcasting ${message} to connection`);
         }
     });
 }
 
+// Emit to just the connections currently viewing `run`.
+export function emitToRunViewers(run, event, data) {
+    if (!run) return;
+    for (const conn of protocol.viewers(run)) {
+        try {
+            conn.socket.emit(event, data);
+        } catch (err) {
+            logger.error(`${err} error emitting ${event} to run viewers`);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Coalescing / throttled broadcaster.
-//
-// When 400 fastqs are queued and classified in a burst, the naive path fires
-// hundreds of `queueLength`, `queueJob` and `sampledata` frames back to back.
-// That floods socket.io, causes head-of-line blocking and starves the ping
-// keepalive -> the client reports the connection as lost then regained.
-//
-// broadcastThrottled() collapses repeated events that share a `key` into a
-// single trailing emit per `wait` window, always sending the most recent
-// payload. Use it for high-frequency progress events. Keep the immediate
-// broadcastToAllActiveConnections() for low-frequency, must-not-drop events
-// (alerts, deletes, run lists, etc.).
+// Legacy trailing-edge throttle. Still used for a handful of genuinely
+// low-frequency control events (database install progress). NOT for anything on
+// the per-fastq path — that all goes through the bus now.
 // ---------------------------------------------------------------------------
-const _pending = new Map();   // key -> { message, data }
-const _timers = new Map();    // key -> timeout handle
+const _pending = new Map();
+const _timers = new Map();
 
 export function broadcastThrottled(message, data, key, wait = 250) {
     const k = key || message;
-    // Always remember the latest payload for this key.
     _pending.set(k, { message, data });
-    if (_timers.has(k)) return; // a trailing flush is already scheduled
+    if (_timers.has(k)) return;
     const timer = setTimeout(() => {
         _timers.delete(k);
         const latest = _pending.get(k);
         _pending.delete(k);
-        if (latest) {
-            broadcastToAllActiveConnections(latest.message, latest.data);
-        }
+        if (latest) broadcastToAllActiveConnections(latest.message, latest.data);
     }, wait);
-    // Don't let these timers keep the process alive on shutdown.
     if (typeof timer.unref === 'function') timer.unref();
     _timers.set(k, timer);
 }
 
-// Force-flush any pending throttled payloads immediately (e.g. when the queue
-// goes idle and we want the final state delivered without waiting out the window).
 export function flushThrottled(key) {
     const flushOne = (k) => {
         const t = _timers.get(k);
@@ -86,83 +83,36 @@ export function flushThrottled(key) {
     for (const k of Array.from(_pending.keys())) flushOne(k);
 }
 
-// ---------------------------------------------------------------------------
-// Run-scoped, batched update bus.
-//
-// A large run (1000s of fastqs) emits 1000s of per-job `status` and per-sample
-// `sampledata`/`queueJob` events. Broadcasting each one to every socket (a)
-// floods the wire so the run the user is actually looking at can't render, and
-// (b) wastes work pushing updates for runs nobody is viewing.
-//
-// Instead we:
-//   * only buffer updates for runs at least one client has selected
-//     (storage.selectedRuns),
-//   * coalesce them per sample / per job (latest wins), and
-//   * flush everything as ONE `runUpdate` frame per run on a fixed interval,
-//     delivered only to the connections viewing that run.
-//
-// Shape of a flushed frame:
-//   { run, samples: [{ samplename, data?, status? }, ...],
-//          jobs:    [{ samplename, index, job?, status?, config? }, ...] }
-// ---------------------------------------------------------------------------
-let _runBuffers = new Map(); // run -> { samples: Map(name->payload), jobs: Map(key->payload) }
+// ---- data plane adapters ---------------------------------------------------
+// Kept so sample.mjs / classifier.mjs read the same as before. All they do now
+// is hand the update to the bus, which owns coalescing, delta encoding,
+// view-scoping and backpressure.
 
-function _anyoneViewing(run) {
-    if (!run || !storage.selectedRuns) return false;
-    for (const r of storage.selectedRuns.values()) {
-        if (r === run) return true;
-    }
-    return false;
-}
-
-function _runBuffer(run) {
-    let b = _runBuffers.get(run);
-    if (!b) { b = { samples: new Map(), jobs: new Map() }; _runBuffers.set(run, b); }
-    return b;
-}
-
-// Coalesce a sample-level report/status update (latest wins per sample).
 export function queueSampleUpdate(run, samplename, payload) {
-    if (!samplename || !_anyoneViewing(run)) return;
-    const b = _runBuffer(run);
-    b.samples.set(samplename, { ...(b.samples.get(samplename) || {}), ...payload, samplename });
+    protocol.queueSampleUpdate(run, samplename, payload)
 }
 
-// Coalesce a single job's queue/status update (latest wins per sample+index).
 export function queueJobUpdate(run, samplename, index, payload) {
-    if (!samplename || !_anyoneViewing(run)) return;
-    const b = _runBuffer(run);
-    const k = `${samplename}::${index}`;
-    b.jobs.set(k, { ...(b.jobs.get(k) || {}), ...payload, samplename, index });
+    protocol.queueJobUpdate(run, samplename, index, payload)
 }
 
-let _runFlushTimer = null;
+// Queue/scheduler counters. These used to be their own broadcast events fired
+// on every enqueue and every completion; now they ride the frame.
+export function queueMetrics(run, metrics) {
+    protocol.queueMetrics(run, metrics)
+}
 
-// Start the single interval that drains the per-run buffers into one frame each.
-export function startRunUpdateFlusher(wait = 400) {
-    if (_runFlushTimer) return;
-    _runFlushTimer = setInterval(() => {
-        if (_runBuffers.size === 0 || !storage.activeConnections) return;
-        // Swap the buffer atomically so updates arriving mid-flush land in the
-        // next window instead of being lost.
-        const buffers = _runBuffers;
-        _runBuffers = new Map();
-        for (const [run, buf] of buffers.entries()) {
-            const samples = Array.from(buf.samples.values());
-            const jobs = Array.from(buf.jobs.values());
-            if (samples.length === 0 && jobs.length === 0) continue;
-            if (!_anyoneViewing(run)) continue; // viewers moved on; drop the batch
-            const frame = { run, samples, jobs };
-            storage.activeConnections.forEach((conn, userId) => {
-                if (storage.selectedRuns && storage.selectedRuns.get(userId) === run) {
-                    try {
-                        conn.emit('runUpdate', frame);
-                    } catch (err) {
-                        console.error(`${err} error emitting runUpdate`);
-                    }
-                }
-            });
-        }
-    }, wait);
-    if (typeof _runFlushTimer.unref === 'function') _runFlushTimer.unref();
+export function queueRunMeta(run, meta) {
+    protocol.queueMeta(run, meta)
+}
+
+// Start the frame flusher. Replaces startRunUpdateFlusher().
+//
+// `sampleProvider` lets the bus attach a sample's job queue to that sample's
+// first taxa payload without protocol.mjs having to know what an orchestrator
+// is.
+export function startProtocol(loadProbe, sampleProvider) {
+    if (typeof loadProbe === 'function') protocol.loadProbe = loadProbe
+    if (typeof sampleProvider === 'function') protocol.sampleProvider = sampleProvider
+    protocol.start()
 }

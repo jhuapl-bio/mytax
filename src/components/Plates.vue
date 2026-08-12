@@ -52,7 +52,7 @@
             <span v-else>Species under genus {{ drillTarget }} across samples.</span>
           </div>
           <div class="mtx-plate-canvas">
-            <div :id="`platesDiv`" class="mtx-plate-plot"></div>
+            <div ref="platesDiv" class="mtx-plate-plot"></div>
             <aside class="mtx-parent-legend" v-if="parentLegend.length">
               <div class="mtx-parent-legend-title">{{ parentLegendTitle }}</div>
               <div class="mtx-parent-legend-sub">{{ parentLegendUnit }}</div>
@@ -103,12 +103,13 @@
           this.makePlot()
         }
       },
-      inputdata: {
-        deep:true,
-        handler(data){
-          if (data){
-            this.makePlot()
-          }
+      // Shallow, not deep. `inputdata` is now a computed that returns a fresh
+      // object whenever the store changes, so the reference alone tells us the
+      // data moved. A deep watcher would additionally walk every row of every
+      // sample on each update purely to reach the same conclusion.
+      inputdata(data){
+        if (data){
+          this.makePlot()
         }
       },
     },
@@ -179,10 +180,63 @@
         clearTimeout(this._rsz)
         this._rsz = setTimeout(() => { if (this.inputdata) this.makePlot() }, 150)
       },
+      // The plot div, as a d3 selection scoped to THIS component instance.
+      // Plates is mounted in several tabs at once, so global `#platesDiv`
+      // selectors would render into (or wipe) the wrong instance.
+      plotDiv(){
+        return d3.select(this.$refs.platesDiv)
+      },
+      // The heatmap <svg> for this instance (empty selection if not drawn yet).
+      plotSvg(){
+        return this.plotDiv().select('svg.mtx-plates-svg')
+      },
+      // The tooltip lives on <body>, so it needs an instance-unique id too.
+      tipId(){
+        return `plateHoverTip-${this._uid}`
+      },
+      removeTooltip(){
+        d3.select(`#${this.tipId()}`).remove()
+      },
+      // The container only has a real width once its tab pane is visible.
+      // While the pane is hidden (Vuetify keeps inactive tabs in the DOM with
+      // display:none) getBoundingClientRect().width is 0, and a plot drawn at
+      // that point is invisible and never redrawn — which is why new data that
+      // arrived while you were on another tab used to require a page reload.
+      isVisible(){
+        const el = this.$refs.platesDiv
+        if (!el) return false
+        if (el.offsetParent === null) return false
+        return el.getBoundingClientRect().width > 0
+      },
+      // Redraw when the container goes from hidden (0 width) to visible, i.e.
+      // when the user switches back to this tab, so the plot always reflects
+      // whatever data arrived while it was hidden.
+      observeVisibility(){
+        const el = this.$refs.platesDiv
+        if (!el || typeof ResizeObserver === 'undefined') return
+        // -1 = not measured yet; mounted() owns the very first draw.
+        this._lastWidth = -1
+        this._ro = new ResizeObserver((entries) => {
+          const w = entries[0] ? entries[0].contentRect.width : 0
+          const prev = this._lastWidth
+          this._lastWidth = w
+          if (w === 0) return
+          // First measurement with nothing deferred: mounted() draws it.
+          if (prev === -1 && !this._pendingPlot) return
+          // Replot when the pane becomes visible again, or when a draw was
+          // deferred because it was hidden. Plain resizes are handled by the
+          // debounced window resize listener.
+          if (prev <= 0 || this._pendingPlot){
+            this._pendingPlot = false
+            this.makePlot()
+          }
+        })
+        this._ro.observe(el)
+      },
       // Hovering a parent legend row spotlights that group in the heatmap:
       // its band brightens and all cells outside the group fade back.
       highlightParent(src){
-        const svg = d3.select('#svgPlates')
+        const svg = this.plotSvg()
         if (svg.empty() || !src) return
         const keyOf = (d) => this.isDrilledToSpecies ? (d && d.source) : (d && d.top)
         svg.selectAll('g.nodestop2').style('opacity', (d) => (d && keyOf(d) === src) ? 1 : 0.15)
@@ -195,7 +249,7 @@
         })
       },
       clearParentHighlight(){
-        const svg = d3.select('#svgPlates')
+        const svg = this.plotSvg()
         if (svg.empty()) return
         svg.selectAll('g.nodestop2').style('opacity', 1)
         svg.selectAll('rect.mtx-band').style('opacity', 0.12)
@@ -237,11 +291,18 @@
 
       },
       makePlot(){
-        let div = d3.selectAll("#platesDiv")
-        d3.selectAll("#svgPlates").remove()
-        d3.selectAll("#svgLegend").remove()
-        d3.selectAll("#svgPlatesEmpty").remove()
-        d3.selectAll("#plateHoverTip").remove()
+        let div = this.plotDiv()
+        if (div.empty()) return
+        // Hidden tab: defer. The ResizeObserver replots as soon as the pane is
+        // shown, so data that lands while the user is on another tab renders on
+        // the way back in instead of waiting for a browser refresh.
+        if (!this.isVisible()){
+          this._pendingPlot = true
+          return
+        }
+        this._pendingPlot = false
+        div.selectAll('svg').remove()
+        this.removeTooltip()
         this.parentLegend = []
         this.parseddata = {}
         if (!this.inputdata || Object.keys(this.inputdata).length === 0) {
@@ -413,7 +474,7 @@
           const width = element ? element.getBoundingClientRect().width : 700
           const emptyHeight = 180
           this.height = emptyHeight
-          let emptySvg = div.append('svg').attr('id', 'svgPlatesEmpty')
+          let emptySvg = div.append('svg').attr('class', 'mtx-plates-empty')
             .attr('width', '100%')
             .attr('viewBox', `0 0 ${Math.max(300, width)} ${emptyHeight}`)
           emptySvg.append('text')
@@ -475,7 +536,7 @@
           this.boxHeight = 26
           var margin = {top: 150, right: 24, bottom: 30, left: 260}
         this.height = this.boxHeight*unique_taxids.length + margin.top + margin.bottom
-        d3.select(`#platesDiv`).style("height", `${this.height} px`)
+        div.style("height", `${this.height} px`)
 
         var width = Math.max(280, this.width - margin.left - margin.right),
               height = Math.max(120, this.height - margin.top - margin.bottom);
@@ -485,7 +546,7 @@
         this.boxWidth = Math.max(18, (width / Math.max(1, samplenames.length)))
         
         
-        var svgRoot = div.append('svg').attr("id", "svgPlates")
+        var svgRoot = div.append('svg').attr("class", "mtx-plates-svg")
               .attr("width", "100%")
               .attr("preserveAspectRatio", "xMinYMin meet")
               .attr("viewBox", `0 0 ${this.width} ${height + margin.top + margin.bottom}`)
@@ -505,7 +566,7 @@
         // — it tracks the cursor in viewport coordinates.
         const tooltip = d3.select('body')
           .append('div')
-          .attr('id', 'plateHoverTip')
+          .attr('id', this.tipId())
           .attr('class', 'mtx-plate-tip')
           .style('position', 'fixed')
           .style('pointer-events', 'none')
@@ -752,15 +813,23 @@
       }
     },
     mounted(){
-      if (this.inputdata){
-        this.makePlot()
-      }
+      this.observeVisibility()
+      // Wait a tick so the tab pane has been laid out before we measure it.
+      this.$nextTick(() => {
+        if (this.inputdata){
+          this.makePlot()
+        }
+      })
       window.addEventListener('resize', this.onResize)
     },
     beforeDestroy(){
       window.removeEventListener('resize', this.onResize)
       clearTimeout(this._rsz)
-      d3.selectAll('#plateHoverTip').remove()
+      if (this._ro){
+        this._ro.disconnect()
+        this._ro = null
+      }
+      this.removeTooltip()
     }
   }
 </script>

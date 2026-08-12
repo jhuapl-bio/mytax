@@ -1,6 +1,7 @@
 import { logger } from './logger.js'
 import { storage } from './storage.mjs'
-import { emitToRunViewers, broadcastThrottled } from './messenger.mjs'
+import { broadcastThrottled, queueMetrics } from './messenger.mjs'
+import { protocol } from './protocol.mjs'
 
 // ---------------------------------------------------------------------------
 // Round-robin job scheduler.
@@ -41,6 +42,11 @@ class RoundRobinScheduler {
 		this.lastServedKey = null
 		// number of jobs currently released to the PQueue (in flight).
 		this.active = 0
+		// in-flight count broken down BY RUN. The global `active` count can't tell
+		// the UI which run the currently-running sample belongs to, which is what
+		// the run dropdown needs to show a "running here" marker while you're
+		// looking at a different run.
+		this.activeByRun = new Map()
 		// per-run board-emit throttle timers.
 		this._boardTimers = new Map()
 	}
@@ -124,11 +130,16 @@ class RoundRobinScheduler {
 			const entry = this._next()
 			if (!entry) break
 			this.active += 1
+			this._bumpActiveRun(entry.runName, 1)
+			// push the queued->running transition out promptly (throttled to 300ms)
+			// so the run dropdown's running marker tracks reality
+			this.scheduleGlobalBoard()
 			Promise.resolve()
 				.then(() => entry.exec())
 				.catch((err) => logger.error(`${err} scheduler job ${entry.jobId} failed`))
 				.finally(() => {
 					this.active -= 1
+					this._bumpActiveRun(entry.runName, -1)
 					this.scheduleBoard(entry.runName)
 					this.emitLength()
 					this.scheduleGlobalBoard()
@@ -138,6 +149,15 @@ class RoundRobinScheduler {
 		this.emitLength()
 	}
 
+	// Keep the per-run in-flight tally, dropping runs back to zero entries so the
+	// map doesn't grow forever across many runs.
+	_bumpActiveRun(runName, delta) {
+		if (!runName) return
+		const next = (this.activeByRun.get(runName) || 0) + delta
+		if (next > 0) this.activeByRun.set(runName, next)
+		else this.activeByRun.delete(runName)
+	}
+
 	// total jobs still waiting + the one(s) running, for the UI badge.
 	totalPending() {
 		let n = this.priorityFront.length
@@ -145,11 +165,20 @@ class RoundRobinScheduler {
 		return n
 	}
 
+	// Queue depth no longer gets its own broadcast event. It is folded into each
+	// connection's next frame, so a burst of 800 enqueues produces zero extra
+	// socket traffic -- the counter simply reads higher on the frame that was
+	// going out anyway.
 	emitLength() {
 		try {
-			broadcastThrottled('queueLength', { data: this.totalPending() + this.active, type: 'scheduler' }, 'queueLength')
+			const total = this.totalPending() + this.active
+			for (const conn of protocol.connections.values()) {
+				if (conn.run) {
+					conn.pendingQueue = { ...(conn.pendingQueue || {}), total, active: this.active }
+				}
+			}
 		} catch (err) {
-			logger.error(`${err} error emitting scheduler queueLength`)
+			logger.error(`${err} error recording scheduler queue length`)
 		}
 	}
 
@@ -294,15 +323,18 @@ class RoundRobinScheduler {
 		}
 	}
 
+	// The per-run board rides the frame too (latest-wins), so it can never
+	// arrive out of order with respect to the job status it describes -- which
+	// is what used to make the board briefly disagree with the sample rows.
 	scheduleBoard(runName, wait = 250) {
 		if (!runName) return
 		if (this._boardTimers.has(runName)) return
 		const timer = setTimeout(() => {
 			this._boardTimers.delete(runName)
 			try {
-				emitToRunViewers(runName, 'queueBoard', this.getBoard(runName))
+				queueMetrics(runName, { board: this.getBoard(runName), total: this.totalPending() + this.active, active: this.active })
 			} catch (err) {
-				logger.error(`${err} error emitting queueBoard`)
+				logger.error(`${err} error recording queue board`)
 			}
 		}, wait)
 		if (typeof timer.unref === 'function') timer.unref()
@@ -325,7 +357,7 @@ class RoundRobinScheduler {
 		const bump = (runName, by) => {
 			if (!runName) return
 			let r = runs.get(runName)
-			if (!r) { r = { run: runName, pending: 0, lanes: 0 }; runs.set(runName, r) }
+			if (!r) { r = { run: runName, pending: 0, lanes: 0, running: 0, samples: [] }; runs.set(runName, r) }
 			r.pending += by
 		}
 		for (const lane of this.lanes.values()) {
@@ -334,10 +366,29 @@ class RoundRobinScheduler {
 			if (r) r.lanes += 1
 		}
 		for (const e of this.priorityFront) bump(e.runName, 1)
+		// Fold in the in-flight counts. A run can have 0 pending but still be
+		// running (its last file is classifying), so make sure it shows up here.
+		for (const [runName, n] of this.activeByRun.entries()) {
+			bump(runName, 0)
+			const r = runs.get(runName)
+			if (r) r.running = n
+		}
+		// Which sample(s) are actually executing right now, so the dropdown
+		// tooltip can name them rather than just saying "running".
+		for (const [runName, r] of runs.entries()) {
+			if (r.running > 0) {
+				r.samples = Array.from(this.lanes.values())
+					.filter((l) => l.runName === runName)
+					.map((l) => l.sample)
+					.slice(0, 5)
+			}
+		}
 		return {
 			runs: Array.from(runs.values()),
 			total: this.totalPending() + this.active,
-			active: this.active
+			active: this.active,
+			// runs with at least one job executing right now
+			activeRuns: Array.from(this.activeByRun.keys())
 		}
 	}
 

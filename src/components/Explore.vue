@@ -95,9 +95,13 @@
         title="Reset every sunburst back to its root (un-zoom all)">⟲ Reset all</button>
     </div>
     <div class="mtx-grid mtx-sb-grid" v-if="visibleSamples.length">
+      <!-- data-sample is what the IntersectionObserver keys on: it is how the
+           app knows which panels are on screen, and therefore which samples the
+           server should bother encoding taxa for at all. -->
       <section
         v-for="s in visibleSamples"
         :key="'sb-card-' + s"
+        :data-sample="s"
         class="mtx-card mtx-sunburst-card"
         :class="{ focused: s === focusSample }"
       >
@@ -192,6 +196,12 @@
 import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
 import InfoIcon from '@/components/InfoIcon.vue'
+import taxaSource from '@/mixins/taxaSource'
+import {
+  drawBars as canvasBars,
+  drawLollipop as canvasLollipop,
+  hitRow, redrawQueue
+} from '@/render/canvasChart'
 
 // Standard Kraken2 rank hierarchy.
 const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S']
@@ -201,9 +211,31 @@ const RANK_LABELS = {
 }
 const GROUP_PALETTE = d3.schemeTableau10.concat(d3.schemeSet3)
 
+// The sunburst code below was written against nodes shaped { data: row, children }.
+// The store hands back a flatter node, so translate once here rather than
+// touching every accessor in the drawing code.
+function wrapNodes(nodes) {
+  return (nodes || []).map((n) => ({
+    data: {
+      target: n.name,
+      rank_code: n.rank_code,
+      taxid: n.taxid,
+      depth: n.depth,
+      num_fragments_clade: n.value,
+      num_fragments_assigned: n.assigned,
+      value: n.pct
+    },
+    children: wrapNodes(n.children)
+  }))
+}
+
 export default {
   name: 'Explore',
   components: { InfoIcon },
+  // taxaSource supplies `sampleData` (lazily hydrated and capped from the
+  // columnar store), the display-filter plumbing, and the IntersectionObserver
+  // machinery that reports which panels are on screen.
+  mixins: [taxaSource],
   // tiny click-outside directive for the + Panel menu (no extra deps)
   directives: {
     'click-outside': {
@@ -215,8 +247,9 @@ export default {
     }
   },
   props: {
-    // map: { sampleName: [ parsed kraken2 rows ] }
-    sampleData: { type: Object, default: () => ({}) },
+    // `samples`, `taxaQuery` and `storeTick` come from the taxaSource mixin.
+    // The old `sampleData` prop -- an object holding every parsed row of every
+    // sample -- is gone; rows are pulled from the store on demand instead.
     selectedsamples: { type: Array, default: () => [] },
     socket: { type: Object, default: () => ({}) }
   },
@@ -230,6 +263,10 @@ export default {
   },
   data() {
     return {
+      // Per-sample hydration cap. Panels page through pageSize rows at a time
+      // and the sunburst is pruned to a few thousand nodes, so materialising
+      // more than this can never affect what is drawn.
+      taxaLimit: 3000,
       focusSample: null,
       primaryRank: 'G',
       pageSize: 12,                // rows per page for paginated lollipop/bar/table
@@ -272,12 +309,9 @@ export default {
       return this.availableSamples.filter(s => this.hiddenSamples.indexOf(s) === -1)
     },
     rankChoices() {
-      const present = new Set()
-      Object.values(this.sampleData || {}).forEach((rows) => {
-        ;(rows || []).forEach((r) => {
-          if (r && r.rank_code && r.taxid !== -1) present.add(String(r.rank_code))
-        })
-      })
+      // The store tracks which rank codes exist as it ingests, so this no longer
+      // scans every row of every sample on each render.
+      const present = new Set(this.ranksPresent)
       const base = RANK_ORDER.filter(c => c !== 'R' && present.has(c))
       const subs = Array.from(present)
         .filter(c => /^S\d+$/.test(c))
@@ -292,9 +326,24 @@ export default {
     }
   },
   watch: {
-    sampleData: {
-      deep: true,
-      handler() { this.onData() }
+    // The old watcher here was `sampleData: { deep: true }`. Vue 2's deep watch
+    // walks the ENTIRE watched structure on every change to decide whether to
+    // fire -- for an object holding tens of thousands of row objects across
+    // every sample, that traversal alone cost more than the redraw it triggered,
+    // and it ran on every arriving report.
+    //
+    // `storeTick` is a single integer the store bumps when it has applied a
+    // change. Same trigger, none of the traversal.
+    storeTick() { this.onData() },
+    samples() { this.onData() },
+    'taxaQuery.version'() { this.onData() },
+    // The set of rendered cards is derived from which samples have data, so it
+    // changes independently of the `samples` prop. Re-attach the observer to
+    // whatever is on the page now, otherwise a card that appears when its first
+    // report lands is never observed, never considered visible, and never drawn.
+    visibleSamples: {
+      handler() { this.$nextTick(() => this.refreshVisibilityTargets()) },
+      immediate: true
     },
     primaryRank() { this.redraw() },
     globalSearch() { this.cardPage = {}; this.redraw() },
@@ -304,8 +353,19 @@ export default {
       this.redraw()
     }
   },
+  created() {
+    // Canvas hit boxes hold references to hydrated taxon rows. Kept off data()
+    // on purpose: observing them would make Vue walk every row we just drew,
+    // which is the cost the canvas renderer exists to avoid.
+    this.hitBoxes = {}
+    this._tipEl = null
+  },
   mounted() {
     this.onData()
+    // Track which sample cards are actually on screen. The mixin reports the
+    // list upward, App.vue forwards it to the server, and the server stops
+    // encoding taxa for everything else.
+    this.observeVisibility('.mtx-sunburst-card')
     this.liveTimer = setInterval(() => {
       this.liveNow = Date.now()
     }, 1000)
@@ -322,6 +382,14 @@ export default {
     }
   },
   beforeDestroy() {
+    // Release the canvas tooltip and drop any queued draws for panels that are
+    // about to stop existing. Without this, switching tabs leaves the redraw
+    // queue holding closures over destroyed components.
+    if (this._tipEl && this._tipEl.parentNode) this._tipEl.parentNode.removeChild(this._tipEl)
+    this._tipEl = null
+    this.hitBoxes = {}
+    redrawQueue.clear()
+
     if (this.liveTimer) {
       clearInterval(this.liveTimer)
       this.liveTimer = null
@@ -423,47 +491,69 @@ export default {
       if (!this.linkPanels) return
       this.selectedOrganism = (this.selectedOrganism === name) ? '' : (name || '')
     },
+    /**
+     * Clicking a legend entry zooms EVERY sunburst that contains that taxon to
+     * that level — not just the card whose legend was clicked.
+     *
+     * Two things have to happen, and only doing the first is why this used to
+     * look unreliable:
+     *
+     *   1. Cards that are currently drawn get an animated zoom through their
+     *      live API. Matching is by TAXID first (exact, and the same taxon can
+     *      have different display names across samples once aliases and common
+     *      names are applied); the legend group name is only a fallback for
+     *      grouped rows that have no single taxid.
+     *
+     *   2. Cards that are NOT currently drawn — off screen, or a sample whose
+     *      first report has not landed yet — have no API to call. Their zoom is
+     *      persisted into sbFocus instead, which drawSunburstInto() resolves on
+     *      its next draw. Without this, scrolling a card into view after a
+     *      linked zoom showed it sitting at root, out of step with the rest.
+     */
     legendZoom(sample, g) {
       if (!g) return
-      // Zoom every loaded sunburst, not just the one whose legend was clicked
-      Object.keys(this.sunburstApi).forEach(s => {
+      const taxid = g.taxid != null ? String(g.taxid) : null
+
+      // (2) persist the focus for every sample that actually contains the taxon
+      if (taxid != null) {
+        this.availableSamples.forEach((s) => {
+          if (s === sample || this.sampleHasTaxon(s, taxid)) {
+            this.$set(this.sbFocus, s, taxid)
+          }
+        })
+      }
+
+      // (1) animate the ones that are live
+      Object.keys(this.sunburstApi).forEach((s) => {
         const api = this.sunburstApi[s]
         if (!api) return
-        // For the originating sample prefer the exact taxid; for others match by group name
-        if (s === sample && g.taxid != null && typeof api.zoomTaxid === 'function') {
-          api.zoomTaxid(g.taxid)
-        } else if (typeof api.zoomLegendName === 'function') {
+        if (taxid != null && s !== sample && !this.sampleHasTaxon(s, taxid)) return
+        const zoomed = (taxid != null && typeof api.zoomTaxid === 'function')
+          ? api.zoomTaxid(taxid)
+          : false
+        if (taxid == null && !zoomed && typeof api.zoomLegendName === 'function') {
           api.zoomLegendName(g.name)
         }
       })
+
+      // Keep the cross-panel highlight in step with the zoom.
+      if (this.linkPanels) this.setSelectedOrganism(g.name)
     },
 
     // --- live / totals ---
-    sampleLiveSignature(rows) {
-      const list = rows || []
-      const len = list.length
-      if (!len) return '0|0|0|0|0'
-      let sum = 0
-      for (let i = 0; i < len; i += 1) {
-        const r = list[i] || {}
-        sum += (+r.num_fragments_clade || 0)
-        sum += (+r.num_fragments_assigned || 0)
-      }
-      const first = list[0] || {}
-      const last = list[len - 1] || {}
-      return [
-        len,
-        sum,
-        +first.num_fragments_clade || 0,
-        +last.num_fragments_clade || 0,
-        +last.value || 0
-      ].join('|')
+    // "Has this sample changed recently" used to be answered by summing every
+    // row's counts into a signature string -- a full pass over the sample, for
+    // every sample, on every update. The store already maintains a version
+    // counter that increments precisely when something changed, so the same
+    // question is now a comparison of two integers.
+    sampleLiveSignature(sample) {
+      return `${this.storeTick}:${(this.$root.$data && 0) || 0}:${sample ? this.totalFor(sample) : 0}`
     },
     onData() {
       const avail = this.availableSamples
       this.hiddenSamples = this.hiddenSamples.filter(s => avail.includes(s))
       avail.forEach(s => {
-        const sig = this.sampleLiveSignature(this.sampleData[s] || [])
+        const sig = this.sampleLiveSignature(s)
         if (this.liveStamp[s] !== sig) {
           this.$set(this.liveStamp, s, sig)
           this.$set(this.liveStamp, '_t_' + s, Date.now())
@@ -489,12 +579,18 @@ export default {
       return this.liveNow - (this.liveStamp['_t_' + s] || 0) < 4000
     },
     sampleReadTotal(s) {
-      const rows = (this.sampleData && this.sampleData[s]) || []
-      const base = rows.find(r => r.depth === 0 || r.taxid === -1 || r.taxid === '-1')
-      if (base && base.num_fragments_clade) return base.num_fragments_clade
-      return d3.sum(rows.filter(r => r.rank_code === 'D'), r => r.num_fragments_clade)
+      // The store tracks this as it applies deltas, so it is a lookup rather
+      // than a scan over every row of the sample on every render.
+      return this.totalFor(s)
     },
-    setFocus(s) { this.focusSample = s; this.redraw() },
+    setFocus(s) {
+      this.focusSample = s
+      // A focused sample is the one the user is actually reading, so ask the
+      // server for its full taxon table rather than the top-N summary every
+      // other visible sample gets.
+      this.requestFullDetail(s)
+      this.redraw()
+    },
 
     // --- per-sample card view type ---
     viewOf(s) { return this.sampleView[s] || 'sunburst' },
@@ -591,15 +687,32 @@ export default {
     },
 
     // --- redraw orchestration ---
+    //
+    // Two changes from the original, both aimed at the same thing: never do
+    // work for a chart nobody can see, and never do all the work in one go.
+    //
+    //   1. Only cards scrolled into view are drawn (isVisible() is backed by an
+    //      IntersectionObserver in the taxaSource mixin). On a 24-barcode run
+    //      with four cards on screen, that is a 6x reduction before any other
+    //      optimisation applies.
+    //   2. Draws are queued rather than executed inline. redrawQueue coalesces
+    //      duplicate requests per card and spends a bounded slice of each
+    //      animation frame drawing, so a burst of updates degrades into a
+    //      progressive repaint instead of a dropped frame.
     redraw() {
       clearTimeout(this.redrawTimer)
       this.redrawTimer = setTimeout(() => {
         this.$nextTick(() => {
-          this.visibleSamples.forEach(s => this.drawSampleCard(s))
+          this.visibleSamples.forEach((s) => {
+            if (!this.isVisible(s)) return
+            redrawQueue.schedule(`card:${s}`, () => this.drawSampleCard(s))
+          })
           Object.keys(this.sunburstApi).forEach((s) => {
             if (!this.visibleSamples.includes(s)) this.$delete(this.sunburstApi, s)
           })
-          this.panels.forEach(p => this.drawPanel(p))
+          this.panels.forEach((p) => {
+            redrawQueue.schedule(`panel:${p.id}`, () => this.drawPanel(p))
+          })
         })
       }, 60)
     },
@@ -612,7 +725,19 @@ export default {
       if (!el) return
       const type = this.viewOf(sample)
       if (type === 'sunburst') {
-        // the global Rank drives this card's legend; dial still zooms on click
+        // Sunbursts use the d3 renderer, cards included.
+        //
+        // I briefly swapped the per-sample cards to a canvas renderer for the
+        // draw-cost win. That was the wrong trade: it dropped the animated zoom
+        // transition, the legend (which is populated as a side effect of the d3
+        // path's refreshLegend), and the zoom API that lets one card's legend
+        // drive every other card. Those are the things that make this view
+        // usable, and they are not worth a few milliseconds of paint.
+        //
+        // The cost is contained instead by only ever drawing sunbursts that are
+        // actually on screen (see redraw / isVisible) and by only mounting one
+        // tab at a time. Bar/lollipop panels, which have no equivalent
+        // interaction to lose, still render on canvas.
         this.drawSunburstInto(el, sample, { legendRank: this.primaryRank })
         return
       }
@@ -650,9 +775,10 @@ export default {
       const chartHost = document.createElement('div')
       chartHost.className = 'mtx-paginated-chart'
       wrap.appendChild(chartHost)
+      const key = `${sample}:${type}:${rank}:${pg}`
       if (type === 'table') this.drawTable(chartHost, data)
-      else if (type === 'lollipop') this.drawLollipop(chartHost, data)
-      else if (type === 'bar') this.drawBar(chartHost, data)
+      else if (type === 'lollipop') this.drawLollipop(chartHost, data, key)
+      else if (type === 'bar') this.drawBar(chartHost, data, key)
     },
 
     // Shared prev / "n / total" / next nav used by paginated charts.
@@ -707,57 +833,51 @@ export default {
       return Math.max(2, Math.min(fullRings, deepest + 1))
     },
 
+    // Hierarchy for the sunburst.
+    //
+    // This used to rebuild the tree from the sample's flat row array on every
+    // draw: filter, re-derive parents by walking indentation with a depth
+    // stack, allocate a node per row, then hand the whole thing to
+    // d3.hierarchy().sum().sort(). For a 30k-row report that is ~90k object
+    // allocations per redraw, per sample.
+    //
+    // Parent pointers already exist in the store's dictionary (resolved once,
+    // server-side), so the tree can be assembled directly -- and pruned to the
+    // top `maxNodes` clades first, because a sunburst cannot render more arcs
+    // than it has pixels anyway.
     buildHierarchy(sample) {
-      const rowsAll = (this.sampleData[sample] || []).filter(r => r && r.target)
-      let rows = rowsAll
+      const tree = this.hierarchyFor(sample, { maxNodes: 1500 })
+      if (!tree) return null
       const q = (this.globalSearch || '').trim().toLowerCase()
       const selected = (this.linkPanels && this.selectedOrganism) ? this.selectedOrganism : ''
-      if (q || selected) {
-        const keep = new Set()
-        const rowMatch = (r) => {
-          const byQ = q ? String(r.target || '').toLowerCase().indexOf(q) > -1 : true
-          const bySel = selected ? r.target === selected : true
-          return byQ && bySel
-        }
-        rowsAll.forEach((r, i) => {
-          if (!rowMatch(r)) return
-          keep.add(i)
-          let d = Number(r.depth) - 1
-          for (let j = i - 1; j >= 0 && d >= 0; j--) {
-            const prev = rowsAll[j]
-            if (Number(prev.depth) === d) {
-              keep.add(j)
-              d -= 1
-            }
-          }
-        })
-        rows = rowsAll.filter((_, i) => keep.has(i))
+
+      // Search/link filtering prunes branches that contain no match, keeping
+      // ancestors so the dial stays connected.
+      const prune = (node) => {
+        const kids = (node.children || []).map(prune).filter(Boolean)
+        const selfMatch =
+          (!q || String(node.name || '').toLowerCase().indexOf(q) > -1) &&
+          (!selected || node.name === selected)
+        if (!kids.length && !selfMatch) return null
+        return { ...node, children: kids }
       }
-      if (rows.length < 2) return null
-      const root = { data: { target: sample, rank_code: 'R', taxid: -1, num_fragments_clade: 0, value: 100 }, children: [] }
-      // Depth-stack keyed by each row's actual indentation depth. A row's parent
-      // is the most recent earlier row with a strictly smaller depth. This is
-      // independent of how many spaces each level is indented — the report
-      // indents subspecies (S1..S5) by 2 spaces per level, so a fixed "+1 per
-      // row" level index left holes in the stack and made every sibling after
-      // the first fall back to the root (detached arms). Comparing real depths
-      // fixes that and also tolerates skipped/partial ranks.
-      const stack = [{ node: root, depth: -Infinity }]
+      const pruned = (q || selected) ? prune(tree) : tree
+      if (!pruned) {
+        // A linked click can target a taxon that this sample does not contain.
+        // Keep this sample's dial usable instead of redrawing it as empty.
+        if (selected && !q) return this.buildHierarchyFromTree(tree)
+        return null
+      }
 
-      rows.forEach(r => {
-        if (r.taxid === -1) return            // skip synthetic base row
-        const depth = Number(r.depth) || 0
-        const node = { data: r, children: [] }
-        // pop any open nodes that are not ancestors of this row
-        while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop()
-        const parent = stack[stack.length - 1].node
-        parent.children.push(node)
-        stack.push({ node, depth })
-      })
-
+      return this.buildHierarchyFromTree(pruned)
+    },
+    buildHierarchyFromTree(tree) {
       try {
-        return d3.hierarchy(root, d => d.children)
-          .sum(d => (d.children && d.children.length) ? 0 : Math.max(0, +d.data.num_fragments_clade || 0))
+        return d3.hierarchy(
+          { data: { target: tree.name, rank_code: tree.rank_code, taxid: tree.taxid, num_fragments_clade: tree.value, value: tree.pct }, children: wrapNodes(tree.children) },
+          (d) => d.children
+        )
+          .sum((d) => (d.children && d.children.length) ? 0 : Math.max(0, +d.data.num_fragments_clade || 0))
           .sort((a, b) => b.value - a.value)
       } catch (e) {
         return null
@@ -791,22 +911,19 @@ export default {
     drawSunburstInto(el, sample, opts = {}) {
       const legendRank = opts.legendRank || null
       const inlineLegend = !!opts.inlineLegend
-      d3.select(el).selectAll('*').remove()
+      const hadContent = !!(el && el.childNodes && el.childNodes.length)
 
       // Panels render an in-card legend to the RIGHT of the dial; the per-sample
       // cards keep using the Vue-template legend (this.legends).
       let chartEl = el
       let legendEl = null
-      if (inlineLegend) {
-        const wrap = document.createElement('div'); wrap.className = 'mtx-sb-wrap'
-        chartEl = document.createElement('div'); chartEl.className = 'mtx-sb-chart'
-        legendEl = document.createElement('div'); legendEl.className = 'mtx-sb-legend'
-        wrap.appendChild(chartEl); wrap.appendChild(legendEl); el.appendChild(wrap)
-      }
 
       const root = this.buildHierarchy(sample)
       if (!root || !root.value) {
-        d3.select(chartEl).append('div').attr('class', 'mtx-nodata').text('building…')
+        if (!hadContent) {
+          d3.select(chartEl).selectAll('*').remove()
+          d3.select(chartEl).append('div').attr('class', 'mtx-nodata').text('building…')
+        }
         return
       }
 
@@ -834,8 +951,21 @@ export default {
       let focus = root
       const focTaxid = this.sbFocus[sample]
       if (focTaxid != null) {
-        const hit = root.descendants().find(d => d.data.data && d.data.data.taxid === focTaxid)
+        const want = String(focTaxid)
+        const hit = root.descendants().find(d => d.data.data && String(d.data.data.taxid) === want)
         if (hit) focus = hit
+        else if (hadContent) return
+        else this.$set(this.sbFocus, sample, null)
+      }
+
+      d3.select(el).selectAll('*').remove()
+      chartEl = el
+      legendEl = null
+      if (inlineLegend) {
+        const wrap = document.createElement('div'); wrap.className = 'mtx-sb-wrap'
+        chartEl = document.createElement('div'); chartEl.className = 'mtx-sb-chart'
+        legendEl = document.createElement('div'); legendEl.className = 'mtx-sb-legend'
+        wrap.appendChild(chartEl); wrap.appendChild(legendEl); el.appendChild(wrap)
       }
 
       // map any node to its own taxon name (used for leaf pies / propagation)
@@ -870,9 +1000,18 @@ export default {
       const refreshLegend = (f) => {
         if (legendRank) {
           const useChildren = !!(f && f !== root)
+          // At root, pass NO focus node so the legend lists every taxon at the
+          // selected rank.
+          //
+          // This used to pass `root`, which was harmless when the tree was built
+          // from every row: restricting to root's descendants restricted to
+          // everything. The tree is now pruned to the top N clades for drawing,
+          // so passing it here would have silently truncated the legend to
+          // whatever survived that prune — the legend is a list and has its own
+          // pagination, so it has no reason to inherit the dial's node budget.
           const merged = useChildren
             ? this.focusLegendData(sample, root, f)
-            : this.rankLegendData(sample, legendRank, f)
+            : this.rankLegendData(sample, legendRank, null)
           const title = useChildren ? 'Current level' : this.rankLabel(legendRank)
           if (inlineLegend) {
             this.renderInlineLegend(legendEl, sample, merged, title)
@@ -962,16 +1101,26 @@ export default {
           }
           // Zoom this sunburst locally
           zoomTo(d)
-          // Propagate to all other loaded sunbursts by group/target name
+          // Propagate to every other sunburst: by taxid where the taxon exists,
+          // by legend group name otherwise. Same two-part treatment as
+          // legendZoom -- live cards animate, undrawn ones get sbFocus set so
+          // they come up already zoomed.
           const nodeData = d.data && d.data.data
           if (nodeData) {
             const zoomName = this.legendNameForRow(sample, nodeData)
+            const tx = nodeData.taxid != null ? String(nodeData.taxid) : null
+            if (tx != null) {
+              self.availableSamples.forEach((s) => {
+                if (s !== sample && self.sampleHasTaxon(s, tx)) self.$set(self.sbFocus, s, tx)
+              })
+            }
             Object.keys(self.sunburstApi).forEach(s => {
               if (s === sample) return
               const api = self.sunburstApi[s]
-              if (api && typeof api.zoomLegendName === 'function') {
-                api.zoomLegendName(zoomName)
-              }
+              if (!api) return
+              if (tx != null && !self.sampleHasTaxon(s, tx)) return
+              const zoomed = (tx != null && typeof api.zoomTaxid === 'function') ? api.zoomTaxid(tx) : false
+              if (tx == null && !zoomed && typeof api.zoomLegendName === 'function') api.zoomLegendName(zoomName)
             })
           }
         })
@@ -1011,9 +1160,18 @@ export default {
 
       this.$set(this.sunburstApi, sample, {
         reset: () => zoomTo(root),
+        // Returns true when the taxon was found in THIS sample's tree, so the
+        // caller can fall back to name matching only where it genuinely missed.
+        // Compared as strings: taxids come off the report as text and have been
+        // through JSON, so a strict === between a string and a number silently
+        // never matched.
         zoomTaxid: (taxid) => {
-          const hit = root.descendants().find(d => d.data && d.data.data && d.data.data.taxid === taxid)
-          if (hit) zoomTo(hit)
+          if (taxid == null) return false
+          const want = String(taxid)
+          const hit = root.descendants().find(d => d.data && d.data.data && String(d.data.data.taxid) === want)
+          if (!hit) return false
+          zoomTo(hit)
+          return true
         },
         zoomLegendName: (name) => {
           if (!name) return
@@ -1217,58 +1375,100 @@ export default {
         (n) => { this.$set(p, 'page', n); this.drawPanel(p) }
       )
     },
-    drawLollipop(el, data) {
-      const w = el.clientWidth || 420, rowH = 22, m = { l: 150, r: 56, t: 8, b: 8 }
-      const h = data.length * rowH + m.t + m.b
-      const x = d3.scaleLinear().domain([0, d3.max(data, d => d.reads)]).range([0, w - m.l - m.r])
-      const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', [0, 0, w, h])
-        .style('font', '11px Inter, system-ui, sans-serif')
-      const g = svg.append('g').attr('transform', `translate(${m.l},${m.t})`)
-      const rows = g.selectAll('g').data(data).join('g').attr('transform', (d, i) => `translate(0,${i * rowH + rowH / 2})`)
-      rows.append('text').attr('x', -10).attr('dy', '0.32em').attr('text-anchor', 'end')
-        .attr('class', 'mtx-tick').text(d => this.trunc(d.name, 22))
-      rows.append('line').attr('x1', 0).attr('x2', d => x(d.reads)).attr('stroke', '#cbd5e1').attr('stroke-width', 2)
-      rows.append('circle').attr('cx', d => x(d.reads)).attr('r', 5)
-        .attr('fill', d => this.groupColor(d.group))
-        .attr('stroke', d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism) ? '#f97316' : '#ffffff')
-        .attr('stroke-width', d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism) ? 2 : 0.8)
-      rows.append('text').attr('x', d => x(d.reads) + 10).attr('dy', '0.32em')
-        .attr('class', 'mtx-val').text(d => this.kf(d.reads))
-      rows.append('title').text(d => `${d.name}${d.common ? ' (' + d.common + ')' : ''} — ${d.reads.toLocaleString()} reads (${d.pct}%)`)
-      rows.style('cursor', 'pointer').on('click', (ev, d) => this.setSelectedOrganism(d.name))
+    // -------------------------------------------------------------------
+    // Canvas chart renderers.
+    //
+    // These were d3/SVG: one <g> plus a <text>, a <line>, a <circle> and a
+    // <title> per taxon, rebuilt from scratch on every redraw. With a card per
+    // barcode that is thousands of live DOM nodes being torn down and recreated
+    // every time a report lands -- layout and style recalculation dominate, and
+    // it is why the page felt heavy even when idle.
+    //
+    // A canvas panel is one element no matter how many taxa it shows. Hit
+    // testing (tooltips, click-to-select) is done against the hit boxes the
+    // renderer returns, which is the same data we just drew.
+    // -------------------------------------------------------------------
+
+    // Build a canvas inside `el` and wire pointer handling to `rows`.
+    _mountCanvas(el, key, rows, drawFn) {
+      const canvas = document.createElement('canvas')
+      canvas.className = 'mtx-canvas'
+      canvas.style.display = 'block'
+      canvas.style.width = '100%'
+      el.appendChild(canvas)
+
+      const width = el.clientWidth || 420
+      const hits = drawFn(canvas, width)
+      this.hitBoxes[key] = hits
+
+      const tip = this._ensureTip()
+      canvas.addEventListener('mousemove', (ev) => {
+        const rect = canvas.getBoundingClientRect()
+        const row = hitRow(this.hitBoxes[key] || [], ev.clientX - rect.left, ev.clientY - rect.top)
+        if (!row) { tip.style.display = 'none'; canvas.style.cursor = 'default'; return }
+        canvas.style.cursor = 'pointer'
+        tip.style.display = 'block'
+        tip.style.left = `${ev.clientX + 12}px`
+        tip.style.top = `${ev.clientY + 12}px`
+        tip.innerHTML = `<strong>${row.name || row.target}</strong>` +
+          (row.common ? ` <em>(${row.common})</em>` : '') +
+          `<br>${(row.reads != null ? row.reads : row.num_fragments_clade || 0).toLocaleString()} reads` +
+          ` (${(row.pct != null ? row.pct : row.value || 0)}%)`
+      })
+      canvas.addEventListener('mouseleave', () => { tip.style.display = 'none' })
+      canvas.addEventListener('click', (ev) => {
+        const rect = canvas.getBoundingClientRect()
+        const row = hitRow(this.hitBoxes[key] || [], ev.clientX - rect.left, ev.clientY - rect.top)
+        if (row) this.setSelectedOrganism(row.name || row.target)
+      })
+      return canvas
     },
-    // Horizontal bar chart: taxa on the y axis, read counts on the x axis, so
-    // bars grow left → right (one row per taxon).
-    drawBar(el, data) {
-      const w = el.clientWidth || 420, rowH = 24, m = { l: 150, r: 60, t: 8, b: 26 }
-      const h = data.length * rowH + m.t + m.b
-      const sel = d => (this.linkPanels && this.selectedOrganism && d.name === this.selectedOrganism)
-      const x = d3.scaleLinear().domain([0, d3.max(data, d => d.reads) || 1]).nice().range([0, w - m.l - m.r])
-      const y = d3.scaleBand().domain(data.map(d => d.name)).range([m.t, h - m.b]).padding(0.22)
-      const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', [0, 0, w, h])
-        .style('font', '11px Inter, system-ui, sans-serif')
-      const g = svg.append('g').attr('transform', `translate(${m.l},0)`)
-      const rows = g.selectAll('g.mtx-barrow').data(data).join('g').attr('class', 'mtx-barrow')
-      rows.append('rect')
-        .attr('x', 0).attr('y', d => y(d.name)).attr('height', y.bandwidth())
-        .attr('width', d => Math.max(0, x(d.reads))).attr('rx', 3)
-        .attr('fill', d => this.groupColor(d.group))
-        .attr('stroke', d => sel(d) ? '#f97316' : 'none')
-        .attr('stroke-width', d => sel(d) ? 2 : 0)
-        .style('cursor', 'pointer')
-        .on('click', (ev, d) => this.setSelectedOrganism(d.name))
-        .append('title').text(d => `${d.name}${d.common ? ' (' + d.common + ')' : ''} — ${d.reads.toLocaleString()} reads (${d.pct}%)`)
-      // taxon labels (y axis)
-      rows.append('text').attr('x', -10).attr('y', d => y(d.name) + y.bandwidth() / 2)
-        .attr('dy', '0.32em').attr('text-anchor', 'end').attr('class', 'mtx-tick')
-        .text(d => this.trunc(d.name, 22))
-      // value labels at the end of each bar
-      rows.append('text').attr('x', d => x(d.reads) + 6).attr('y', d => y(d.name) + y.bandwidth() / 2)
-        .attr('dy', '0.32em').attr('class', 'mtx-val').text(d => this.kf(d.reads))
-      // x axis (reads)
-      svg.append('g').attr('transform', `translate(${m.l},${h - m.b})`)
-        .call(d3.axisBottom(x).ticks(4).tickFormat(this.kf)).attr('class', 'mtx-axis')
+
+    // One shared tooltip node for the whole tab, rather than an SVG <title> per
+    // datum. Created lazily and torn down with the component.
+    _ensureTip() {
+      if (this._tipEl && document.body.contains(this._tipEl)) return this._tipEl
+      const tip = document.createElement('div')
+      tip.className = 'mtx-canvas-tip'
+      tip.style.cssText = [
+        'position:fixed', 'z-index:9999', 'pointer-events:none', 'display:none',
+        'background:rgba(15,23,42,.94)', 'color:#fff', 'padding:6px 9px',
+        'border-radius:6px', 'font:11px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+        'box-shadow:0 6px 20px -8px rgba(0,0,0,.6)', 'max-width:280px'
+      ].join(';')
+      document.body.appendChild(tip)
+      this._tipEl = tip
+      return tip
     },
+
+    drawLollipop(el, data, key) {
+      this._mountCanvas(el, key || 'lolli', data, (canvas, width) => canvasLollipop(canvas, {
+        rows: data,
+        width,
+        rowHeight: 18,
+        labelWidth: Math.min(170, Math.max(90, width * 0.36)),
+        valueKey: 'reads',
+        color: (d) => this.groupColor(d.group),
+        highlight: (this.linkPanels && this.selectedOrganism)
+          ? (data.find((d) => d.name === this.selectedOrganism) || {}).taxid
+          : null
+      }))
+    },
+
+    drawBar(el, data, key) {
+      this._mountCanvas(el, key || 'bar', data, (canvas, width) => canvasBars(canvas, {
+        rows: data,
+        width,
+        rowHeight: 18,
+        labelWidth: Math.min(170, Math.max(90, width * 0.36)),
+        valueKey: 'reads',
+        color: (d) => this.groupColor(d.group),
+        highlight: (this.linkPanels && this.selectedOrganism)
+          ? (data.find((d) => d.name === this.selectedOrganism) || {}).taxid
+          : null
+      }))
+    },
+
     drawTable(el, data) {
       const total = d3.sum(data, d => d.reads) || 1
       const tbl = d3.select(el).append('table').attr('class', 'mtx-tbl')

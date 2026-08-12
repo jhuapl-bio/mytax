@@ -50,13 +50,21 @@
 <script>
 import Plates from '@/components/Plates.vue'
 import InfoIcon from '@/components/InfoIcon.vue'
+import taxaSource from '@/mixins/taxaSource'
 
 export default {
   name: 'Heatmap',
+  // Store-backed data source: supplies `sampleData` on demand from the
+  // columnar store instead of receiving every parsed row as a prop.
+  mixins: [taxaSource],
   components: { Plates, InfoIcon },
-  props: ['socket', 'sampleData', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
+  // `samples` / `taxaQuery` / `storeTick` arrive via the taxaSource mixin;
+  // `sampleData` is derived from the store there rather than passed in.
+  props: ['socket', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
   data() {
     return {
+      // The heatmap shows a fixed number of taxa per rank.
+      taxaLimit: 1000,
       selectedTaxid: 0,
       selectedAttribute: 'G',
       legendPlacement: 'bottom',
@@ -77,10 +85,14 @@ export default {
     },
   },
   watch: {
-    sampleData: {
-      deep: true,
+    // Was `sampleData: { deep: true }`. Deep-watching an object of row arrays
+    // meant Vue traversed every row of every sample just to decide whether this
+    // handler should run -- on every arriving report. `storeTick` is one
+    // integer that changes exactly when the data does.
+    storeTick: {
       immediate: true,
-      handler(val) {
+      handler() {
+        const val = this.sampleData
         // Keep the rank list in sync with what's present in the data, preserving
         // distinct subspecies depth ranks (S1, S2, S3, ...).
         if (!val) return

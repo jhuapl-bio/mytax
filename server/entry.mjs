@@ -9,8 +9,10 @@ import {AbortError} from 'p-queue'
 import _ from 'lodash';
 import { mkdirp } from 'mkdirp'
 import { pathEqual } from 'path-equal'
+import { taxonStore } from './taxonstore.mjs'
+import { protocol } from './protocol.mjs'
 
-export  class Entry { 
+export  class Entry {
     
     constructor(info, queue, ws){          
         this.entry = info
@@ -119,31 +121,29 @@ export  class Entry {
             logger.error(`${err} error in watching base dir files`)
         }
     }
+    // Report text never crosses the socket any more. It is ingested into the
+    // server-side columnar store, which then streams per-connection deltas.
+    // (The old body also referenced bare resolve/reject with no enclosing
+    // Promise, so any read error threw a ReferenceError instead of logging.)
     async sendData(sample, filepath){
         try{
-            fs.readFile(filepath,(err,data)=>{
-                try{  
-                    if (err){
-                        logger.error(err)
-                        reject(err)
-                    } else {
-                        this.data[sample] = data.toString()
-                        this.ws.emit('data', { 
-                            run: this.run, 
-                            topLevelSampleNames: sample, 
-                            samplename: sample, 
-                            "data" : data.toString()
-                        }) 
-                        resolve()
+            fs.readFile(filepath, (err, data) => {
+                if (err){
+                    logger.error(`${err} reading report ${filepath}`)
+                    return
+                }
+                try {
+                    const text = data.toString()
+                    this.data[sample] = text
+                    if (taxonStore.ingest(this.run, sample, text)){
+                        protocol.markTaxa(this.run, sample)
                     }
                 } catch (err){
-                    reject(err)
+                    logger.error(`${err} ingesting report ${filepath}`)
                 }
-            
             })
-            
         } catch (err){
-            logger.error(`${err} error in sending data to client`)
+            logger.error(`${err} error in ingesting report for client`)
         }
     }
     async setupReportWatcher(){ 
