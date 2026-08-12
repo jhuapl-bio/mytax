@@ -8,8 +8,39 @@ import { removeExtension,  getReportName, globFiles, killProcessTree, resolveKra
 import {logger} from './logger.js'
 import fs from "file-system"
 import { broadcastToAllActiveConnections, queueJobUpdate } from './messenger.mjs';
-export  class Classifier { 
-    constructor(sample){    
+// ---------------------------------------------------------------------------
+// Log / error retention limits.
+//
+// kraken2 chatters on stderr for every file. These buffers used to grow without
+// bound because `status.logs.slice(0,20)` was a no-op (slice RETURNS a new array,
+// it does not mutate). With 500 files in a barcode, and the sample-level status
+// frame mapping every job's `logs` array into one payload on every flush, the
+// wire cost grew O(n^2) -- hundreds of MB to GBs pushed at a single browser tab.
+//
+// We now keep only a small tail per job (the last MAX_LOG_LINES lines) and cap
+// the accumulated stderr string. The full, untruncated output still goes to the
+// server log file via logger, so nothing is actually lost.
+// ---------------------------------------------------------------------------
+export const MAX_LOG_LINES = 40;
+export const MAX_ERROR_CHARS = 4000;
+
+// Push onto a bounded ring-ish buffer: keep only the newest `max` entries.
+function pushCapped(arr, line, max = MAX_LOG_LINES) {
+    if (!Array.isArray(arr)) return;
+    arr.push(line);
+    const overflow = arr.length - max;
+    if (overflow > 0) arr.splice(0, overflow);
+}
+
+// Append to the error string but keep only the last MAX_ERROR_CHARS characters.
+function appendCappedError(existing, chunk) {
+    const joined = `${existing || ''}\n${chunk}`;
+    if (joined.length <= MAX_ERROR_CHARS) return joined;
+    return `…(truncated)…${joined.slice(joined.length - MAX_ERROR_CHARS)}`;
+}
+
+export  class Classifier {
+    constructor(sample){
 
         this.name = sample.sample
         this.run = sample.run
@@ -58,6 +89,39 @@ export  class Classifier {
         let formatted = `${command.main} ${command.args.join(" ")}`
         return formatted
     }
+    // The full, uncapped-by-the-wire log tail for THIS job. Used by the
+    // on-demand `getJobLogs` socket handler so the UI can show a job's output
+    // when the user actually clicks its dot, without us streaming logs for
+    // every job to every client continuously.
+    getLogs(){
+        return Array.isArray(this.status.logs) ? this.status.logs.slice() : []
+    }
+
+    // Wire projection of a job's status. Deliberately EXCLUDES `logs`.
+    //
+    // Why: the sample-level rollup used to ship `logs` for all N jobs on every
+    // flush, and a 500-file barcode flushes hundreds of times -> the same log
+    // lines were re-sent thousands of times and then retained in Vue's reactive
+    // store on the client (the multi-GB browser footprint). Instead we send a
+    // count plus the single most recent line; the UI fetches the rest on click.
+    statusForWire(){
+        const s = this.status || {}
+        const logs = Array.isArray(s.logs) ? s.logs : []
+        return {
+            running: !!s.running,
+            waiting: !!s.waiting,
+            cancelled: !!s.cancelled,
+            paused: !!s.paused,
+            historical: !!s.historical,
+            success: s.success,
+            // errors are already capped at MAX_ERROR_CHARS; trim harder for the
+            // per-job frame since the UI only surfaces a short message inline.
+            error: s.error ? String(s.error).slice(-500) : s.error,
+            logCount: logs.length,
+            lastLog: logs.length ? logs[logs.length - 1] : null,
+        }
+    }
+
     sendJobStatus(){
         let info = {
             command: this.formatcommandstring(),
@@ -80,10 +144,19 @@ export  class Classifier {
         // saturated the connection. Now it's coalesced per (sample,index) into the
         // run-scoped batched 'runUpdate' frame, and dropped entirely if nobody is
         // viewing this run.
-        queueJobUpdate(this.run, this.name, this.index, {
-            status: this.status,
-            config: info
-        })
+        //
+        // The `config` blob is STATIC for the lifetime of a job (paths, command,
+        // database). It was re-sent on both the start and exit transition of every
+        // job -- ~700 bytes x 2 x 500 files per barcode of pure duplication. Send
+        // it only when it actually changes (first emit, or after a rerun that
+        // regenerates the command / swaps the database).
+        const fingerprint = JSON.stringify(info)
+        const payload = { status: this.statusForWire() }
+        if (fingerprint !== this._sentConfigFingerprint){
+            payload.config = info
+            this._sentConfigFingerprint = fingerprint
+        }
+        queueJobUpdate(this.run, this.name, this.index, payload)
     }
     initialize(){
         this.generateKrakenCommand()
@@ -145,16 +218,14 @@ export  class Classifier {
                         let classify = spawn(command.main, command.args, { detached: true });
                         $this.sendJobStatus()
                         classify.stdout.on('data', (data) => {
-                            $this.status.logs.push(`${data}`) 
-                            $this.status.logs.slice(0,20)
+                            pushCapped($this.status.logs, `${data}`)
                             logger.info(`${data} `);
                         });   
                     
                         classify.stderr.on('data', (data) => {
-                            $this.status.logs.push(`${data}`)
-                            $this.status.logs.slice(0,20)
+                            pushCapped($this.status.logs, `${data}`)
                             if (data){
-                                $this.status.error = `${$this.status.error}\n${data}`
+                                $this.status.error = appendCappedError($this.status.error, data)
                             }
                             logger.error(`${data}`);
                         });
@@ -171,6 +242,9 @@ export  class Classifier {
                             $this.status.historical = false
                             $this.process = null
                             $this.sendJobStatus()
+                            if (code === 0 && typeof $this.onReportReady === 'function') {
+                                Promise.resolve($this.onReportReady()).catch((err) => logger.error(`${err} publishing report for ${$this.name}`))
+                            }
 
                             resolve( `${code}`)                 
                         });
@@ -180,8 +254,13 @@ export  class Classifier {
                         $this.status.running = false
                         $this.status.historical = true
                         logger.info(`${this.fullreport} exists already`)
-                        $this.status.logs.push['Historically gathered report, pre-run already']
+                        // NOTE: this was `logs.push[...]` (indexing the function with
+                        // brackets) so it silently did nothing. Fixed to an actual call.
+                        pushCapped($this.status.logs, 'Historically gathered report, pre-run already')
                         $this.sendJobStatus()
+                        if (typeof $this.onReportReady === 'function') {
+                            Promise.resolve($this.onReportReady()).catch((err) => logger.error(`${err} publishing historical report for ${$this.name}`))
+                        }
                         
                         resolve()
                     }

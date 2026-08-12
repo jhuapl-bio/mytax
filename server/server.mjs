@@ -2,7 +2,9 @@ import glob from "glob-all"
 import {logger} from './logger.js'
 import PQueue from 'p-queue';
 import os from 'os'
-import { broadcastToAllActiveConnections, broadcastThrottled, flushThrottled } from './messenger.mjs';
+import { broadcastToAllActiveConnections, broadcastThrottled, flushThrottled, emitToRunViewers, queueMetrics, queueRunMeta } from './messenger.mjs';
+import { protocol } from './protocol.mjs';
+import { taxonStore } from './taxonstore.mjs';
 import { storage } from "./storage.mjs";
 import { scheduler } from "./scheduler.mjs";
 import path from 'path'
@@ -707,37 +709,54 @@ export  class Orchestrator {
             return null
         }
         let r = this.runs[index]
-        // Build ONE self-contained snapshot of the run and emit it as a single
-        // frame. The client hydrates everything (per-sample report text, the
-        // full queue list and each job's status) from this payload, so we no
-        // longer dribble a separate sampledata/status frame per sample.
+        // ---------------------------------------------------------------
+        // Run bootstrap.
         //
-        // Previously this also called r.sendSampleData() up front, which fired a
-        // throttled 'sampledata' frame for every sample, and the client then
-        // round-tripped a 'getStatus' per sample -> a per-job 'status' storm
-        // back. For a 1600-job run that handshake took minutes. It's all in this
-        // one packet now. getStatus() is called with send=false so it does NOT
-        // emit per-job frames while we assemble the snapshot.
-        let reportdata = []
+        // This used to be ONE enormous packet containing every sample's raw
+        // full.report text. On a 24-barcode run that is tens of megabytes of
+        // TSV in a single socket.io message, followed by 24 blocking TSV
+        // parses on the browser's main thread. It is why opening a finished
+        // run froze the tab for many seconds.
+        //
+        // Now the bootstrap carries only the light, structural half — the
+        // samplesheet, each sample's queue list and rollup status. The taxon
+        // tables are ingested into the server-side store here and then
+        // streamed to each client as delta frames against its own cursor, at
+        // whatever fidelity that client's viewport actually needs.
+        // ---------------------------------------------------------------
+        let samples = []
         try {
             if (r.samples && Object.keys(r.samples).length > 0){
                 for (let [key, sample] of Object.entries(r.samples)){
-                    reportdata.push({
+                    // Seed the columnar store from whatever report text this
+                    // sample already has in memory. No text leaves the server.
+                    try {
+                        if (sample.data) taxonStore.ingest(r.run, key, sample.data)
+                    } catch (err){
+                        logger.error(`${err} ingesting report for ${key}`)
+                    }
+                    samples.push({
                         samplename: key,
-                        data: sample.data,
                         queue: sample.formatQueueInfo(),
                         samplesheet: sample.samplesheet,
                         status: sample.getStatus()
                     })
                 }
             }
-            broadcastToAllActiveConnections("runInformation", {
+            const payload = {
                 run: r.run,
-                reportdata: reportdata,
+                samples: samples,
                 samplesheet: r.samplesheet,
                 config: r.config,
                 pairWatches: typeof r.pairWatchSummary === 'function' ? r.pairWatchSummary() : []
-            })
+            }
+            // Only the connections actually viewing this run need the bootstrap.
+            emitToRunViewers(r.run, 'runBootstrap', payload)
+            // Mark every sample dirty so the first frames carry their taxa at the
+            // fidelity each viewer asked for.
+            for (const s of samples){
+                protocol.markTaxa(r.run, s.samplename)
+            }
         } catch (err){
             logger.error(`${err} error in sending run information`)
         }
@@ -832,6 +851,11 @@ export  class Orchestrator {
             if (index != -1){
                 let r = this.runs[index]
                 await r.deleteSample(sample)
+                // Drop the sample's columnar table so its taxa stop being
+                // encoded into frames, and invalidate every viewer's delta
+                // cursor for it (they must forget the rows they hold).
+                try { taxonStore.drop(run, sample) } catch (e) { logger.error(`${e} dropping taxon table`) }
+                protocol.resetRun(run)
             }
         }
         catch (err){
@@ -847,6 +871,10 @@ export  class Orchestrator {
             if (index != -1){
                 let r = this.runs[index]
                 await r.deleteSamples(samples)
+                try {
+                    for (const s of samples) taxonStore.drop(run, s)
+                } catch (e) { logger.error(`${e} dropping taxon tables`) }
+                protocol.resetRun(run)
             }
         }
         catch (err){
@@ -870,6 +898,11 @@ export  class Orchestrator {
                 } catch (err){
                     logger.error(`${err} error deleting samples for run ${run}`)
                 }
+                // Free the whole run: sample tables AND the shared taxon
+                // dictionary. This is the only place the dictionary is ever
+                // released, which is fine -- it is bounded by the size of the
+                // classification database, not by the number of files.
+                try { taxonStore.drop(run) } catch (e) { logger.error(`${e} dropping run taxon store`) }
                 // Close any live paired-read directory watchers so they don't keep
                 // firing (and re-adding samples) after the run is gone.
                 try{
@@ -1150,7 +1183,7 @@ export  class Orchestrator {
                 // The round-robin scheduler now owns the authoritative count
                 // (PQueue only ever holds the 1 released job at a time), so report
                 // the scheduler's buffered total instead of the PQueue size.
-                broadcastThrottled( "queueLength", {data: scheduler.totalPending() + scheduler.active , type: "add" }, "queueLength");
+                scheduler.emitLength();
             } catch (err){
                 logger.error(`${err} error in sending add status of add in queue`)
             }
@@ -1172,8 +1205,10 @@ export  class Orchestrator {
             // storage.queueLengthInterval = false
             // Queue drained: flush any pending throttled count, then send the
             // authoritative final state so the UI doesn't sit on a stale number.
-            flushThrottled("queueLength");
-            broadcastToAllActiveConnections( "queueLength", {data:  scheduler.totalPending() + scheduler.active, type: "idle"});
+            // Queue drained: push the authoritative final counters straight into
+            // every viewer's next frame so the badge can't sit on a stale number.
+            scheduler.emitLength();
+            protocol.flush();
             try{ 
             } catch (err){
                 logger.error(`${err} error in sending idle status of running in queue`)
@@ -1182,11 +1217,11 @@ export  class Orchestrator {
         
         storage.queue.on('completed', function ( result) {
             // logger.info(`task completed ${result}`)
-            broadcastThrottled( "queueLength", {data:   scheduler.totalPending() + scheduler.active , type: "completed" }, "queueLength");
+            scheduler.emitLength();
         })
         storage.queue.on('error', function (err) {
             logger.error(`Queue task error ${err}`)
-            broadcastThrottled( "queueLength", {data: scheduler.totalPending() + scheduler.active, type: "error"}, "queueLength");
+            scheduler.emitLength();
         })
        
      
@@ -1567,8 +1602,14 @@ export  class Orchestrator {
             // of waiting on the next 400ms runUpdate tick, and reset the queue-length
             // badge for every connected client right away -- this is what makes
             // "Stop All Jobs" feel instant instead of appearing to do nothing.
+            // Force out any buffered per-job/per-sample updates immediately rather
+            // than waiting on the next frame tick -- this is what makes "Stop All
+            // Jobs" feel instant instead of appearing to do nothing.
             try { flushThrottled() } catch (e) { logger.error(`${e} flushing throttled updates`) }
-            broadcastToAllActiveConnections('queueLength', { data: 0 })
+            for (const conn of protocol.connections.values()) {
+                if (conn.run) conn.pendingQueue = { total: 0, active: 0 }
+            }
+            try { protocol.flush() } catch (e) { logger.error(`${e} flushing protocol frames`) }
 
         } catch (err){
             logger.error(`Error in stopping job(s) ${err}`)

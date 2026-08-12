@@ -12,7 +12,7 @@ import { mkdirp } from 'mkdirp'
 import { pathEqual } from 'path-equal'
 import { storage } from './storage.mjs'
 import { scheduler } from './scheduler.mjs'
-import { broadcastToAllActiveConnections, broadcastThrottled, queueSampleUpdate, queueJobUpdate } from './messenger.mjs';
+import { broadcastToAllActiveConnections, queueSampleUpdate, queueJobUpdate } from './messenger.mjs';
 export  class Sample { 
 
     constructor(info, queue){
@@ -67,6 +67,13 @@ export  class Sample {
             label: this.label,
             path_1: this.path_1,
             path_2: this.path_2,
+            // Real-time watch intent. The live "is a watcher currently attached"
+            // flag rides on getStatus().watching, but that only exists for
+            // samples that have produced a report. A sample that is being
+            // watched and simply has not seen a fastq yet had no way to say so,
+            // so the UI could not tell "waiting for reads" apart from "this
+            // sample is broken" and painted both as an error.
+            watch: this.watch,
             kits: this.kits,
             classifier: this.classifier,
             fastp: this.fastp,
@@ -216,30 +223,43 @@ export  class Sample {
     }
    
     getFullReportSample(filepath){
-        const $this = this
+        return this.publishFullReport(filepath)
+    }
+
+    publishFullReport(filepath = this.fullreport){
+        if (this._reportReadPending) {
+            this._reportReadAgain = true
+            return this._reportReadPending
+        }
         let samplename = this.sample
-        return new Promise((resolve, reject)=>{
-            logger.info(`${filepath}: file done, ${samplename} sending sample data for sample ${$this.sample}`)
+        logger.info(`${filepath}: publishing report data for sample ${samplename}`)
+        this._reportReadPending = new Promise((resolve, reject)=>{
             try{
                 fs.readFile(filepath,(err,data)=>{
-                    try{  
+                    try{
                         if (err){
                             logger.error(err)
                             reject(err)
                         } else {
                             this.data = data.toString()
-                            $this.sendData()
+                            this.sendData()
                             resolve()
                         }
                     } catch (err){
                         reject(err)
                     }
-                
                 })
             } catch (err){
                 reject(err)
             }
+        }).finally(() => {
+            this._reportReadPending = null
+            if (this._reportReadAgain) {
+                this._reportReadAgain = false
+                setImmediate(() => this.publishFullReport(filepath).catch((err) => logger.error(`${err} republishing ${filepath}`)))
+            }
         })
+        return this._reportReadPending
     }
     setJob(filepath, priority, overwrite){
         const $this = this 
@@ -421,6 +441,7 @@ export  class Sample {
         }
         let classifier = new Classifier(sampleObj)
         classifier.ws = this.ws
+        classifier.onReportReady = () => this.publishFullReport(this.fullreport)
         let msg;
 
         msg = this.defineQueueMessage(classifier)
@@ -475,37 +496,67 @@ export  class Sample {
             cb(null, result)
         })
     }
+    // Aggregate, wire-safe status for the whole sample.
+    //
+    // This used to build `logs` and `error` as arrays holding EVERY job's full
+    // log/error text, and it is called on every sendData() -- i.e. once per
+    // classified fastq. For a 500-file barcode that is 500 flushes x 500 log
+    // arrays: O(n^2) bytes on the socket and, worse, all of it retained in the
+    // browser's reactive store. That is the multi-GB tab.
+    //
+    // Now it is O(1)-sized: booleans, counts, and at most a few sampled error
+    // strings. Per-job logs are fetched on demand via the `getJobLogs` socket
+    // handler when the user opens a specific job.
     getStatus(send){
-        let status = {
-            running: false,
-            historical: false,
-            success: true,
-            logs: [],
-            error: [],
-            cancelled: false,
+        const jobs = this.queueList
+        const knownTotal = Math.max(
+            jobs.length,
+            this.queueRecords ? this.queueRecords.length : 0,
+            this._files ? this._files.length : 0
+        )
+        let errored = []
+        let logLines = 0
+        let done = 0
+        let runningCount = 0
+        let waiting = 0
+        for (let index = 0; index < knownTotal; index++){
+            const queued = jobs[index]
+            const record = this.queueRecords && this.queueRecords[index]
+            const s = (queued && queued.info && queued.info.status) || (record && record.status) || { waiting: true }
+            if (s.running) runningCount++
+            if (s.waiting) waiting++
+            if (s.success === true || s.success === 0) done++
+            if (Array.isArray(s.logs)) logLines += s.logs.length
+            if ((s.success === false || (s.code != null && s.code !== 0)) && s.error) {
+                errored.push({ index, error: String(s.error).slice(-500) })
+            }
+        }
+        // Only carry a handful of representative errors; the rest are reachable
+        // per-job on demand. Keeps this payload bounded no matter the run size.
+        const MAX_ERRORS_INLINE = 5
+        const status = {
+            running: runningCount > 0,
+            historical: this.statusFlagForKnownJobs('historical', knownTotal),
+            success: knownTotal > 0 && done === knownTotal && errored.length === 0,
+            cancelled: this.statusFlagForKnownJobs('cancelled', knownTotal),
+            // counts the UI can render directly instead of recomputing from
+            // a full per-job payload it no longer receives
+            total: knownTotal,
+            runningCount,
+            waiting,
+            done,
+            errorCount: errored.length,
+            logCount: logLines,
+            // bounded sample of errors (index + tail of message)
+            errors: errored.slice(0, MAX_ERRORS_INLINE),
+            // Back-compat: older UI code reads `status.error` as an array.
+            // Keep the shape but bounded, and never include logs at all.
+            error: errored.slice(0, MAX_ERRORS_INLINE).map((e)=> e.error),
+            truncated: errored.length > MAX_ERRORS_INLINE,
             // watching === real-time watch mode is on AND a live watcher exists,
             // so the frontend can show a pulsing "listening for new reads" light.
             watching: !!(this.watch && this.watcher)
         }
-        // iterate thrugh this.queueList if any success is false then set success to false, if any historical set to true, append logs, if an cancel set to true etc
-        status.running = this.queueList.some((d)=>{
-            return d.info.status.running
-        })
-        status.historical = this.queueList.some((d)=>{
-            return d.info.status.historical
-        })
-        status.success = this.queueList.every((d)=>{
-            return d.info.status.success
-        })
-        status.cancelled = this.queueList.some((d)=>{
-            return d.info.status.cancelled
-        })
-        status.error = this.queueList.map((d)=>{
-            return d.info.status.error
-        })
-        status.logs = this.queueList.map((d)=>{
-            return d.info.status.logs
-        })
         if (send){
             const $this = this
             // iterate through all queueList jobs, check if they are running, if they are then update the status and emit status
@@ -520,6 +571,15 @@ export  class Sample {
             })
         }
         return status
+    }
+    statusFlagForKnownJobs(flag, total){
+        for (let index = 0; index < total; index++) {
+            const queued = this.queueList[index]
+            const record = this.queueRecords && this.queueRecords[index]
+            const s = (queued && queued.info && queued.info.status) || (record && record.status)
+            if (s && s[flag]) return true
+        }
+        return false
     }
   
     updateStatusQueueList(classifier){
@@ -564,6 +624,12 @@ export  class Sample {
         const job = d.job
         const cmdObj = (info && info.command) ? info.command : (job ? job.command : null)
         const command = (cmdObj && cmdObj.args) ? cmdObj.args[1] : cmdObj
+        // Use the log-free wire projection. A run-hydrate snapshot for 96
+        // barcodes x 500 files would otherwise inline every job's accumulated
+        // kraken stderr into a single frame.
+        const status = (job && typeof job.statusForWire === 'function')
+            ? job.statusForWire()
+            : (job ? job.status : info.status)
         return {
             index: info.index,
             sample: info.sample,
@@ -572,19 +638,88 @@ export  class Sample {
             reportPath: job ? job.reportPath : info.sampleReport,
             database: info.database,
             command: command,
-            status: job ? job.status : info.status
+            status: status
+        }
+    }
+
+    // Per-job log tail, resolved on demand (see the `getJobLogs` socket handler).
+    getJobLogs(index){
+        const entry = this.queueList[index]
+        const job = entry && entry.job
+        if (!job) return { run: this.run, samplename: this.sample, index, logs: [], error: null }
+        return {
+            run: this.run,
+            samplename: this.sample,
+            index,
+            logs: typeof job.getLogs === 'function' ? job.getLogs() : (job.status && job.status.logs) || [],
+            error: job.status ? job.status.error : null,
+            command: typeof job.formatcommandstring === 'function' ? job.formatcommandstring() : null,
+            filepath: job.filepath || null
         }
     }
     formatQueueInfo(index){
         const hasIndex = index !== undefined && index !== null
         try {
             if (!hasIndex){
-                return this.queueList.map((d)=> this.formatJobInfo(d))
+                return this.formatQueueSnapshot()
             }
             return this.formatJobInfo(this.queueList[index])
         } catch (err){
             logger.error(`${err} error in getting job(s) for sample ${this.sample}${hasIndex ? ` at index ${index}` : ''}`)
             return hasIndex ? null : []
+        }
+    }
+    formatQueueSnapshot(){
+        const total = Math.max(
+            this.queueList.length,
+            this.queueRecords ? this.queueRecords.length : 0,
+            this._files ? this._files.length : 0
+        )
+        const out = []
+        for (let index = 0; index < total; index++) {
+            const queued = this.formatJobInfo(this.queueList[index])
+            if (queued) { out[index] = queued; continue }
+            const record = this.queueRecords && this.queueRecords[index]
+            if (record) {
+                out[index] = this.formatClassifierSnapshot(record, index)
+                continue
+            }
+            const filepath = this._files && this._files[index]
+            if (filepath) out[index] = this.formatFileSnapshot(filepath, index)
+        }
+        return out
+    }
+    formatClassifierSnapshot(job, index){
+        const status = typeof job.statusForWire === 'function' ? job.statusForWire() : (job.status || {})
+        return {
+            index,
+            sample: this.sample,
+            run: this.run,
+            filepath: job.filepath || null,
+            reportPath: job.reportPath || job.sampleReport || null,
+            database: job.database || (job.sample && job.sample.database) || this.database,
+            command: typeof job.formatcommandstring === 'function' ? job.formatcommandstring() : null,
+            status
+        }
+    }
+    formatFileSnapshot(filepath, index){
+        return {
+            index,
+            sample: this.sample,
+            run: this.run,
+            filepath,
+            reportPath: getReportName(filepath, this.outputdir),
+            database: this.database,
+            command: null,
+            status: {
+                running: false,
+                waiting: true,
+                success: null,
+                historical: false,
+                error: null,
+                logCount: 0,
+                lastLog: null
+            }
         }
     }
     cancel(index){
@@ -612,7 +747,7 @@ export  class Sample {
                 // Broadcast immediately so the queue board / job panel flips this
                 // dot to "cancelled" right away instead of waiting on some other
                 // event to happen to trigger a refresh.
-                queueJobUpdate(this.run, this.sample, index, { status: job.status })
+                queueJobUpdate(this.run, this.sample, index, { status: this.wireStatus(job) })
             } catch (err){
                 logger.error(`${err}, error in stopping job`)
                 throw err
@@ -635,7 +770,7 @@ export  class Sample {
                         job.status.cancelled = true
                         job.status.running = false
                         job.stop()
-                        queueJobUpdate(this.run, this.sample, job.index, { status: job.status })
+                        queueJobUpdate(this.run, this.sample, job.index, { status: this.wireStatus(job) })
                     } catch (err){
                         logger.error(`${err}, error in stopping job`)
                     }
@@ -647,22 +782,40 @@ export  class Sample {
         }
     }
     
+    // Small helper so every job-status emit goes through the log-free projection.
+    wireStatus(job){
+        if (!job) return null
+        return typeof job.statusForWire === 'function' ? job.statusForWire() : job.status
+    }
+
+    // ---------------------------------------------------------------------
+    // Report push.
+    //
+    // This method used to own an elaborate dedupe + adaptive-throttle scheme,
+    // because it was shipping the entire full.report TSV to every browser after
+    // every classified fastq. Under a deep backlog it would hold reports back
+    // for up to five seconds — which is why the UI visibly stalled during the
+    // exact period a user most wants to watch it.
+    //
+    // None of that is needed now. queueSampleUpdate() hands the text to the
+    // taxon store, which:
+    //   * hashes it and drops it if nothing changed (the old guard #1),
+    //   * diffs it against the previous parse and keeps only what moved, and
+    //   * lets the frame bus decide when to flush, per connection, with real
+    //     backpressure (the old guard #2, but done where it belongs).
+    //
+    // So we can go back to simply reporting the truth every time and let the
+    // transport layer worry about pacing. A steady-state update is a few KB.
+    // ---------------------------------------------------------------------
     sendData(){
         try{
-            logger.info(`Sending data for ${this.sample}`)
-            // The full.report is rewritten after every file in the sample is
-            // classified, so for a 400-fastq sample this would otherwise fire a
-            // large payload (and trigger a heavy client-side re-render) hundreds
-            // of times. Coalesce per sample to the latest report inside the
-            // run-scoped batched 'runUpdate' frame; the client only ever needs the
-            // most recent full.report, and only if it's viewing this run.
             queueSampleUpdate(this.run, this.sample, {
-                "data" : this.data,
+                data: this.data || '',
                 status: this.getStatus()
             })
             return this.data
         } catch (err){
-            logger.error(`${err} error in sending data to client`)
+            logger.error(`${err} error in publishing sample update`)
         }
     }
     getIndexJob(filepath){
@@ -740,7 +893,9 @@ export  class Sample {
         })
     }
     cleanup(){
-        try{ 
+        try{
+            // drop any pending trailing report push for this sample
+            if (this._reportTimer){ clearTimeout(this._reportTimer); this._reportTimer = null }
             if (this.reportWatcher){
                 this.reportWatcher.close().then(() => logger.info('closed report'));
                 this.reportWatcher._watched.clear()

@@ -559,16 +559,50 @@
                 <span>Run</span>
               </div>
               <div class="mtx-sec-body">
+                <!-- Run picker. Each entry carries a live activity marker so work
+                     happening in a run you are NOT currently viewing is still
+                     visible: a spinning ring for the run whose sample is actually
+                     classifying right now, and an amber count for runs with files
+                     still queued. -->
                 <v-select
                   v-if="isOnline && runs && runs.length > 0"
-                  :items="runs"
+                  :items="runItems"
+                  item-value="value"
+                  item-text="value"
                   v-model="selectedRun"
                   label="Available runs"
                   hint="Select a run / set of samples"
                   dense outlined
                   persistent-hint
                   class="flex"
-                />
+                >
+                  <template v-slot:selection="{ item }">
+                    <span class="mtx-runopt">
+                      <v-progress-circular v-if="item.running" indeterminate size="13" width="2"
+                        color="green darken-1" class="mtx-run-ico" />
+                      <v-icon v-else-if="item.pending" x-small color="amber darken-3" class="mtx-run-ico">mdi-tray-full</v-icon>
+                      <span class="mtx-runopt-name">{{ item.value }}</span>
+                      <span v-if="item.pending" class="mtx-runbadge mtx-runbadge--queued">{{ item.pending }}</span>
+                    </span>
+                  </template>
+                  <template v-slot:item="{ item }">
+                    <v-tooltip right>
+                      <template v-slot:activator="{ on }">
+                        <span v-on="on" class="mtx-runopt">
+                          <v-progress-circular v-if="item.running" indeterminate size="13" width="2"
+                            color="green darken-1" class="mtx-run-ico" />
+                          <v-icon v-else-if="item.pending" x-small color="amber darken-3" class="mtx-run-ico">mdi-tray-full</v-icon>
+                          <v-icon v-else x-small color="grey lighten-1" class="mtx-run-ico">mdi-circle-small</v-icon>
+                          <span class="mtx-runopt-name">{{ item.value }}</span>
+                          <v-spacer></v-spacer>
+                          <span v-if="item.running" class="mtx-runbadge mtx-runbadge--running">{{ item.running }} running</span>
+                          <span v-if="item.pending" class="mtx-runbadge mtx-runbadge--queued">{{ item.pending }} queued</span>
+                        </span>
+                      </template>
+                      <span>{{ runTooltip(item) }}</span>
+                    </v-tooltip>
+                  </template>
+                </v-select>
                 <div class="mtx-run-actions">
                   <AddRun
                     v-if="isOnline"
@@ -838,34 +872,45 @@
                 </v-tab>
               </v-tabs>
 
-              <v-tabs-items v-model="tab" class="mtx-tab-scroll"
-              >
+              <!--
+                LAZY TABS.
 
-              <v-tab-item
-                  align-with-title v-for="(tabItem, key) in tabs" 
-                  :key="`${key}-item`"
-              >   
-                  <v-container class="my-0">
+                This was a <v-tabs-items> with a <v-tab-item> per tab. Vuetify's
+                window keeps every tab it has ever shown mounted, so after a user
+                clicked through the app once, Explore, Heatmap, CrossSample, Map,
+                Plates and the data table were ALL alive at the same time — each
+                holding its own derived copy of the dataset, each with a deep
+                watcher on it, and each re-rendering whenever any sample updated.
+
+                Rendering only the active tab means exactly one chart component
+                exists at a time. Switching tabs destroys the previous one and
+                releases its canvases and derived state. The `key` forces a clean
+                remount rather than Vue patching one chart component into another.
+              -->
+              <div class="mtx-tab-scroll">
+                  <v-container class="my-0" v-if="activeTab">
                       <component
-                          :is="tabItem.component"
+                          :is="activeTab.component"
+                          :key="`tab-${tab}`"
                           :bundleconfig="bundleconfig"
-                          :sampleData="selectedsamples"
+                          :samples="selectedsamples"
+                          :taxaQuery="taxaQuery"
+                          :storeTick="storeTick"
                           :namesData="uniquenametypes"
                           :fullsize="fullsize"
-                          :selectedsamples="Object.keys(selectedData)"
+                          :selectedsamples="selectedsamples"
                           :sampleMeta="sampleMeta"
                           :run="selectedRun"
                           :socket="socket"
                           @updateMeta="setSampleMeta"
                           @updateRunMeta="setRunMeta"
+                          @visibleSamples="setVisibleSamples"
+                          @focusSample="setFocusSample"
                       >
                       </component>
 
                   </v-container>
-              </v-tab-item>
-
-
-              </v-tabs-items>
+              </div>
               
               
           </v-col>
@@ -888,7 +933,14 @@ import DataTableTab from "@/components/DataTableTab"
 import Metadata from "@/components/Metadata"
 import AddRun from "@/components/AddRun"
 import demoSamples from "@/assets/demoData"
-import _ from 'lodash'
+// The columnar taxon store and the frame protocol client. Between them they
+// replace `selectedsamplesAll[i].fullData` / `.data` (two arrays of ~30k row
+// objects per sample) and roughly forty independent socket.on handlers.
+import taxaStore, { sortRankCodes as sortRanks } from "@/store/taxa"
+import FrameClient from "@/services/frames"
+// NOTE: lodash's cloneDeep used to be used here to copy parsed report rows.
+// Those copies were the bulk of this tab's memory footprint and are gone; the
+// import is kept out deliberately so it doesn't creep back in.
 import { io } from "socket.io-client";
  
 
@@ -919,6 +971,24 @@ export default {
     computed: {
       isConnected() {
         return !!(this.socket && this.socket.connected);
+      },
+      // Run names decorated with live scheduler activity. `queueBoardAll` is the
+      // counts-only, ALL-runs summary that the server broadcasts to every client
+      // regardless of which run they're viewing, so this stays accurate for runs
+      // other than the selected one.
+      runItems() {
+        const byRun = {}
+        const all = (this.queueBoardAll && this.queueBoardAll.runs) || []
+        all.forEach((r) => { if (r && r.run) byRun[r.run] = r })
+        return (this.runs || []).map((name) => {
+          const r = byRun[name] || {}
+          return {
+            value: name,
+            pending: r.pending || 0,
+            running: r.running || 0,
+            samples: r.samples || []
+          }
+        })
       },
       // Reference databases split by the engine that consumes them, flattened
       // into the { header } / { divider } / item shape v-select renders as
@@ -1031,15 +1101,31 @@ export default {
       direction() {
             return this.navigation.shown === false ? "Open" : "Closed";
       },
+      // Names of the samples currently shown. Deliberately a list of STRINGS.
+      // This used to be an object mapping every sample name to its full array of
+      // row objects, rebuilt whenever any sample changed and handed as a prop to
+      // every tab — so one arriving report re-rendered every chart in the app.
       selectedsamples(){
-        let data = {}
-        
-        this.selectedsamplesAll.filter((obj)=>{
-          return !obj.hidden
-        }).map((f)=>{
-          data[f.sample] = f.data
-        })
-        return data 
+        return this.selectedsamplesAll.filter((obj) => !obj.hidden).map((f) => f.sample)
+      },
+      // The display-filter state, bundled for the store's query API. Chart
+      // components take this as one prop and pass it straight through.
+      taxaQuery(){
+        return {
+          ranks: this.defaults,
+          depthRange: this.depthRange,
+          minPercent: this.minPercent,
+          version: this.filterVersion
+        }
+      },
+      // "Something in the taxon store changed" — the ONLY reactive dependency
+      // chart components need on the bulk data.
+      storeTick(){
+        return taxaStore.state.tick
+      },
+      // The one tab that is actually mounted.
+      activeTab(){
+        return this.tabs[this.tab] || this.tabs[0] || null
       },
       icon () {
         if (this.selectedAllSamples) return 'mdi-checkbox-marked'
@@ -1058,7 +1144,9 @@ export default {
         });
       },
       samplekeys(){
-        return Object.keys(this.fullData)
+        // eslint-disable-next-line no-unused-expressions
+        this.storeTick
+        return taxaStore.sampleNames()
       },
       // Tally samples by where they came from so the left panel can clearly
       // separate live server-watched samples from locally uploaded K2 reports.
@@ -1112,6 +1200,17 @@ export default {
             anyRunning: false,
             pausedServer: false,
             selectedsamplesAll: [],
+            // NOTE: the FrameClient itself is deliberately NOT declared here.
+            // It is assigned as a plain instance property (`this.frames = ...`)
+            // in the connect handler, because anything in data() gets walked and
+            // observed by Vue — and the client holds a queue of undecoded frames
+            // and the socket. Observing those would put the exact hot-path data
+            // we just moved out of Vue straight back into it.
+            //
+            // `frameStats` is a handful of integers and is fine to observe.
+            frameStats: { framesReceived: 0, framesApplied: 0, backlog: 0, lastApplyMs: 0, maxApplyMs: 0 },
+            visibleSamples: [],
+            focusSample: null,
             status: {},
             uniquenametypes: {
               'default (scientific name)': 1
@@ -1186,6 +1285,13 @@ export default {
             matchPaired: ".*_[1-2].fastq.gz",
             logs: [], 
             fullsize: {},
+            // Bumped whenever a display filter changes, so chart components can
+            // depend on it without deep-watching the filter objects themselves.
+            filterVersion: 0,
+            // Taxa cap the server applies to samples that are on screen but not
+            // focused. 500 is far more than any chart draws; the focused sample
+            // is sent in full.
+            topNTaxa: 500,
             matchSingle: ".*fastq",
             ext: ".fastq", 
             compressed: false,
@@ -1249,13 +1355,22 @@ export default {
       },
       selectedRun(val){
         if (val){
-          // Drop the previous run's samples AND queue so a 1600-job run doesn't
-          // linger (or keep taking incremental updates) after switching to a
-          // small run. The server also re-scopes live updates to `val` on the
-          // getRunInformation below, and a fresh snapshot rehydrates everything.
+          // Drop the previous run entirely on both sides of the wire. The frame
+          // client clears the columnar store and forgets its delta cursors; the
+          // server does the same on the getRunInformation below. Without that
+          // symmetry a delta could be applied against rows the store no longer
+          // has, which is the classic way a delta protocol silently desyncs.
           this.selectedsamplesAll = []
           this.queueList = {}
+          this.queueStatusAgg = Object.create(null)
           this.queueBoard = {}
+          // The viewport describes the PREVIOUS run's samples. Carrying it over
+          // would tell the server about samples that no longer exist and, worse,
+          // omit every sample in the run we are switching to.
+          this.visibleSamples = []
+          this.focusSample = null
+          if (this.frames) this.frames.selectRun(val)
+          else taxaStore.reset(val)
           this.loadMeta()
           this.sendMessage({
             run: val,
@@ -1403,34 +1518,13 @@ export default {
         
         if (index > -1){
           if (!status){
-
-            let status = this.selectedsamplesAll[index].status
-            let queue = this.queueList[sample]
-            
-            let error = queue.map((f)=>{return f.status.error})
-            let running = queue.some((f)=>{return f.status.running})  
-            let paused = queue.some((f)=>{return f.status.paused})
-            let success = queue.every((f)=>{return f.status.success})
-            let historical = queue.every((f)=>{return f.status.historical})
-            let waiting = queue.some((f)=>{return f.status.waiting})
-            let logs = queue.map((f)=>{return f.status.logs})
-            // Preserve the backend-provided watching flag; the per-job queue
-            // entries don't carry it, so re-deriving would otherwise wipe it.
-            let watching = status && status.watching
-
-            status = {
-              running: running,
-              paused: paused,
-              success: success,
-              historical: historical,
-              waiting: waiting,
-              error: error,
-              logs: logs,
-              watching: watching
-            }
-
-            this.$set(this.selectedsamplesAll[index], 'status', status)
+            this.publishQueueStatus(sample)
           } else {
+            const agg = this.ensureQueueAggregate(sample)
+            if (agg && agg.total > 0 && (!status.total || status.total < agg.total)) {
+              this.publishQueueStatus(sample, status)
+              return
+            }
             this.$set(this.selectedsamplesAll[index], 'status', status)
           }
           
@@ -1527,6 +1621,7 @@ export default {
         // async delete don't re-add the row (see recentlyDeleted / addSample)
         this.recentlyDeleted[sample] = Date.now()
         this.$delete(this.selectedData, sample)
+        if (this.queueStatusAgg && this.queueStatusAgg[sample]) delete this.queueStatusAgg[sample]
         // Drop the sample's queued jobs too, otherwise the QueueBoard (whose rows
         // are derived from queueList keys) keeps showing the deleted sample.
         if (this.queueList && Object.prototype.hasOwnProperty.call(this.queueList, sample)){
@@ -1535,9 +1630,11 @@ export default {
         let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
         if (index > -1){
           this.$delete(this.selectedsamplesAll, index)
-
         }
-
+        // Free the sample's columnar table (a few hundred KB) and evict its
+        // cached query results.
+        taxaStore.dropSample(sample)
+        this.publishView()
       },
      
       
@@ -1656,6 +1753,7 @@ export default {
           this.samplesheetdata = []
           this.selectedsamplesAll = []
           this.selectedData = {}
+          this.queueStatusAgg = Object.create(null)
         },
         applySettings() {
           this.serverHost = this.settingsEditHost.trim() || window.location.hostname
@@ -1968,6 +2066,25 @@ export default {
               if ($this._listenersBound) { return }
               $this._listenersBound = true
 
+              // ---- data plane ------------------------------------------------
+              // One client for one event. Everything that used to be its own
+              // socket handler (report bodies, job status, queue counters, the
+              // scheduler board) arrives here already coalesced by the server and
+              // is applied off the critical path.
+              $this.frames = new FrameClient({
+                socket: $this.socket,
+                onJobs: (jobs) => $this.applyJobFrames(jobs),
+                onSamples: (samples) => $this.applySampleFrames(samples),
+                onQueue: (q) => $this.applyQueueFrame(q),
+                onMeta: (meta) => $this.applyMetaFrame(meta),
+                onApplied: (stats) => {
+                  $this.frameStats = { ...stats }
+                  $this.scheduleConsistencyCheck()
+                }
+              })
+              $this.frames.attach()
+              if ($this.selectedRun) $this.frames.selectRun($this.selectedRun)
+
               $this.socket.on("runs", (e)=>{
                 $this.runs = e;
                 console.log(e, "Available Runs")
@@ -1993,7 +2110,9 @@ export default {
                   console.log("Deleted Sample", e.samplename)
                   $this.deletesample(e.samplename)
                 } catch (err){
-                  console.error(err, sample, "Error in deleting sample")
+                  // `sample` was never in scope here -- the error handler itself
+                  // threw a ReferenceError, so delete failures were invisible.
+                  console.error(err, e && e.samplename, "Error in deleting sample")
                 }
               })
               $this.socket.on("message", (e)=>{
@@ -2001,32 +2120,16 @@ export default {
               $this.socket.on("queueDrop", (e)=>{
                 // assume this is the entire set of sample queue records
                 this.queueList = e.data
+                this.queueStatusAgg = Object.create(null)
               })
-              $this.socket.on("queueBoard", (e)=>{
-                // round-robin play order snapshot for the selected run
-                if (!e) return
-                if (e.run && $this.selectedRun && e.run !== $this.selectedRun) return
-                $this.queueBoard = e
-              })
-              $this.socket.on("status", (e)=>{
-                // assume this is the entire set of sample queue records
-                // find queuelist sample and index and update status
-                let sample = e.sample
-                let index = e.index > 0 ? e.index : 0
-                let status = e.status
-                let config = e.config 
-                if (!this.queueList[sample]){
-                  this.$set(this.queueList, sample, [])
-                }
-                if (!this.queueList[sample][index]){
-                  this.$set(this.queueList[sample], index, {})
-                }
-                this.$set($this.queueList[sample][index], 'status',  status)
-                for (let key in config){
-                  this.$set($this.queueList[sample][index], key, config[key])
-                }
-                $this.updateSampleStatus(sample)
-              })
+              // NOTE: the per-job "status", "queueJob", "sampledata", "data",
+              // "runUpdate", "queueLength" and "queueBoard" handlers are gone.
+              // Every one of them fired once (or twice) per classified fastq and
+              // mutated reactive state synchronously on arrival -- 800 files
+              // meant tens of thousands of independent Vue update cycles. All of
+              // that traffic now arrives coalesced on a single `mtx:frame`
+              // channel and is applied through FrameClient inside a time-budgeted
+              // animation-frame loop. See applyJobFrames / applySampleFrames.
               
               $this.socket.on("sendPaths", (e)=>{
                 this.pathOptions = e.data 
@@ -2056,147 +2159,52 @@ export default {
                 if (!e || (e.run && e.run !== this.selectedRun)) return
                 this.pairWatches = Array.isArray(e.watches) ? e.watches : []
               })
-              $this.socket.on("queueJob", (e)=>{
-                try {
-                  const sample = e.samplename
-                  if (!sample) return
-                  let job = e.queue
-                  if (Array.isArray(job)) {
-                    job = job.length ? job[job.length - 1] : null
-                  }
-                  this.addSample(sample, job || {})
-                  if (!this.queueList[sample]) {
-                    this.$set(this.queueList, sample, [])
-                  }
-                  const idx = (job && job.index != null) ? job.index : this.queueList[sample].length
-                  const merged = {
-                    ...(this.queueList[sample][idx] || {}),
-                    ...(job || {})
-                  }
-                  if (!merged.status) {
-                    merged.status = {
-                      running: false,
-                      waiting: true,
-                      success: null,
-                      historical: false,
-                      error: null,
-                      logs: []
-                    }
-                  }
-                  this.$set(this.queueList[sample], idx, merged)
-                  this.updateSampleStatus(sample)
-                } catch (err) {
-                  console.error(err)
-                }
-              })
-              $this.socket.on("sampledata", (e)=>{
-                // Coalesce on the client too: importData is heavy (TSV parse +
-                // deep clones + chart re-render). Queue the latest report per
-                // sample and render on a trailing timer so a burst of updates
-                // doesn't lock the UI thread.
-                $this.scheduleServerImport(e.data, e.samplename)
-              })
               $this.socket.on("samplesheet", (e)=>{
                 $this.samplesheet = e.samplesheet
+                // The backend broadcasts this whenever the run gains a sample --
+                // a new barcode directory appearing mid-run, or a sample added
+                // from the sheet editor. Register those rows immediately instead
+                // of waiting for the sample's first job or report to arrive.
+                $this.adoptSamplesheet(e.samplesheet)
               })
              
-              $this.socket.on('runInformation', async (e)=>{
-                // Single-packet hydrate. The server sends the WHOLE run snapshot
-                // in one frame: samplesheet + for every sample its report text,
-                // full queue list and per-job status. We populate everything from
-                // here in one pass instead of waiting on a flood of per-sample
-                // sampledata / queueJob / status frames (which is what made a
-                // 1600-job run take minutes to load).
-                if (!e) return
+              // Run bootstrap. This carries ONLY the structural half of a run:
+              // the samplesheet, each sample's queue list and its rollup status.
+              // The taxon tables that used to travel with it (every sample's
+              // full report text, tens of MB on a large run, parsed synchronously
+              // on arrival) now stream in as delta frames sized to whatever this
+              // client's viewport actually needs.
+              $this.socket.on('runBootstrap', (e)=>{
+                if (!e || e.run !== $this.selectedRun) return
                 $this.$set($this, 'samplesheet', e.samplesheet || [])
-                // active paired-directory watches for this run (drives the
-                // "listening" indicator + stop control on group headers)
                 $this.$set($this, 'pairWatches', Array.isArray(e.pairWatches) ? e.pairWatches : [])
-                if (!Array.isArray(e.reportdata)) return
-
-                const pendingReports = []
-                for (const entry of e.reportdata){
+                // Samples declared in the sheet but not yet classified still get
+                // a row, so a freshly created run shows its barcodes right away.
+                $this.adoptSamplesheet(e.samplesheet)
+                const list = Array.isArray(e.samples) ? e.samples : []
+                for (const entry of list){
                   const sample = entry && entry.samplename
                   if (!sample) continue
-                  // queue list for this sample (default to [] so status calc is safe)
                   const queue = Array.isArray(entry.queue) ? entry.queue : []
                   $this.$set($this.queueList, sample, queue)
-                  // register the sample WITHOUT a getStatus round-trip — the
-                  // queue + status are already in this packet.
+                  // The queue is installed wholesale here, not job-by-job, so the
+                  // incremental aggregate that applyJobFrames maintains knows
+                  // nothing about it. Drop the cached aggregate so it is rebuilt
+                  // from what we just installed -- otherwise the badge keeps
+                  // reporting the counts it had before the run was (re)loaded.
+                  if ($this.queueStatusAgg) delete $this.queueStatusAgg[sample]
                   const lastJob = queue.length ? queue[queue.length - 1] : {}
                   $this.addSample(sample, lastJob, 'server', true)
-                  $this.updateSampleStatus(sample)
-                  if (entry.data && typeof entry.data === 'string' && entry.data !== ''){
-                    pendingReports.push({ sample, data: entry.data })
-                  }
+                  $this.updateSampleStatus(sample, entry.status)
                 }
-                // Render the reports through the existing coalesced importer,
-                // flagged as a bulk hydrate so importData/addSample stay quiet.
-                for (const r of pendingReports){
-                  $this.scheduleServerImport(r.data, r.sample, true)
-                }
+                // Now that we know which samples exist, tell the server what is
+                // actually on screen so it only encodes those.
+                $this.publishView()
+                // The bootstrap is a snapshot; if it was taken while a sample was
+                // still initialising its queue, reconcile shortly after.
+                $this.scheduleConsistencyCheck()
               })
 
-              $this.socket.on('runUpdate', (e)=>{
-                // Batched, run-scoped incremental update. The server coalesces
-                // many per-job/per-sample changes for the SELECTED run into one
-                // frame on a timer, so the socket never floods and the viewer's
-                // run keeps rendering. Ignore frames for any other run.
-                if (!e || e.run !== $this.selectedRun) return
-                const jobs = Array.isArray(e.jobs) ? e.jobs : []
-                const samples = Array.isArray(e.samples) ? e.samples : []
-
-                // 1) merge job/queue + per-job status changes into the queue list
-                for (const j of jobs){
-                  const sample = j.samplename
-                  if (!sample) continue
-                  if (!$this.queueList[sample]){
-                    $this.$set($this.queueList, sample, [])
-                  }
-                  const idx = (j.index != null) ? j.index : $this.queueList[sample].length
-                  const merged = {
-                    ...($this.queueList[sample][idx] || {}),
-                    ...(j.job || {})
-                  }
-                  if (j.status) merged.status = j.status
-                  if (j.config){ for (const k in j.config) merged[k] = j.config[k] }
-                  if (!merged.status){
-                    merged.status = {
-                      running: false, waiting: true, success: null,
-                      historical: false, error: null, logs: []
-                    }
-                  }
-                  $this.$set($this.queueList[sample], idx, merged)
-                  $this.addSample(sample, merged, 'server', true)
-                }
-
-                // 2) sample-level report text + aggregate status (prioritises the
-                //    visualisation: render the latest full.report per sample).
-                const explicitStatus = new Set()
-                for (const s of samples){
-                  const sample = s.samplename
-                  if (!sample) continue
-                  $this.addSample(sample, {}, 'server', true)
-                  if (s.status){
-                    $this.updateSampleStatus(sample, s.status)
-                    explicitStatus.add(sample)
-                  }
-                  if (s.data && typeof s.data === 'string' && s.data !== ''){
-                    $this.scheduleServerImport(s.data, sample, true)
-                  }
-                }
-
-                // 3) recompute rollup status for job-touched samples that didn't
-                //    get an explicit sample status in this frame.
-                const touched = new Set(jobs.map(j=>j.samplename).filter(Boolean))
-                for (const sample of touched){
-                  if (!explicitStatus.has(sample)) $this.updateSampleStatus(sample)
-                }
-              })
-             
-
-              
-             
               $this.socket.on("basepathserver",(e)=>{
                 this.basepathserver = e.data;
               })
@@ -2209,9 +2217,6 @@ export default {
               $this.socket.on("anyRunning", (e)=>{
                 this.anyRunning = e.status
               })
-              $this.socket.on('queueLength', (e)=>{
-                this.queueLength = e.data
-              })
               // ALL-runs queue summary (counts only, every run, not just the one
               // currently selected) so the queue board can show the full picture.
               $this.socket.on('queueBoardAll', (e)=>{
@@ -2222,19 +2227,19 @@ export default {
                 const lasts = this.logs.slice(-100);
                 this.logs = lasts  
               } )
-              $this.socket.on("data", (e)=>{
-                if (e.run == $this.selectedRun ){
-                  $this.scheduleServerImport(e.data, e.samplename)
-                }
-              })
 
           })
 
          
           
         },
+        // Parse the "name (attr), name2 (attr2)" alias syntax some references
+        // carry. Returns null rather than an empty object when there are no
+        // aliases (the overwhelmingly common case for plain kraken2 reports) so
+        // we don't allocate one throwaway object per taxon row -- every consumer
+        // already guards with `d.objfull && ...`.
         extractValue(value){
-          let mappings = {}
+          let mappings = null
           if (value){
             let split =value.split(";")
             if (split.length >1){
@@ -2253,6 +2258,7 @@ export default {
                       if (!this.uniquenametypes[attr]){
                         this.uniquenametypes[attr] = 1
                       }
+                      if (!mappings) mappings = {}
                       if (!mappings[attr]){
                         mappings[attr] = [val]
                       } else {
@@ -2272,6 +2278,19 @@ export default {
       },
       
         
+        // Human-readable summary for a run entry in the picker.
+        runTooltip(item){
+          if (!item) return ''
+          const bits = []
+          if (item.running){
+            const who = (item.samples || []).slice(0, 3).join(', ')
+            bits.push(`${item.running} file${item.running === 1 ? '' : 's'} classifying now${who ? ` (${who})` : ''}`)
+          }
+          if (item.pending) bits.push(`${item.pending} file${item.pending === 1 ? '' : 's'} still queued`)
+          if (!bits.length) bits.push('No queued or running work')
+          if (item.value === this.selectedRun) bits.push('— currently viewing')
+          return bits.join(' · ')
+        },
         runBundleUpdate(){
           this.sendMessage({
                 type: "runbundle", 
@@ -2292,17 +2311,16 @@ export default {
           } 
 
         },
+        // Display filters (rank set, depth range, minimum percent) changed.
+        //
+        // This used to re-derive, and retain, a fresh filtered array of row
+        // objects for EVERY loaded sample on every slider tick — two full passes
+        // over a 30k-row report per sample, per pixel of slider travel. Filters
+        // are now just part of the query the chart layer runs against the
+        // columnar store, so all this has to do is bump a counter and let the
+        // visible panels re-query. Off-screen samples do no work at all.
         filter(){
-          let dataFull = {}
-          const $this = this;
-          this.selectedsamplesAll = this.selectedsamplesAll.map((obj)=>{
-            let sample = obj.sample
-            let data = $this.filterData(_.cloneDeep(obj.fullData))
-            data = $this.parseData(data)
-            data = $this.rollupSubspecies(data)
-            obj.data = data
-            return obj
-          })
+          this.filterVersion += 1
         },
         async barcode(sample){
           this.sendMessage({
@@ -2439,61 +2457,17 @@ export default {
             return String(a).localeCompare(String(b))
           })
         },
-        parseData(data){
-          function find_latest(obj, found){
-            if (found-1 <= -1 ){
-              return {
-                name: 'base', 
-                taxid: -1,
-                value: 0
-              }
-            } else {
-              if (last[found-1]){
-                return obj[found-1]
-              } else {
-                return find_latest(obj, found-1)
-              }
-            }
-          }
-          let last = {}
-          
-          data  = data.map((d)=>{
-            
-            let source = find_latest(last, d.depth)
-            if (d.taxid == -1){
-              d.source = null
-              d.parenttaxid = null
-            } else {
-              d.source = source.name  
-              d.parenttaxid = source.taxid
-            }
-            
-            last[d.depth] = {
-              name: d.target,
-              taxid: d.taxid,
-              value: d.num_fragments_assigned
-            }
-            
-            return d
-          })
-          return data
-          
-        },
-        
-        rollupSubspecies(data) {
-          // Keep all subspecies depths (S1, S2, S3, ...) as distinct ranks.
-          return data
-        },
-
-        filterData(d){
-          let data = _.cloneDeep(d)
-          data = data.filter((f)=>{
-            if (f.taxid == -1) return true
-            const rankOk = this.defaults.indexOf(f.rank_code) > -1
-            return rankOk && f.depth <= this.depthRange[1] && f.depth >= this.depthRange[0] && this.minPercent <= f.value/100
-          })
-          return data
-        },
+        // parseData(), rollupSubspecies() and filterData() lived here.
+        //
+        // parseData walked the report re-deriving each row's parent from
+        // indentation and cloned every surviving row to attach it; filterData
+        // rebuilt the visible subset. Both ran per sample on every import and
+        // every filter change, and both produced arrays that were then retained.
+        //
+        // Parent/lineage resolution now happens ONCE per taxon, on the server,
+        // in the run-level dictionary (server/taxonstore.mjs). Filtering is a
+        // predicate over typed arrays inside taxaStore.query(), which hydrates
+        // only the rows a chart is about to draw. See src/store/taxa.js.
         mapData(data){
           data.forEach((entry)=>{
             this.mapped_names[entry.Taxid] = entry
@@ -2554,9 +2528,99 @@ export default {
           } else if (origin && !this.selectedsamplesAll[indx].origin){
             this.$set(this.selectedsamplesAll[indx], 'origin', origin)
           }
-          this.selectedsamplesAll[indx].config = config ? config : {}
+          // Only replace config when we were actually given one. Sample-level
+          // status frames call this with `{}` purely to ensure the row exists;
+          // treating that as "set config to empty" wiped the job metadata that
+          // the job frames had just populated, and the table lost the paths and
+          // database it displays. `$set` because `config` is not present on the
+          // object at creation time and so would not otherwise be reactive.
+          if (config && Object.keys(config).length){
+            this.$set(this.selectedsamplesAll[indx], 'config', config)
+          } else if (!this.selectedsamplesAll[indx].config){
+            this.$set(this.selectedsamplesAll[indx], 'config', {})
+          }
           return
 
+        },
+        queueContribution(job){
+          if (!job) return null
+          const s = (job && job.status) || {}
+          const ok = s.success === true || s.success === 0
+          return {
+            total: 1,
+            running: s.running ? 1 : 0,
+            waiting: s.waiting ? 1 : 0,
+            paused: s.paused ? 1 : 0,
+            success: ok ? 1 : 0,
+            historical: s.historical ? 1 : 0,
+            error: (s.success === false || (s.code != null && s.code !== 0)) ? 1 : 0,
+            logCount: s.logCount || 0,
+            errorText: (s.success === false || (s.code != null && s.code !== 0)) ? (s.error || 'Job failed') : null
+          }
+        },
+        applyQueueContribution(agg, idx, c, dir){
+          if (!agg || !c) return
+          agg.total += dir * c.total
+          agg.running += dir * c.running
+          agg.waiting += dir * c.waiting
+          agg.paused += dir * c.paused
+          agg.success += dir * c.success
+          agg.historical += dir * c.historical
+          agg.error += dir * c.error
+          agg.logCount += dir * c.logCount
+          if (c.errorText) {
+            if (dir > 0) agg.errorsByIndex.set(idx, c.errorText)
+            else agg.errorsByIndex.delete(idx)
+          }
+        },
+        ensureQueueAggregate(sample){
+          if (!this.queueStatusAgg) this.queueStatusAgg = Object.create(null)
+          if (this.queueStatusAgg[sample]) return this.queueStatusAgg[sample]
+          const agg = {
+            total: 0,
+            running: 0,
+            waiting: 0,
+            paused: 0,
+            success: 0,
+            historical: 0,
+            error: 0,
+            logCount: 0,
+            errorsByIndex: new Map()
+          }
+          const queue = this.queueList[sample] || []
+          queue.forEach((job, idx) => this.applyQueueContribution(agg, idx, this.queueContribution(job), 1))
+          this.queueStatusAgg[sample] = agg
+          return agg
+        },
+        updateQueueAggregate(sample, idx, before, after){
+          const agg = this.ensureQueueAggregate(sample)
+          this.applyQueueContribution(agg, idx, this.queueContribution(before), -1)
+          this.applyQueueContribution(agg, idx, this.queueContribution(after), 1)
+        },
+        publishQueueStatus(sample, statusPatch){
+          const index = this.selectedsamplesAll.findIndex(x => x.sample === sample)
+          if (index < 0) return
+          const agg = this.ensureQueueAggregate(sample)
+          const prev = { ...(this.selectedsamplesAll[index].status || {}), ...(statusPatch || {}) }
+          const total = Math.max(agg.total, Number(prev.total || 0))
+          const done = Math.max(agg.success, Number(prev.done || 0))
+          const errorCount = Math.max(agg.error, Number(prev.errorCount || 0))
+          const runningCount = agg.running || Number(prev.runningCount || 0)
+          const waitingCount = agg.waiting || Number(prev.waiting || 0)
+          this.$set(this.selectedsamplesAll[index], 'status', {
+            running: runningCount > 0,
+            paused: agg.paused > 0,
+            success: total > 0 && done === total && errorCount === 0,
+            historical: agg.total > 0 && agg.historical === agg.total,
+            waiting: waitingCount > 0,
+            total,
+            runningCount,
+            done,
+            errorCount,
+            logCount: agg.logCount,
+            error: Array.from(agg.errorsByIndex.values()).slice(0, 5),
+            watching: prev && prev.watching
+          })
         },
         // Load the canned demo reports so the frontend-only (GitHub Pages) build
         // has something to visualize without a backend.
@@ -2581,121 +2645,201 @@ export default {
           this.selectedsamplesAll = keep
           this.demoLoaded = false
         },
-        // Coalesce server-pushed report renders. Stores only the most recent
-        // report per sample and flushes on a trailing timer, so a burst of
-        // sampledata frames (e.g. while 400 fastqs classify) results in a bounded
-        // number of heavy importData() renders rather than one per frame.
-        scheduleServerImport(information, sample, skipStatus){
-          if (!information || typeof information !== 'string') return
-          if (!this._pendingImports) this._pendingImports = {}
-          // keep the latest report per sample, plus whether this render is part
-          // of a bulk run hydrate (skipStatus) so importData doesn't re-trigger
-          // a getStatus round-trip per sample.
-          this._pendingImports[sample] = { data: information, skipStatus: !!skipStatus }
-          if (this._importFlushTimer) return
-          this._importFlushTimer = setTimeout(async () => {
-            this._importFlushTimer = null
-            const batch = this._pendingImports || {}
-            this._pendingImports = {}
-            for (const s of Object.keys(batch)) {
-              try {
-                await this.importData(batch[s].data, s, 'server', batch[s].skipStatus)
-              } catch (err) {
-                console.error(err)
+        // ---------------------------------------------------------------
+        // Frame handlers.
+        //
+        // These receive the light, structural sections of an `mtx:frame`. The
+        // heavy half (taxon counts) never reaches this component at all — the
+        // FrameClient writes it straight into the columnar store, and the chart
+        // components read it back out on demand.
+        // ---------------------------------------------------------------
+
+        // Per-job queue/status changes, already coalesced per (sample,index) by
+        // the server. One frame typically carries the last window's worth of
+        // transitions for the whole run.
+        applyJobFrames(jobs){
+          const touched = new Set()
+          for (const j of jobs){
+            const sample = j.sample || j.samplename
+            if (!sample) continue
+            if (!this.queueList[sample]) this.$set(this.queueList, sample, [])
+            const idx = (j.index != null) ? j.index : this.queueList[sample].length
+            const before = this.queueList[sample][idx]
+            const merged = {
+              ...(before || {}),
+              ...(j.job || {})
+            }
+            if (j.status) merged.status = j.status
+            if (j.config){ for (const k in j.config) merged[k] = j.config[k] }
+            if (!merged.status){
+              merged.status = {
+                running: false, waiting: true, success: null,
+                historical: false, error: null, logCount: 0, lastLog: null
               }
             }
-          }, 400)
+            this.updateQueueAggregate(sample, idx, before, merged)
+            this.$set(this.queueList[sample], idx, merged)
+            this.addSample(sample, merged, 'server', true)
+            touched.add(sample)
+          }
+          for (const sample of touched) this.publishQueueStatus(sample)
+          if (touched.size) this.scheduleConsistencyCheck()
         },
-        async importData(information, sample, origin, skipStatus){
+
+        // Sample-level rollup status. Report text is conspicuously absent: it
+        // has already been diffed into the store by the time we get here.
+        applySampleFrames(samples){
+          let touched = false
+          for (const s of samples){
+            const sample = s.sample || s.samplename
+            if (!sample) continue
+            this.addSample(sample, {}, 'server', true)
+            if (s.status) this.updateSampleStatus(sample, s.status)
+            touched = true
+          }
+          if (touched) this.scheduleConsistencyCheck()
+        },
+
+        // Scheduler counters + the round-robin board, folded into the frame so
+        // they can never disagree with the job states they describe.
+        applyQueueFrame(q){
+          if (!q) return
+          if (q.total != null) this.queueLength = q.total
+          if (q.board) this.queueBoard = q.board
+        },
+
+        // -------------------------------------------------------------------
+        // Consistency check.
+        //
+        // A sample with taxon data but an empty job queue is impossible in a
+        // steady state: the data had to come from a job. When we see it, the job
+        // frames that described that queue were emitted at a moment this
+        // connection could not receive them — typically before the run was
+        // selected, or before the sample had finished initialising and had a
+        // queue to report. The run bootstrap normally covers that, but it is a
+        // snapshot and can be taken a moment too early.
+        //
+        // Instead of trying to make the timing airtight everywhere, we detect
+        // the contradiction and ask for the authoritative state. Rate-limited
+        // server-side per sample, so a sample that really has no jobs settles
+        // rather than looping.
+        checkQueueConsistency(){
+          if (!this.frames) return
+          const stale = []
+          for (const row of this.selectedsamplesAll){
+            const name = row && row.sample
+            if (!name || (row.origin || 'server') !== 'server') continue
+            if (!taxaStore.count(name)) continue                  // no data: nothing to reconcile
+            const queued = (this.queueList[name] || []).length
+            const reported = Number((row.status && row.status.total) || 0)
+            if ((reported > 0 && queued < reported) || (queued === 0 && reported === 0)) stale.push(name)
+          }
+          if (stale.length) this.frames.requestResync(stale)
+        },
+
+        applyMetaFrame(meta){
+          if (!meta) return
+          if (meta.samplesheet) this.$set(this, 'samplesheet', meta.samplesheet)
+          if (Array.isArray(meta.pairWatches)) this.$set(this, 'pairWatches', meta.pairWatches)
+        },
+
+        // ---------------------------------------------------------------
+        // Viewport reporting.
+        //
+        // This is the single biggest lever on wire volume for a large run: the
+        // server only encodes taxa for samples this client says are on screen,
+        // and only encodes them in full for the one sample being examined. A
+        // 24-barcode run with two panels visible costs about what a 2-barcode
+        // run used to.
+        // ---------------------------------------------------------------
+        // Register every sample named in the samplesheet. Idempotent -- addSample
+        // no-ops for samples already known -- so it is safe to call on every
+        // samplesheet broadcast.
+        adoptSamplesheet(sheet){
+          if (!Array.isArray(sheet)) return
+          let added = false
+          for (const entry of sheet){
+            const name = entry && (entry.sample || entry.samplename)
+            if (!name) continue
+            if (this.selectedsamplesAll.findIndex((x) => x.sample === name) > -1) continue
+            this.addSample(name, null, 'server', true)
+            added = true
+          }
+          if (added) this.publishView()
+        },
+
+        // Debounced so a burst of frames triggers one check, not one per frame.
+        scheduleConsistencyCheck(){
+          if (this._consistencyTimer) return
+          this._consistencyTimer = setTimeout(() => {
+            this._consistencyTimer = null
+            try { this.checkQueueConsistency() } catch (err) { console.error(err) }
+          }, 1200)
+        },
+
+        publishView(){
+          if (!this.frames) return
+          const onScreen = (this.visibleSamples && this.visibleSamples.length)
+            ? this.visibleSamples.slice()
+            : this.selectedsamplesAll.filter((s) => !s.hidden).map((s) => s.sample)
+          // Always name samples we know about but hold no data for yet.
+          //
+          // The server has its own guarantee that a sample without a baseline is
+          // never starved, but relying on that alone makes a new sample's first
+          // payload depend on server-side bookkeeping staying correct. Saying it
+          // from the side that actually knows what it is missing is cheap --
+          // these samples have no data, so there is nothing extra to encode --
+          // and it means the two mechanisms have to fail together to strand a
+          // sample.
+          const named = new Set(onScreen)
+          for (const s of this.selectedsamplesAll){
+            if (s.hidden) continue
+            if (!taxaStore.count(s.sample)) named.add(s.sample)
+          }
+          this.frames.setView(Array.from(named), this.focusSample, this.topNTaxa)
+        },
+
+        // Called by the chart layer as panels scroll in and out of view.
+        setVisibleSamples(names){
+          this.visibleSamples = Array.isArray(names) ? names : []
+          this.publishView()
+        },
+        setFocusSample(name){
+          this.focusSample = name || null
+          this.publishView()
+        },
+
+        // ---------------------------------------------------------------
+        // Local report ingestion (drag-and-drop, file picker, demo data).
+        //
+        // Uploads take the same path as live samples: parse straight into the
+        // columnar store. There is no longer a second, object-based
+        // representation for locally-loaded reports — that divergence is what
+        // made the memory behaviour depend on how the data arrived.
+        // ---------------------------------------------------------------
+        async importData(information, sample, origin){
           if (!information || typeof information !== 'string') {
             console.warn('importData: no text provided');
             return;
           }
-          // default uploads when no explicit origin is supplied (drag/drop, file picker)
           origin = origin || 'upload'
-          this.addSample(sample, null, origin, skipStatus);
-          let text = information
-          let fullsize = 0
-          const $this = this
-          let uniques  = {}
-          let base = {
-              value: 0,
-              num_fragments_clade: 0,
-              num_fragments_assigned: 0,
-              rank_code: '1B',
-              taxid: -1,
-              target: "base",
-              source: null,
-              depth: 0
-          }
-
-          let data = text !== "" ? d3.tsvParseRows(text, (d)=> {
-            d[0] = d[0].trim()
-            d[5]  = d[5] ? d[5] : "Unknown"
-            d[5] = d[5].replace(/\t/, '')
-            let found = d[5].search(/\S/);
-            
-            d[5] = d[5].trim()
-            let size = 0
-            let value =  ( d[5] ? `${d[5]}` : "root" )
-            let target = value.replace(/\;.*/, "")
-            let fullMap = {}
-            let mappings = {}
-            
-            
-            let val = $this.extractValue(value)
-            let data = {
-              value: parseFloat(d[0]),
-              num_fragments_clade: parseInt(d[1]),
-              num_fragments_assigned: parseInt(d[2]),
-              rank_code: d[3],
-              taxid: d[4],
-              size: size ,
-              target: target,
-              full: `${d[4]} ${value}`,
-              objfull: val,
-              source: null,
-              depth: found
-            }
-            fullsize += parseInt(d[2])
-            if ( found == 0  ){
-              base.value += parseFloat(data.value)
-              base.num_fragments_clade+= parseInt(data.num_fragments_clade)
-             
-            }
-            
-            uniques[d[3]] = 1
-            return data
-          }) : null
-          if (data && data.length > 0){
-            // this.fullsize[sample] = fullsize
-            data.unshift(base)
-            const fullData = _.cloneDeep(data)
-            Object.keys(uniques).forEach((f)=>{
-              const code = f
-              if (this.defaultsList.indexOf(code)==-1){
-                this.defaultsList.push(code)
-              }
-            })
-            this.defaultsList = this.sortRankCodes(this.defaultsList)
-            this.defaults = this.defaultsList.slice()
-            data = this.filterData(_.cloneDeep(fullData))
-            data = this.parseData(data)
-            data = this.rollupSubspecies(data)
-            let index = this.selectedsamplesAll.findIndex(x => x.sample === sample );
-            if (index > -1){
-              this.$set(this.selectedsamplesAll[index], 'fullData', fullData)
-              this.$set(this.selectedsamplesAll[index], 'data', data)
-            }
-            return data 
-          }
-          
-          
-          
-          
-          
-          
+          this.addSample(sample, null, origin, true);
+          taxaStore.ingestReport(sample, information)
+          this.refreshRankChoices()
+          return true
       },
+
+        // Rank codes offered in the sidebar are derived from what is actually
+        // loaded. Recomputed on ingest rather than accumulated per row.
+        refreshRankChoices(){
+          const present = taxaStore.ranksPresent()
+          if (!present.length) return
+          const merged = sortRanks(this.defaultsList.concat(present))
+          if (merged.length !== this.defaultsList.length){
+            this.defaultsList = merged
+            this.defaults = merged.slice()
+          }
+        },
     }
 }
 </script>
@@ -2728,6 +2872,40 @@ th, td {
   letter-spacing: 0;
   font-weight: 600;
   font-size: 13.5px;
+}
+/* ---- run picker activity markers ---- */
+.mtx-runopt {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  font-size: 13px;
+}
+.mtx-run-ico { flex: 0 0 auto; }
+.mtx-runopt-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mtx-runbadge {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 9px;
+  letter-spacing: .2px;
+}
+.mtx-runbadge--running {
+  background: #e3f5e8;
+  color: #1b6b32;
+  border: 1px solid #b6e0c2;
+}
+.mtx-runbadge--queued {
+  background: #fdf3dc;
+  color: #8a5b00;
+  border: 1px solid #f0d9a3;
 }
 /* ---- left panel overhaul ---- */
 .mtx-drawer {

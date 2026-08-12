@@ -142,6 +142,7 @@
 
 <script>
 import * as d3 from 'd3'
+import taxaSource from '@/mixins/taxaSource'
 
 const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
@@ -149,9 +150,16 @@ const CAT_COLOR = { core: '#1e6b97', shared: '#5aa9c9', unique: '#f0a35e' }
 
 export default {
   name: 'CrossSample',
-  props: ['socket', 'sampleData', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
+  // Store-backed data source: supplies `sampleData` on demand from the
+  // columnar store instead of receiving every parsed row as a prop.
+  mixins: [taxaSource],
+  // `sampleData` now comes from the taxaSource mixin, derived from the store.
+  props: ['socket', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
   data() {
     return {
+      // Cross-sample comparison needs a wide slice per sample, but still a
+      // bounded one -- prevalence across samples is decided by the top taxa.
+      taxaLimit: 2000,
       CAT_COLOR,
       rank: 'S',
       subTab: 'table',
@@ -256,7 +264,11 @@ export default {
     }
   },
   watch: {
-    sampleData: { deep: true, handler() { this.syncRanks(); this.$nextTick(this.renderActive) } },
+    // Deep watch removed: see Heatmap.vue for the reasoning. This tab compares
+    // taxa across every loaded sample, so it asks the store for a wider slice
+    // (taxaLimit below) but still never holds full reports.
+    storeTick() { this.syncRanks(); this.$nextTick(this.renderActive) },
+    'taxaQuery.version'() { this.syncRanks(); this.$nextTick(this.renderActive) },
     rank() { this.$nextTick(this.renderActive) },
     subTab() { this.$nextTick(this.renderActive) },
     metric() { this.$nextTick(this.renderHeat) }

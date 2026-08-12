@@ -103,12 +103,13 @@
           this.makePlot()
         }
       },
-      inputdata: {
-        deep:true,
-        handler(data){
-          if (data){
-            this.makePlot()
-          }
+      // Shallow, not deep. `inputdata` is now a computed that returns a fresh
+      // object whenever the store changes, so the reference alone tells us the
+      // data moved. A deep watcher would additionally walk every row of every
+      // sample on each update purely to reach the same conclusion.
+      inputdata(data){
+        if (data){
+          this.makePlot()
         }
       },
     },

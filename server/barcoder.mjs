@@ -3,6 +3,7 @@ import path from 'path'
 import  { spawn } from 'child_process';
 import { removeExtension, globFiles, killProcessTree } from './controllers.mjs';
 import {logger} from './logger.js'
+import { queueJobUpdate } from './messenger.mjs'
 
 export  class Barcoder { 
     constructor(sample){ 
@@ -93,17 +94,23 @@ export  class Barcoder {
                     // detached:true => own process group so stop() can kill the whole tree fast.
                     var  ls = spawn('bash', ['-c', command ], { detached: true });
                     $this.status.running = true
-                    $this.ws.emit( "status",  {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
-                    ls.stdout.on('data', (data) => { 
-                        $this.status.logs.push(`${data}`)
-                        $this.status.logs.slice(0,14)
+                    queueJobUpdate($this.run, $this.name, $this.index, { status: $this.status })
+                    // NOTE: this was `logs.slice(0,14)`, which returns a new array and
+                    // does NOT truncate in place -- the buffer grew without bound for
+                    // the whole demux. Splice keeps only the newest 14 lines.
+                    const capLogs = (line) => {
+                        $this.status.logs.push(line)
+                        const overflow = $this.status.logs.length - 14
+                        if (overflow > 0) $this.status.logs.splice(0, overflow)
+                    }
+                    ls.stdout.on('data', (data) => {
+                        capLogs(`${data}`)
                         logger.info(`stdout: ${data}`);
                     });
- 
+
                     ls.stderr.on('data', (data) => {
-                        $this.status.logs.push(`${data}`)
-                        $this.status.logs.slice(0,14)
-                        logger.error(`stderr: ${data}`); 
+                        capLogs(`${data}`)
+                        logger.error(`stderr: ${data}`);
                     });
                     ls.on('error', function(error) {
                         logger.error(`Error happened ${error}`);
@@ -117,7 +124,7 @@ export  class Barcoder {
                         $this.status.historical = false
                         $this.status.running = false
                         $this.status.error  = code !== 0 ? 'Error in job' : null
-                        $this.ws.emit( "status", {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
+                        queueJobUpdate($this.run, $this.name, $this.index, { status: $this.status })
                         resolve( code )
                     }); 
                     $this.process = ls
@@ -126,7 +133,7 @@ export  class Barcoder {
                     $this.status.success = 0
                     $this.status.historical = true
                     // logger.info(`${$this.name} already seen file, overwrite disabled`)
-                    $this.ws.emit( "status", {samplename: $this.name, sample: $this.sample,  index: $this.index, 'status' :  $this.status })
+                    queueJobUpdate($this.run, $this.name, $this.index, { status: $this.status })
                     resolve(0)
                 }
             }).catch((err)=>{
