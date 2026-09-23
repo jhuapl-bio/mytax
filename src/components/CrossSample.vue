@@ -107,11 +107,14 @@
       <section v-show="subTab === 'occ'" class="mtx-xs-card">
         <h3 class="mtx-xs-h3">Organisms by number of samples detected</h3>
         <p class="mtx-xs-sub">How many organisms are detected in exactly <em>k</em> samples — core (every sample) through unique (one).</p>
-        <div ref="occBar" class="mtx-xs-plot"></div>
-        <div class="mtx-xs-legend">
-          <span><i :style="{ background: CAT_COLOR.core }"></i>Core (all samples)</span>
-          <span><i :style="{ background: CAT_COLOR.shared }"></i>Shared (some)</span>
-          <span><i :style="{ background: CAT_COLOR.unique }"></i>Unique (one)</span>
+        <div class="mtx-xs-plot-wrap" ref="occWrap">
+          <PlotExportButton :target="() => $refs.occWrap" :filename="'cross_sample_occupancy_' + rank" />
+          <div ref="occBar" class="mtx-xs-plot"></div>
+          <div class="mtx-xs-legend" data-export-include>
+            <span><i :style="{ background: CAT_COLOR.core }"></i>Core (all samples)</span>
+            <span><i :style="{ background: CAT_COLOR.shared }"></i>Shared (some)</span>
+            <span><i :style="{ background: CAT_COLOR.unique }"></i>Unique (one)</span>
+          </div>
         </div>
       </section>
 
@@ -130,10 +133,13 @@
                     @click="metric = m.id" :title="m.tip">{{ m.label }}</button>
           </div>
         </div>
-        <div ref="heat" class="mtx-xs-plot mtx-xs-heatplot"></div>
-        <div class="mtx-xs-heat-foot">
-          <span class="mtx-xs-metric-note">{{ activeMetricNote }}</span>
-          <div ref="heatScale" class="mtx-xs-heat-scale"></div>
+        <div class="mtx-xs-plot-wrap" ref="heatWrap">
+          <PlotExportButton :target="() => $refs.heatWrap" :filename="'cross_sample_cooccurrence_' + metric + '_' + rank" />
+          <div ref="heat" class="mtx-xs-plot mtx-xs-heatplot"></div>
+          <div class="mtx-xs-heat-foot" data-export-include>
+            <span class="mtx-xs-metric-note">{{ activeMetricNote }}</span>
+            <div ref="heatScale" class="mtx-xs-heat-scale"></div>
+          </div>
         </div>
       </section>
     </template>
@@ -142,6 +148,7 @@
 
 <script>
 import * as d3 from 'd3'
+import PlotExportButton from '@/components/PlotExportButton.vue'
 
 const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
@@ -149,6 +156,7 @@ const CAT_COLOR = { core: '#1e6b97', shared: '#5aa9c9', unique: '#f0a35e' }
 
 export default {
   name: 'CrossSample',
+  components: { PlotExportButton },
   props: ['socket', 'sampleData', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
   data() {
     return {
@@ -358,6 +366,22 @@ export default {
       })
       return (na && nb) ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0
     },
+    // Map each sample id to the shortest label that is still unique across the
+    // set: its own label alone, or the full "Run / label" when that label is
+    // shared with a sample from another run.
+    shortSampleLabels(samples) {
+      const counts = {}
+      samples.forEach((s) => {
+        const short = this.$sampleLabel(s)
+        counts[short] = (counts[short] || 0) + 1
+      })
+      const out = {}
+      samples.forEach((s) => {
+        const short = this.$sampleLabel(s)
+        out[s] = counts[short] > 1 ? this.$fmtSample(s) : short
+      })
+      return out
+    },
     renderHeat() {
       const host = this.$refs.heat
       if (!host) return
@@ -369,7 +393,11 @@ export default {
       const M = samples.map((s1) => samples.map((s2) => this.similarity(perSample[s1], perSample[s2])))
       const avail = host.clientWidth || 600
       const MAX_CELL = 56
-      const LABEL = 116
+      // Labels are short now (see below), so the gutter is sized to the longest
+      // one instead of a fixed 116px — that space goes back to the cells.
+      const shortOf = this.shortSampleLabels(samples)
+      const longest = samples.reduce((mx, s) => Math.max(mx, (shortOf[s] || '').length), 0)
+      const LABEL = Math.round(Math.min(116, Math.max(44, longest * 6.4 + 14)))
       const m = { t: 16, r: 16, b: LABEL, l: LABEL }
       // cap the cell size so a small matrix doesn't blow up to fill the column
       const cell = Math.min(MAX_CELL, Math.max(22, (avail - m.l - m.r) / n))
@@ -391,7 +419,7 @@ export default {
             .attr('width', cell - 1).attr('height', cell - 1).attr('rx', 2)
             .attr('fill', color(v)).style('cursor', 'default')
             .on('mousemove', (e) => {
-              tip.html(`<b>${samples[i]}</b> × <b>${samples[j]}</b><br>${this.metric === 'jaccard' ? 'Jaccard' : 'Cosine'}: ${v.toFixed(3)}`)
+              tip.html(`<b>${this.$fmtSample(samples[i])}</b> × <b>${this.$fmtSample(samples[j])}</b><br>${this.metric === 'jaccard' ? 'Jaccard' : 'Cosine'}: ${v.toFixed(3)}`)
                 .style('opacity', 1)
                 .style('left', (e.offsetX + 14) + 'px').style('top', (e.offsetY + 14) + 'px')
             })
@@ -403,17 +431,22 @@ export default {
           }
         })
       })
-      // axis labels
+      // Axis labels carry only the sample's own label ("barcode07"), not the
+      // "Run / barcode07" form — the run prefix is identical for every row and
+      // column here, so it just eats the label gutter. Where two samples from
+      // different runs share a label the full name is used for those, so the
+      // axis is never ambiguous. Hover (and the tooltip) still shows the full id.
       samples.forEach((s, i) => {
-        const disp = this.$fmtSample(s)
+        const disp = shortOf[s]
+        const fullName = this.$fmtSample(s)
         g.append('text').attr('x', -8).attr('y', i * cell + cell / 2 + 3).attr('text-anchor', 'end')
           .attr('font-size', labelFont).attr('fill', '#33485c').text(this.truncate(disp, labelChars))
-          .append('title').text(disp)
+          .append('title').text(fullName)
         g.append('text')
           .attr('transform', `translate(${i * cell + cell / 2},${gridW + 8}) rotate(45)`)
           .attr('text-anchor', 'start').attr('font-size', labelFont)
           .attr('fill', '#33485c').text(this.truncate(disp, labelChars))
-          .append('title').text(disp)
+          .append('title').text(fullName)
       })
       this.renderScale(color)
     },
@@ -475,6 +508,7 @@ export default {
 .mtx-xs-tab:hover { color: #1e6b97; }
 .mtx-xs-tab.active { color: #0e3f6a; border-bottom-color: #1e6b97; }
 
+.mtx-xs-plot-wrap { position: relative; }
 .mtx-xs-card { background: #fff; border: 1px solid #d9e6f1; border-radius: 14px; padding: 14px 16px; }
 .mtx-xs-h3 { margin: 0; font-size: 15px; color: #274766; font-weight: 700; }
 .mtx-xs-sub { margin: 4px 0 10px; font-size: 12px; color: #5a6b7b; line-height: 1.4; }

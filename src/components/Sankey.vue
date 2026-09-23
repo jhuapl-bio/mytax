@@ -71,8 +71,9 @@
           <v-icon data-zoom="-0.5" id="unzoom" class="btn btn-circle">mdi-minus</v-icon>
         </v-btn> -->
       </v-col>
-      <v-col  sm="10">
-          <div style="overflow-x:auto " :id="`sankeyBox-${samplenameparsed}`">
+      <v-col  sm="10" style="position: relative;">
+          <PlotExportButton :target="() => $refs.sankeyBox" :filename="'sankey_' + (samplenameparsed || 'sample')" />
+          <div style="overflow-x:auto " :id="`sankeyBox-${samplenameparsed}`" ref="sankeyBox">
           </div>
           <v-range-slider
             hint="Range of Ranks to Show"
@@ -116,12 +117,14 @@
 
 <script>
   import * as d3 from 'd3'
+  import PlotExportButton from '@/components/PlotExportButton.vue'
   import { sankey as d3Sankey, sankeyLinkHorizontal, sankeyJustify, sankeyLeft, sankeyRight, sankeyCenter } from 'd3-sankey';
   
 
 
   export default {
     name: 'RunStats',
+    components: { PlotExportButton },
     props: ["inputdata",  "socket", "samplename"],
     watch: {
       inputdata: {

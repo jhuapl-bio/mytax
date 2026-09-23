@@ -159,11 +159,11 @@ export  class Sample {
                 }
             })
             .on('add', async function(filepath, stat) {
-                logger.info(`NEWLY CREATED Seq: File ${filepath} has been ADDED`);
+                logger.debug(`NEWLY CREATED Seq: File ${filepath} has been ADDED`);
                 $this.addFile(filepath)
             })
             .on('change', function(filepath) {  
-                logger.info(`ALTERED Seq: File ${filepath} has been ALTERED`);
+                logger.debug(`ALTERED Seq: File ${filepath} has been ALTERED`);
             })
             .on('unlinkDir', function(directory) { 
                 logger.info(`Directory ${directory} has been removed`);
@@ -193,13 +193,17 @@ export  class Sample {
                 stabilityThreshold: 2000,
                 pollInterval: 100
             }
+        // Report add/change fired three log lines per event (watcher line +
+        // "file done, sending sample data" + "Sending data for X"), and the
+        // full.report is rewritten after EVERY file in the sample -- so a
+        // 400-fastq sample produced ~1200 log lines saying nothing beyond "a
+        // report changed". getFullReportSample/sendData are now quiet; only
+        // unlink (a real, rare event) still logs.
         }).on('add', (path_1, stats) => {
-            logger.info(`ADDED Report ${path_1} has been added`)
             this.getFullReportSample(path_1)
         }).on('unlink', (path_1, stats) => {
-            logger.info(`DELETED Report ${path_1} has been removed`)
+            logger.info(`Report removed: ${path_1}`)
         }).on('change', (path_1, stats) => {
-            logger.info(`CHANGED Report ${path_1} has been changed`)
             this.getFullReportSample(path_1)
         })
     
@@ -207,7 +211,7 @@ export  class Sample {
 
     // Method to add a file 
     addFile(file) {
-        logger.info(`File added: ${file} ` );
+        logger.debug(`File added: ${file} ` );
         // check if file is in the "files" array if not then push it
         if (!this._files.includes(file)){
             this._files.push(file)
@@ -219,7 +223,6 @@ export  class Sample {
         const $this = this
         let samplename = this.sample
         return new Promise((resolve, reject)=>{
-            logger.info(`${filepath}: file done, ${samplename} sending sample data for sample ${$this.sample}`)
             try{
                 fs.readFile(filepath,(err,data)=>{
                     try{  
@@ -247,13 +250,13 @@ export  class Sample {
         let indexFilepath  = this.getIndexJob(filepath)
         if (!this.paused){
             if (indexFilepath != -1){ 
-                logger.info(`Seenfile ${filepath}, overwrite force: ${overwrite}`)
+                logger.debug(`Seenfile ${filepath}, overwrite force: ${overwrite}`)
                 sampleo = this.queueRecords[indexFilepath]
                 sampleo.overwrite = overwrite
                 $this.defineClassifier(filepath, priority ? priority : 0, overwrite)
                 return 
             } else {
-                logger.info(`Never seen this file process before ${filepath}, creating a new job, paused? : ${this.paused  ? 'true' : 'false'}`)
+                logger.debug(`Never seen this file process before ${filepath}, creating a new job, paused? : ${this.paused  ? 'true' : 'false'}`)
                 $this.defineClassifier(filepath, priority ? priority : 0, overwrite)
             }
         } else {
@@ -277,12 +280,12 @@ export  class Sample {
             job.overwrite = true 
             job.recombine = true
             job.paused = false 
-            logger.info(`CALLED DEFINE QUEUE JOB IN RERUN`)
+            logger.debug(`re-queueing job ${index} for ${this.sample}`)
 
             this.defineQueueJob(job) 
         } else if (index == -1 || index == undefined){
             // rerun all jobs and add to queue. Make sure to flush the queue for current sample first
-            logger.info(`CALLED DEFINE QUEUE JOB IN index == -1 RERUN ${this.queueRecords.length}`)
+            logger.info(`Rerunning all ${this.queueRecords.length} job(s) for ${this.sample}`)
             this.queueRecords.map((d)=>{
                 d.gpu = this.gpu
                 d.overwrite = true 
@@ -451,7 +454,7 @@ export  class Sample {
             return classifier
         }
         this.updateStatusQueueList(classifier)
-        logger.info(`CALLED DEFINE QUEUE JOB IN DEFINECLASSIFIER`)
+        logger.debug(`queueing job for ${filepath}`)
         this.defineQueueJob(classifier )
         return classifier
     }
@@ -649,7 +652,8 @@ export  class Sample {
     
     sendData(){
         try{
-            logger.info(`Sending data for ${this.sample}`)
+            // (Intentionally not logged — this fires after every classified file
+            // in the sample; the queue board already conveys the progress.)
             // The full.report is rewritten after every file in the sample is
             // classified, so for a 400-fastq sample this would otherwise fire a
             // large payload (and trigger a heavy client-side re-render) hundreds
@@ -779,7 +783,7 @@ export  class Sample {
                 signal.addEventListener('abort', () => { 
                     logger.info(`aborting report pulling ${id}`)
                 }); 
-                logger.info(`Sending report for ${name} ${filepath}`)
+                logger.debug(`Sending report for ${name} ${filepath}`)
                 return await this.getFullReportSample(filepath, name, $this.sample) 
             }, {signal: controller.signal, priority: 3 });
         } catch (error) {

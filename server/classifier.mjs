@@ -38,6 +38,9 @@ export  class Classifier {
         sample.filepath = this.filepath
         this.sample = sample
         this.recombine = null
+        // condensed one-line result (set from kraken2 stderr) used by the single
+        // per-job exit log line.
+        this.summary = null
         this.status = {
             running: false, 
             error: null,    
@@ -57,6 +60,31 @@ export  class Classifier {
         let command = this.command
         let formatted = `${command.main} ${command.args.join(" ")}`
         return formatted
+    }
+    // Append a line of process output, keeping only the most recent MAX_LOGS.
+    //
+    // This used to be `logs.push(x); logs.slice(0,20)` — slice() returns a new
+    // array and was discarded, so the cap never applied. status.logs therefore
+    // grew without bound for the life of a job AND was shipped inside every
+    // runUpdate frame (sendJobStatus sends the whole status object), so long
+    // runs pushed steadily larger payloads over the socket. splice() actually
+    // truncates.
+    pushLog(text){
+        if (text == null) return
+        this.status.logs.push(`${text}`)
+        const MAX_LOGS = 20
+        if (this.status.logs.length > MAX_LOGS){
+            this.status.logs.splice(0, this.status.logs.length - MAX_LOGS)
+        }
+    }
+    // Pull kraken2's one useful stderr line ("N sequences classified (x%)") out
+    // of the noise so the single per-job exit log still says something real.
+    captureSummary(text){
+        const m = String(text).match(/([\d,]+)\s+sequences\s+classified\s+\(([\d.]+%)\)/)
+        if (m) this.summary = `${m[1]} classified (${m[2]})`
+    }
+    tailLogs(n){
+        return this.status.logs.slice(-n).join(' ').replace(/\s+/g, ' ').trim().slice(0, 400)
     }
     sendJobStatus(){
         let info = {
@@ -128,12 +156,12 @@ export  class Classifier {
                 resolve('cancelled')
             }
             else {
-                logger.info("No cancel status, continuing to run job")
+                logger.debug("No cancel status, continuing to run job")
                 $this.check_and_classify().then((exists)=>{
                     $this.status.historical = true
                     if (!exists.sample || $this.overwrite || (exists.sample && !exists.full)){
                         $this.generateKrakenCommand()
-                        logger.info(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
+                        logger.debug(`Starting classifier run for job: ${$this.name}, ${$this.filepath}`)
                         $this.status.running = true  
                         $this.status.cancelled = false
                         $this.status.error = ''
@@ -144,19 +172,26 @@ export  class Classifier {
                         // own process group so stop() can kill the whole group fast.
                         let classify = spawn(command.main, command.args, { detached: true });
                         $this.sendJobStatus()
+                        // NOTE: these handlers deliberately do NOT log per chunk.
+                        // kraken2 alone emits "Loading database information… /
+                        // done. / N sequences processed / N classified" per FILE,
+                        // and combine_kreports adds ">>STEP 1..3" plus a line per
+                        // sample — so a 400-file run produced thousands of log
+                        // lines (each previously its own socket frame) describing
+                        // work the queue board already shows. The output is still
+                        // captured into status.logs (visible in the per-job log
+                        // panel) and condensed into ONE line on exit.
                         classify.stdout.on('data', (data) => {
-                            $this.status.logs.push(`${data}`) 
-                            $this.status.logs.slice(0,20)
-                            logger.info(`${data} `);
-                        });   
-                    
+                            $this.pushLog(`${data}`)
+                        });
+
                         classify.stderr.on('data', (data) => {
-                            $this.status.logs.push(`${data}`)
-                            $this.status.logs.slice(0,20)
+                            const text = `${data}`
+                            $this.pushLog(text)
+                            $this.captureSummary(text)
                             if (data){
                                 $this.status.error = `${$this.status.error}\n${data}`
                             }
-                            logger.error(`${data}`);
                         });
                         classify.on('error', function(error) {
                             logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
@@ -165,7 +200,15 @@ export  class Classifier {
                             reject(error)
                         })  
                         classify.on('exit', (code) => {
-                            logger.info(`finished classification for: ${$this.filepath}, generated: ${$this.sampleReport} with code ${code}`);
+                            // One condensed line per job instead of a running
+                            // commentary. On failure log at error level with the
+                            // tail of stderr so the failure is still diagnosable.
+                            const base = `${path.basename($this.filepath)} [${$this.name}] ${$this.classifier} exit ${code}`
+                            if (code !== 0){
+                                logger.error(`${base} — ${$this.tailLogs(3)}`)
+                            } else {
+                                logger.info(`${base}${$this.summary ? ` — ${$this.summary}` : ''}`)
+                            }
                             $this.status.success = code !== 0 ? false : true
                             $this.status.running = false
                             $this.status.historical = false
@@ -179,7 +222,7 @@ export  class Classifier {
                         $this.status.success = true
                         $this.status.running = false
                         $this.status.historical = true
-                        logger.info(`${this.fullreport} exists already`)
+                        logger.debug(`${this.fullreport} exists already`)
                         $this.status.logs.push['Historically gathered report, pre-run already']
                         $this.sendJobStatus()
                         
@@ -194,7 +237,7 @@ export  class Classifier {
     }   
     sendFullReportSample(){
         const $this = this
-        logger.info(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
+        logger.debug(`${$this.fullreport}: file done, sending sample data for sample ${$this.name}`)
         fs.readFile($this.fullreport,(err,data)=>{
             if (err){
                 logger.error(err)

@@ -126,9 +126,13 @@ export default {
         } else {
           text = String(raw)
         }
+        // The server collapses consecutive identical lines into one entry with
+        // a repeat count; surface that instead of printing the line N times.
+        const repeat = (typeof raw === 'object' && raw && raw.repeat > 1) ? raw.repeat : 0
         // split embedded newlines so long blobs read as separate rows
         const parts = String(text).replace(/\r/g, '').split('\n')
-        for (const p of parts) {
+        for (let i = 0; i < parts.length; i++) {
+          const p = repeat && i === parts.length - 1 ? `${parts[i]}  (x${repeat})` : parts[i]
           out.push({ text: p, level: level || this.detectLevel(p), n: ++n })
         }
       }

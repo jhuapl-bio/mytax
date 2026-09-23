@@ -2,7 +2,7 @@ import glob from "glob-all"
 import {logger} from './logger.js'
 import PQueue from 'p-queue';
 import os from 'os'
-import { broadcastToAllActiveConnections, broadcastThrottled, flushThrottled } from './messenger.mjs';
+import { broadcastToAllActiveConnections, broadcastThrottled, flushThrottled, queueLogLine, startLogFlusher } from './messenger.mjs';
 import { storage } from "./storage.mjs";
 import { scheduler } from "./scheduler.mjs";
 import path from 'path'
@@ -73,6 +73,17 @@ export  class Orchestrator {
                 nested: true,
                 key: 'MarineMitogenome20210629',
                 fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20210629")
+            },
+            {
+                url: "https://media.githubusercontent.com/media/jhuapl-bio/mytax/master/databases/20260916_refseq_mitochondrion.tar.gz",
+                decompress: true,
+                type: 'kraken2',
+                label: 'Marine mammal mitogenomes (2026-09-16)',
+                description: 'Marine mammal mitochondrial genomes from RefSeq. Intended for eDNA / mitochondrial barcoding work.',
+                final: 'marine_mammal_mitochondrion-refseq-20260916',
+                nested: true,
+                key: 'MarineMitogenome20260916',
+                fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20260916")
             },
             {
                 url: "https://genome-idx.s3.amazonaws.com/kraken/k2_pluspfp_08_GB_20260626.tar.gz",
@@ -217,14 +228,17 @@ export  class Orchestrator {
         this.database = null
         this.type = "single"
         this.logger = logger
-        logger.on("data", (stream)=>{ 
-            let output = stream   
-            try{   
-                broadcastToAllActiveConnections("logs", { data : output })
-            } catch (err){ 
+        // Buffer log lines instead of emitting a socket frame per line. See
+        // queueLogLine/startLogFlusher in messenger.mjs -- consecutive duplicates
+        // collapse and the whole window ships as one frame.
+        logger.on("data", (stream)=>{
+            try{
+                queueLogLine(stream)
+            } catch (err){
                 console.error("no websocket connection %o", err)
             }
         })
+        startLogFlusher()
         
         this.logdata = []
         this.overwrite = {}

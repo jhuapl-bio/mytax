@@ -41,8 +41,48 @@ class RoundRobinScheduler {
 		this.lastServedKey = null
 		// number of jobs currently released to the PQueue (in flight).
 		this.active = 0
+		// runName -> number of that run's jobs currently in flight. This is what
+		// lets the UI put a spinner on a SPECIFIC run in the run dropdown
+		// (including runs the user isn't currently looking at).
+		this.activeByRun = new Map()
+		// runName -> { total, done, failed } lifetime counters, so the run
+		// dropdown can render a determinate progress wheel instead of a bare
+		// spinner. `total` counts every job ever admitted for that run.
+		this.statsByRun = new Map()
+		// every jobId ever admitted, so a rerun doesn't double-count `total`.
+		this._seenJobs = new Set()
 		// per-run board-emit throttle timers.
 		this._boardTimers = new Map()
+	}
+
+	_knownJob(jobId) {
+		return this._seenJobs.has(jobId)
+	}
+
+	// --- per-run activity counters ------------------------------------------
+
+	_stats(runName) {
+		let s = this.statsByRun.get(runName)
+		if (!s) { s = { total: 0, done: 0, failed: 0 }; this.statsByRun.set(runName, s) }
+		return s
+	}
+
+	_bumpActive(runName, by) {
+		if (!runName) return
+		const n = (this.activeByRun.get(runName) || 0) + by
+		if (n > 0) this.activeByRun.set(runName, n)
+		else this.activeByRun.delete(runName)
+	}
+
+	// True when this run has work in flight or still waiting. Cheap enough to
+	// call per dropdown row.
+	isRunActive(runName) {
+		if (!runName) return false
+		if ((this.activeByRun.get(runName) || 0) > 0) return true
+		for (const lane of this.lanes.values()) {
+			if (lane.runName === runName && lane.pending.length) return true
+		}
+		return this.priorityFront.some((e) => e.runName === runName)
 	}
 
 	// Match the underlying PQueue so we never release more than it can run.
@@ -72,7 +112,12 @@ class RoundRobinScheduler {
 	add(entry) {
 		if (!entry || !entry.jobId) return
 		// de-dupe: a rerun re-submits the same jobId -> replace the old copy.
+		const wasKnown = this._knownJob(entry.jobId)
 		this.removeJob(entry.jobId, true)
+		// Only count a jobId once towards the run's lifetime `total`; a rerun of
+		// the same file shouldn't inflate the denominator of the progress wheel.
+		if (!wasKnown) this._stats(entry.runName).total += 1
+		this._seenJobs.add(entry.jobId)
 		const lane = this.ensureLane(entry.runName, entry.sample)
 		// keep a lane's files ordered by their index so tier-2 stays in read order
 		const at = lane.pending.findIndex((e) => e.index > entry.index)
@@ -124,11 +169,21 @@ class RoundRobinScheduler {
 			const entry = this._next()
 			if (!entry) break
 			this.active += 1
+			this._bumpActive(entry.runName, 1)
+			// A run flipping from idle -> busy is exactly what the run dropdown's
+			// status wheel needs to know about, so push the summary right away
+			// rather than waiting for the next natural board event.
+			this.scheduleGlobalBoard()
 			Promise.resolve()
 				.then(() => entry.exec())
-				.catch((err) => logger.error(`${err} scheduler job ${entry.jobId} failed`))
+				.then(() => { this._stats(entry.runName).done += 1 })
+				.catch((err) => {
+					this._stats(entry.runName).failed += 1
+					logger.error(`${err} scheduler job ${entry.jobId} failed`)
+				})
 				.finally(() => {
 					this.active -= 1
+					this._bumpActive(entry.runName, -1)
 					this.scheduleBoard(entry.runName)
 					this.emitLength()
 					this.scheduleGlobalBoard()
@@ -231,6 +286,8 @@ class RoundRobinScheduler {
 			this.laneOrder = []
 			this.priorityFront = []
 			this.lastServedKey = null
+			this.statsByRun.clear()
+			this._seenJobs.clear()
 			this.emitLength()
 			for (const r of affectedRuns) this.scheduleBoard(r)
 			this.scheduleGlobalBoard()
@@ -242,6 +299,10 @@ class RoundRobinScheduler {
 		this.laneOrder = this.laneOrder.filter((k) => this.lanes.has(k))
 		this.priorityFront = this.priorityFront.filter((e) => e.runName !== runName)
 		this.lastServedKey = null
+		this.statsByRun.delete(runName)
+		for (const id of Array.from(this._seenJobs)) {
+			if (id.startsWith(`${runName}::`)) this._seenJobs.delete(id)
+		}
 		this.scheduleBoard(runName)
 		this.emitLength()
 		this.scheduleGlobalBoard()
@@ -322,11 +383,18 @@ class RoundRobinScheduler {
 	// every connected client regardless of which run they're looking at.
 	getBoardAll() {
 		const runs = new Map()
-		const bump = (runName, by) => {
-			if (!runName) return
+		const ensure = (runName) => {
+			if (!runName) return null
 			let r = runs.get(runName)
-			if (!r) { r = { run: runName, pending: 0, lanes: 0 }; runs.set(runName, r) }
-			r.pending += by
+			if (!r) {
+				r = { run: runName, pending: 0, lanes: 0, active: 0, done: 0, failed: 0, total: 0, percent: 0 }
+				runs.set(runName, r)
+			}
+			return r
+		}
+		const bump = (runName, by) => {
+			const r = ensure(runName)
+			if (r) r.pending += by
 		}
 		for (const lane of this.lanes.values()) {
 			bump(lane.runName, lane.pending.length)
@@ -334,6 +402,21 @@ class RoundRobinScheduler {
 			if (r) r.lanes += 1
 		}
 		for (const e of this.priorityFront) bump(e.runName, 1)
+		// Fold in the per-run in-flight count and lifetime stats. A run with no
+		// lanes left but jobs still running (last file of the run) must still
+		// report active > 0, hence ensure() rather than only touching known runs.
+		for (const [runName, n] of this.activeByRun.entries()) {
+			const r = ensure(runName)
+			if (r) r.active = n
+		}
+		for (const [runName, s] of this.statsByRun.entries()) {
+			const r = ensure(runName)
+			if (!r) continue
+			r.done = s.done
+			r.failed = s.failed
+			r.total = s.total
+			r.percent = s.total ? Math.round(((s.done + s.failed) / s.total) * 100) : 0
+		}
 		return {
 			runs: Array.from(runs.values()),
 			total: this.totalPending() + this.active,

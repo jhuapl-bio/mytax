@@ -21,7 +21,8 @@
 
 
 <template>
-  <v-container style="padding-top: 10px;" ref="boxContainer">
+  <v-container style="padding-top: 10px; position: relative;" ref="boxContainer">
+    <PlotExportButton :target="() => $el" :filename="'sunburst_' + (samplenameparsed || 'sample')" />
     <v-row>
       <v-col :cols="12" :sm="(legendPlacement == 'bottom' ? 12 : 8)" class="mb-0 pb-0" style="padding-top: 10px; padding-bottom: 100px;">
         <div :id="`sunburstDiv-${samplenameparsed}`" class="sunburst-panel">
@@ -29,7 +30,7 @@
       </v-col>
       <v-col :cols="12" :sm="(legendPlacement == 'bottom' ? 12 : 4)" class="mt-0 pt-0 text-center">
         
-        <div :id="`legend_text-${samplenameparsed}`" style="margin:auto;  padding-bottom: 10px" class="mt-5">
+        <div :id="`legend_text-${samplenameparsed}`" style="margin:auto;  padding-bottom: 10px" class="mt-5" data-export-include>
           <h5>Legend</h5>
           <h6>Total Reads at Rank {{readCount}}</h6>
           <h6>at Level Code: {{selectedAttribute}}</h6>
@@ -49,10 +50,12 @@
 
 <script>
   import * as d3 from 'd3'
+  import PlotExportButton from '@/components/PlotExportButton.vue'
 
 
   export default {
     name: 'RunStats',
+    components: { PlotExportButton },
     props: ["inputdata", "namesData", "selectedNameAttr",  'full', "taxa",  "socket", 'samplename', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
       selectedNameAttr(val){

@@ -559,16 +559,51 @@
                 <span>Run</span>
               </div>
               <div class="mtx-sec-body">
+                <!-- Run selector with a per-run status wheel.
+                     Classification is global across runs (one round-robin
+                     scheduler), so work can be in flight on a run you aren't
+                     looking at. Each row carries its own wheel: spinning =
+                     jobs running for THAT run, determinate ring = share of
+                     that run's jobs finished, and the collapsed selection
+                     shows the wheel for the currently selected run. -->
                 <v-select
                   v-if="isOnline && runs && runs.length > 0"
                   :items="runs"
                   v-model="selectedRun"
                   label="Available runs"
-                  hint="Select a run / set of samples"
+                  :hint="runSelectHint"
                   dense outlined
                   persistent-hint
-                  class="flex"
-                />
+                  class="flex mtx-run-select"
+                >
+                  <template v-slot:selection="{ item }">
+                    <span class="mtx-run-sel">
+                      <RunStatusWheel :status="runStatus(item)" :size="18" />
+                      <span class="mtx-run-sel-name">{{ item }}</span>
+                    </span>
+                  </template>
+                  <template v-slot:item="{ item, on, attrs }">
+                    <v-list-item v-bind="attrs" v-on="on" class="mtx-run-option">
+                      <v-list-item-content>
+                        <v-list-item-title class="mtx-run-option-title">
+                          <RunStatusWheel :status="runStatus(item)" :size="16" />
+                          <span class="mtx-run-option-name">{{ item }}</span>
+                          <span
+                            v-if="runStatus(item).running > 0"
+                            class="mtx-run-pill mtx-run-pill-run"
+                          >{{ runStatus(item).running }} running</span>
+                          <span
+                            v-else-if="runStatus(item).pending > 0"
+                            class="mtx-run-pill mtx-run-pill-queued"
+                          >{{ runStatus(item).pending }} queued</span>
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="mtx-run-option-sub">
+                          {{ runStatusLabel(item) }}
+                        </v-list-item-subtitle>
+                      </v-list-item-content>
+                    </v-list-item>
+                  </template>
+                </v-select>
                 <div class="mtx-run-actions">
                   <AddRun
                     v-if="isOnline"
@@ -887,6 +922,7 @@ import CrossSample from "@/components/CrossSample"
 import DataTableTab from "@/components/DataTableTab"
 import Metadata from "@/components/Metadata"
 import AddRun from "@/components/AddRun"
+import RunStatusWheel from "@/components/RunStatusWheel"
 import demoSamples from "@/assets/demoData"
 import _ from 'lodash'
 import { io } from "socket.io-client";
@@ -904,6 +940,7 @@ export default {
       CrossSample,
       DataTableTab,
       Metadata,
+      RunStatusWheel,
     },
     beforeDestroy(){ 
       if (this.interval){
@@ -919,6 +956,49 @@ export default {
     computed: {
       isConnected() {
         return !!(this.socket && this.socket.connected);
+      },
+      // ---- per-run scheduler activity (drives the run dropdown wheel) -------
+      // The classification queue is GLOBAL: one round-robin scheduler serves
+      // every run. queueBoardAll is the counts-only summary broadcast to every
+      // client (unlike queueBoard, which is scoped to the run you're viewing),
+      // so this is the only place the UI can learn that, say, Run B is busy
+      // while you're looking at Run A.
+      runActivityMap() {
+        const map = {}
+        const rows = (this.queueBoardAll && this.queueBoardAll.runs) || []
+        rows.forEach((r) => {
+          if (!r || !r.run) return
+          map[r.run] = {
+            running: r.active || 0,
+            pending: r.pending || 0,
+            done: r.done || 0,
+            failed: r.failed || 0,
+            total: r.total || 0,
+            percent: r.percent || 0
+          }
+        })
+        return map
+      },
+      // Runs OTHER than the selected one that currently have work in flight or
+      // waiting — surfaced in the select's hint so activity elsewhere is
+      // noticeable without opening the menu.
+      busyOtherRuns() {
+        const map = this.runActivityMap
+        return Object.keys(map).filter((run) => {
+          if (run === this.selectedRun) return false
+          const s = map[run]
+          return (s.running > 0 || s.pending > 0)
+        })
+      },
+      runSelectHint() {
+        const mine = this.runStatus(this.selectedRun)
+        const parts = []
+        if (mine.running > 0) parts.push(`${mine.running} classifying here`)
+        else if (mine.pending > 0) parts.push(`${mine.pending} queued here`)
+        const others = this.busyOtherRuns
+        if (others.length === 1) parts.push(`also running: ${others[0]}`)
+        else if (others.length > 1) parts.push(`also running in ${others.length} other runs`)
+        return parts.length ? parts.join(' · ') : 'Select a run / set of samples'
       },
       // Reference databases split by the engine that consumes them, flattened
       // into the { header } / { divider } / item shape v-select renders as
@@ -2218,9 +2298,16 @@ export default {
                 this.queueBoardAll = e
               })
               $this.socket.on('logs', (e)=>{
-                this.logs.push(e.data)
-                const lasts = this.logs.slice(-100);
-                this.logs = lasts  
+                // The server now batches log lines and ships an ARRAY per frame
+                // (see messenger.startLogFlusher). Accept either shape so an
+                // older/newer backend both work.
+                if (!e) return
+                const incoming = Array.isArray(e.data) ? e.data : [e.data]
+                if (!incoming.length) return
+                // Rebuild the array once instead of push-per-line so Vue only
+                // re-renders the log viewer a single time per batch.
+                const next = this.logs.concat(incoming.filter((l) => l != null))
+                this.logs = next.length > 100 ? next.slice(-100) : next
               } )
               $this.socket.on("data", (e)=>{
                 if (e.run == $this.selectedRun ){
@@ -2272,6 +2359,25 @@ export default {
       },
       
         
+        // Activity for one run name, always returning a full shape so the
+        // wheel component never has to null-check.
+        runStatus(run){
+          const empty = { running: 0, pending: 0, done: 0, failed: 0, total: 0, percent: 0 }
+          if (!run) return empty
+          return this.runActivityMap[run] || empty
+        },
+        // One-line description under each run in the dropdown.
+        runStatusLabel(run){
+          const s = this.runStatus(run)
+          if (s.running > 0){
+            return `Classifying — ${s.running} job${s.running === 1 ? '' : 's'} running` +
+              (s.pending ? `, ${s.pending} queued` : '')
+          }
+          if (s.pending > 0) return `${s.pending} queued · ${s.percent}% complete`
+          if (s.failed > 0) return `${s.failed} failed · ${s.done} completed`
+          if (s.total > 0) return `Idle · ${s.done} of ${s.total} completed`
+          return 'Idle'
+        },
         runBundleUpdate(){
           this.sendMessage({
                 type: "runbundle", 
@@ -2811,6 +2917,53 @@ th, td {
 .mtx-filter-num.v-input--is-focused .v-input__slot {
   border-color: #1e6b97 !important; box-shadow: 0 0 0 3px rgba(30,107,151,.15) !important;
 }
+/* ---- run selector with per-run status wheel ---- */
+.mtx-run-sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.mtx-run-sel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mtx-run-option-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+.mtx-run-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mtx-run-option-sub {
+  font-size: 0.72rem !important;
+  opacity: 0.75;
+}
+.mtx-run-pill {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mtx-run-pill-run {
+  background: #e1f5fe;
+  color: #0277bd;
+}
+.mtx-run-pill-queued {
+  background: #fff8e1;
+  color: #b45309;
+}
+
 .mtx-filters .v-select .v-input__slot {
   border-radius: 10px !important;
   min-height: 42px !important;

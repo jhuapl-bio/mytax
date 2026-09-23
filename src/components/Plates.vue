@@ -51,9 +51,10 @@
             <span v-if="!isDrilledToSpecies">Click a genus cell (or its label on the left axis) to drill down to species.</span>
             <span v-else>Species under genus {{ drillTarget }} across samples.</span>
           </div>
-          <div class="mtx-plate-canvas">
+          <div class="mtx-plate-canvas" ref="plateCanvas">
+            <PlotExportButton :target="() => $refs.plateCanvas" :filename="'heatmap_' + selectedAttribute" />
             <div ref="platesDiv" class="mtx-plate-plot"></div>
-            <aside class="mtx-parent-legend" v-if="parentLegend.length">
+            <aside class="mtx-parent-legend" v-if="parentLegend.length" data-export-include>
               <div class="mtx-parent-legend-title">{{ parentLegendTitle }}</div>
               <div class="mtx-parent-legend-sub">{{ parentLegendUnit }}</div>
               <ul>
@@ -76,9 +77,10 @@
 <script>
   import * as d3 from 'd3'
   import InfoIcon from '@/components/InfoIcon.vue'
+  import PlotExportButton from '@/components/PlotExportButton.vue'
   export default {
     name: 'Plates',
-    components: { InfoIcon },
+    components: { InfoIcon, PlotExportButton },
     props: ["inputdata", "namesData", "socket", 'samplenames', 'selectedTaxid', 'selectedAttribute', 'legendPlacement'],
     watch: {
       valueAttr(newval){

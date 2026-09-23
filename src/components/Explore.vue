@@ -120,9 +120,17 @@
             </button>
           </div>
         </header>
-        <div class="mtx-sunburst-body">
-          <div class="mtx-sunburst" :ref="'sb-' + safe(s)"></div>
-          <div class="mtx-legend" v-if="viewOf(s) === 'sunburst'">
+        <!-- Export targets the whole body so the dial and its legend leave
+             together; the plot host itself is wiped by d3 on every redraw, so
+             the control sits in a sibling wrapper rather than inside it. -->
+        <div class="mtx-sunburst-body" :ref="'sbbody-' + safe(s)">
+          <div class="mtx-plot-wrap">
+            <PlotExportButton
+              :target="() => $refs['sbbody-' + safe(s)]"
+              :filename="safe(s) + '_' + viewOf(s) + '_' + primaryRank" />
+            <div class="mtx-sunburst" :ref="'sb-' + safe(s)"></div>
+          </div>
+          <div class="mtx-legend" v-if="viewOf(s) === 'sunburst'" data-export-include>
             <div class="mtx-legend-title">{{ legendTitle[s] || rankLabel(primaryRank) }}</div>
             <ul>
               <li v-for="g in pagedLegend(s)" :key="g.taxid != null ? String(g.taxid) : g.name" class="mtx-legend-click" @click="legendZoom(s, g)">
@@ -134,7 +142,7 @@
                 building…
               </li>
             </ul>
-            <div class="mtx-pg-nav mtx-legend-nav" v-if="legendTotalPages(s) > 1">
+            <div class="mtx-pg-nav mtx-legend-nav" v-if="legendTotalPages(s) > 1" data-export-ignore>
               <button :disabled="(legendPage[s] || 0) === 0" @click="stepLegend(s, -1)">‹</button>
               <span>{{ (legendPage[s] || 0) + 1 }} / {{ legendTotalPages(s) }}</span>
               <button :disabled="(legendPage[s] || 0) >= legendTotalPages(s) - 1" @click="stepLegend(s, 1)">›</button>
@@ -171,7 +179,12 @@
             <button class="mtx-btn ghost danger" @click="removePanel(p.id)" title="Remove panel">✕</button>
           </div>
         </header>
-        <div class="mtx-panel-body" :ref="'panel-' + p.id"></div>
+        <div class="mtx-plot-wrap">
+          <PlotExportButton
+            :target="() => $refs['panel-' + p.id]"
+            :filename="safe(p.sample) + '_' + p.type + '_' + p.rank" />
+          <div class="mtx-panel-body" :ref="'panel-' + p.id"></div>
+        </div>
       </section>
     </div>
 
@@ -192,6 +205,7 @@
 import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
 import InfoIcon from '@/components/InfoIcon.vue'
+import PlotExportButton from '@/components/PlotExportButton.vue'
 
 // Standard Kraken2 rank hierarchy.
 const RANK_ORDER = ['R', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S']
@@ -203,7 +217,7 @@ const GROUP_PALETTE = d3.schemeTableau10.concat(d3.schemeSet3)
 
 export default {
   name: 'Explore',
-  components: { InfoIcon },
+  components: { InfoIcon, PlotExportButton },
   // tiny click-outside directive for the + Panel menu (no extra deps)
   directives: {
     'click-outside': {
@@ -661,6 +675,7 @@ export default {
       nav.className = 'mtx-pg-nav' +
         (opts.top ? ' mtx-pg-nav-top' : '') +
         (opts.topRight ? ' mtx-pg-nav-top-right' : '')
+      nav.setAttribute('data-export-ignore', '')
       const prev = document.createElement('button')
       prev.textContent = '‹'; prev.disabled = page === 0
       prev.addEventListener('click', () => setPage(page - 1))
@@ -801,6 +816,7 @@ export default {
         const wrap = document.createElement('div'); wrap.className = 'mtx-sb-wrap'
         chartEl = document.createElement('div'); chartEl.className = 'mtx-sb-chart'
         legendEl = document.createElement('div'); legendEl.className = 'mtx-sb-legend'
+        legendEl.setAttribute('data-export-include', '')
         wrap.appendChild(chartEl); wrap.appendChild(legendEl); el.appendChild(wrap)
       }
 
@@ -1109,6 +1125,7 @@ export default {
       if (totalPages > 1) {
         const nav = document.createElement('div')
         nav.className = 'mtx-pg-nav mtx-legend-nav'
+        nav.setAttribute('data-export-ignore', '')
         const prev = document.createElement('button')
         prev.textContent = '‹'; prev.disabled = page === 0
         prev.addEventListener('click', () => { legendEl._page = page - 1; this.renderInlineLegend(legendEl, sample, items, titleText) })
@@ -1488,6 +1505,7 @@ export default {
 .mtx-legend-swatch { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; }
 
 .mtx-panel-body { padding: 12px 14px; min-height: 60px; }
+.mtx-plot-wrap { position: relative; width: 100%; }
 .mtx-nodata { color: var(--c-sub); font-size: 13px; font-style: italic; padding: 18px 4px; text-align: center; }
 
 .mtx-sunburst,
