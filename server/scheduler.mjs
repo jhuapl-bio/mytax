@@ -1,6 +1,7 @@
 import { logger } from './logger.js'
 import { storage } from './storage.mjs'
-import { emitToRunViewers, broadcastThrottled } from './messenger.mjs'
+import { broadcastThrottled, queueMetrics } from './messenger.mjs'
+import { protocol } from './protocol.mjs'
 
 // ---------------------------------------------------------------------------
 // Round-robin job scheduler.
@@ -193,6 +194,15 @@ class RoundRobinScheduler {
 		this.emitLength()
 	}
 
+	// Keep the per-run in-flight tally, dropping runs back to zero entries so the
+	// map doesn't grow forever across many runs.
+	_bumpActiveRun(runName, delta) {
+		if (!runName) return
+		const next = (this.activeByRun.get(runName) || 0) + delta
+		if (next > 0) this.activeByRun.set(runName, next)
+		else this.activeByRun.delete(runName)
+	}
+
 	// total jobs still waiting + the one(s) running, for the UI badge.
 	totalPending() {
 		let n = this.priorityFront.length
@@ -200,11 +210,20 @@ class RoundRobinScheduler {
 		return n
 	}
 
+	// Queue depth no longer gets its own broadcast event. It is folded into each
+	// connection's next frame, so a burst of 800 enqueues produces zero extra
+	// socket traffic -- the counter simply reads higher on the frame that was
+	// going out anyway.
 	emitLength() {
 		try {
-			broadcastThrottled('queueLength', { data: this.totalPending() + this.active, type: 'scheduler' }, 'queueLength')
+			const total = this.totalPending() + this.active
+			for (const conn of protocol.connections.values()) {
+				if (conn.run) {
+					conn.pendingQueue = { ...(conn.pendingQueue || {}), total, active: this.active }
+				}
+			}
 		} catch (err) {
-			logger.error(`${err} error emitting scheduler queueLength`)
+			logger.error(`${err} error recording scheduler queue length`)
 		}
 	}
 
@@ -355,15 +374,18 @@ class RoundRobinScheduler {
 		}
 	}
 
+	// The per-run board rides the frame too (latest-wins), so it can never
+	// arrive out of order with respect to the job status it describes -- which
+	// is what used to make the board briefly disagree with the sample rows.
 	scheduleBoard(runName, wait = 250) {
 		if (!runName) return
 		if (this._boardTimers.has(runName)) return
 		const timer = setTimeout(() => {
 			this._boardTimers.delete(runName)
 			try {
-				emitToRunViewers(runName, 'queueBoard', this.getBoard(runName))
+				queueMetrics(runName, { board: this.getBoard(runName), total: this.totalPending() + this.active, active: this.active })
 			} catch (err) {
-				logger.error(`${err} error emitting queueBoard`)
+				logger.error(`${err} error recording queue board`)
 			}
 		}, wait)
 		if (typeof timer.unref === 'function') timer.unref()
@@ -420,7 +442,9 @@ class RoundRobinScheduler {
 		return {
 			runs: Array.from(runs.values()),
 			total: this.totalPending() + this.active,
-			active: this.active
+			active: this.active,
+			// runs with at least one job executing right now
+			activeRuns: Array.from(this.activeByRun.keys())
 		}
 	}
 

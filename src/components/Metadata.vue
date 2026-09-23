@@ -87,6 +87,7 @@
 <script>
 import * as d3 from 'd3'
 import commonNames from '@/assets/taxon_common_names.json'
+import taxaSource from '@/mixins/taxaSource'
 const RANK_LABELS = { D: 'Domain', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species' }
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
 
@@ -121,6 +122,9 @@ function hideTip() { if (TIP_EL) TIP_EL.style.opacity = '0' }
 
 export default {
   name: 'Metadata',
+  // Store-backed data source: supplies `sampleData` on demand from the
+  // columnar store instead of receiving every parsed row as a prop.
+  mixins: [taxaSource],
   directives: {
     tip: {
       bind(el, binding) {
@@ -142,12 +146,14 @@ export default {
     }
   },
   props: {
-    sampleData: { type: Object, default: () => ({}) },
+    // sampleData is provided by the taxaSource mixin.
     sampleMeta: { type: Object, default: () => ({}) },
     run: { type: [String, Number], default: null }
   },
   filters: { n(v) { return (+v || 0).toLocaleString() } },
-  data() { return { color: d3.scaleOrdinal(PAL), runLat: null, runLon: null, edit: {} } },
+  data() { return { // Metadata cards only summarise the dominant taxa.
+    taxaLimit: 500,
+    color: d3.scaleOrdinal(PAL), runLat: null, runLon: null, edit: {} } },
   beforeDestroy() { hideTip() },
   computed: {
     cards() {

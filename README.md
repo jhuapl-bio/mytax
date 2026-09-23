@@ -94,6 +94,12 @@ backend JS dependencies.
 
 ---
 
+### Updating the app
+
+```
+git pull && npm install
+```
+
 ## Running the app
 
 ### Development (frontend + backend together)

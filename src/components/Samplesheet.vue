@@ -162,7 +162,7 @@
                                                 <template v-slot:activator="{ on }">
                                                     <span v-on="on"
                                                         class="mtx-qbadge"
-                                                        :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': item.status.running }]"
+                                                        :class="['mtx-qbadge--' + sampleBadge(item).color, { 'mtx-qbadge--running': isSampleActive(item) }]"
                                                         @click="selectedQueueSample = item.sample; dialogJobs = true">
                                                         <span class="mtx-qbadge-num">{{ sampleBadge(item).num }}</span>
                                                     </span>
@@ -173,6 +173,7 @@
                                                         <tr><td>In queue</td><td>{{ sampleQueue(item.sample).pending }}</td></tr>
                                                         <tr><td>Running</td><td>{{ sampleQueue(item.sample).running }}</td></tr>
                                                         <tr><td>Completed</td><td>{{ sampleQueue(item.sample).done }} / {{ sampleQueue(item.sample).total }}</td></tr>
+                                                        <tr><td>Still to run</td><td>{{ sampleQueue(item.sample).pending }}</td></tr>
                                                         <tr v-if="sampleQueue(item.sample).error"><td>Errors</td><td class="mtx-qbadge-err">{{ sampleQueue(item.sample).error }}</td></tr>
                                                         <tr><td>% complete</td><td>{{ sampleQueue(item.sample).percent }}%</td></tr>
                                                         <tr><td>Listening</td><td>{{ isWatching(item) ? 'yes (real-time)' : 'no' }}</td></tr>
@@ -947,6 +948,8 @@
                 :board="queueBoard"
                 :boardAll="queueBoardAll"
                 :selectedRun="selectedRun"
+                :jobLogs="jobLogs"
+                @fetch-logs="fetchJobLogs"
                 @close="dialogQueueBoard = false"
                 @reorder-lanes="onReorderLanes"
                 @prioritize="onPrioritizeJob"
@@ -1165,14 +1168,12 @@
           this.jobsPanelSearch = ''
         }
       },
-      selectedsamplesAll: {
-        deep: true, 
-        handler(val){
-            // iterate 
-            
-            
-        }
-      },
+      // NOTE: there were deep watchers on `selectedsamplesAll` and `queueList`
+      // here with EMPTY handlers. They did nothing except make Vue walk the
+      // entire sample list and the entire job queue -- which on a large run is
+      // tens of thousands of objects -- on every single mutation. Removing them
+      // is pure profit: the panel is driven by ordinary reactive props and
+      // re-renders on its own.
       pausedServer(val){
         if (val != this.paused){
             console.log("server sent paused status change")
@@ -1186,11 +1187,7 @@
       paused(val){
           this.$emit("pausedChange", val)
       },
-      queueList: {
-        deep: true, 
-        handler(val){
-        }
-      },
+
       stagedData (val){
           let filtered = []
           for (let [key, value] of Object.entries(val)){
@@ -1338,8 +1335,17 @@
         selectedJobLines(){
             const j = this.selectedQueueJob
             if (!j || !j.status) return []
-            const lines = (j.status.logs || []).map(l => (typeof l === 'string' ? l : JSON.stringify(l)))
-            if (j.status.error) lines.push(j.status.error)
+            // Logs arrive on demand now (jobLogs), not inside the status frame.
+            // Only use the fetched payload if it matches the open job.
+            const p = this.jobLogs || {}
+            const matches = (p.samplename === (j._sample || j.sample)) && p.index === j.index
+            const raw = matches && Array.isArray(p.logs) ? p.logs : null
+            let lines
+            if (raw && raw.length) lines = raw.map(l => (typeof l === 'string' ? l : JSON.stringify(l)))
+            else if (j.status.lastLog) lines = [j.status.lastLog]
+            else lines = []
+            const err = (matches && p.error) || j.status.error
+            if (err) lines = lines.concat([err])
             return lines
         },
         // Counts per state for the summary chips / filters.
@@ -1369,6 +1375,16 @@
         // re-walked the whole queue/samplesheet on every keystroke and every
         // delete, freezing the UI. These cached maps recompute only when the
         // underlying queueList / samplesheet actually changes.
+        // sample name -> samplesheet entry, so per-row lookups are O(1) rather
+        // than a linear scan of the sheet for every row on every render.
+        sheetBySample(){
+            const map = {}
+            ;(this.samplesheet || []).forEach((d) => {
+                const name = d && (d.sample || d.samplename)
+                if (name) map[name] = d
+            })
+            return map
+        },
         sampleQueueMap(){
             const map = {}
             const ql = this.queueList || {}
@@ -1390,6 +1406,46 @@
                 out.pending = out.running + out.queued
                 out.percent = out.total ? Math.round((out.done / out.total) * 100) : 0
                 map[sample] = out
+            })
+            ;(this.selectedsamplesAll || []).forEach((item) => {
+                const sample = item && item.sample
+                if (!sample) return
+                const current = map[sample]
+                const s = item.status || {}
+                const total = Number(s.total || 0)
+                if (total <= 0) return
+                if (current && current.total >= total) return
+                const running = Number(s.runningCount || (s.running ? 1 : 0) || 0)
+                const error = Number(s.errorCount || 0)
+                const success = s.success === true || s.success === 0
+                const done = Number(s.done || (success ? total : 0) || 0)
+                const queued = Math.max(0, total - done - running - error)
+                map[sample] = {
+                    total,
+                    done,
+                    running,
+                    queued,
+                    error,
+                    pending: running + queued,
+                    percent: total ? Math.round((done / total) * 100) : 0
+                }
+            })
+            const reportBacked = new Set(this.seen || [])
+            ;(this.selectedsamplesAll || []).forEach((item) => {
+                const sample = item && item.sample
+                if (!sample || !reportBacked.has(sample)) return
+                if ((item.origin || 'server') === 'server') return
+                const current = map[sample]
+                if (current && current.total > 0) return
+                map[sample] = {
+                    total: 1,
+                    done: 1,
+                    running: 0,
+                    queued: 0,
+                    error: 0,
+                    pending: 0,
+                    percent: 100
+                }
             })
             return map
         },
@@ -1647,6 +1703,11 @@
             { text: 'minimap2 (reference alignment)', value: 'minimap2' },
           ],
           selectedQueueJob: null,
+          // On-demand log tail for a single job, keyed implicitly by the
+          // run/samplename/index echoed back in the payload. Job logs are no
+          // longer pushed with every status frame, so we request them only for
+          // the job the user actually opened.
+          jobLogs: {},
           selectedQueueSample: null,
           recentDataFileadded: null,
           uploadDragOver: false,
@@ -1787,7 +1848,11 @@
         this.config['confidence'] = { value: 0.0, type: 'number' }
         this.config['minimum-base-quality'] = { value: 0, type: 'number' }
         this.dataSamples = this.samplesheet
-        
+        // Single listener for on-demand job logs (see fetchJobLogs).
+        if (this.socket && !this._jobLogsBound){
+            this._jobLogsBound = true
+            this.socket.on('jobLogs', (e) => { this.jobLogs = e || {} })
+        }
     },
  
     methods: {
@@ -2047,26 +2112,93 @@
                 { total: 0, done: 0, running: 0, queued: 0, error: 0, pending: 0, percent: 0 }
         },
         // Map the breakdown + watch state to a single coloured badge.
+        //
+        // The badge reads "x / n": x = files still to process (queued + running),
+        // n = total files known for this sample. A bare count couldn't tell you
+        // whether 40 meant "40 left" or "40 of 40 done", which is ambiguous the
+        // moment a sample has hundreds of fastqs.
+        /**
+         * Should this sample's badge pulse?
+         *
+         * This used to be bound to `item.status.running` alone, which is a
+         * TRANSIENT flag: it is true only between a job spawning and that same
+         * job exiting. Job updates are coalesced per (sample, index) with
+         * latest-wins semantics, so a job that starts and finishes inside one
+         * flush window has its running state overwritten before the frame is
+         * ever sent — the client goes straight from "queued" to "done" and the
+         * badge never animates at all. Longer jobs did animate, which is why
+         * this looked intermittent rather than broken.
+         *
+         * "Has outstanding work" is the stable condition underneath, it is what
+         * a user actually means by "is this sample working", and it cannot be
+         * coalesced away because it stays true until the queue drains.
+         */
+        isSampleActive(item){
+            if (!item) return false
+            if (item.status && item.status.running) return true
+            const q = this.sampleQueue(item.sample)
+            return (q.pending || 0) > 0
+        },
+        /**
+         * The status badge: **done / to-do / total**.
+         *
+         * It used to read `left / total`, which had two problems. A sample with
+         * no files showed a bare "0 / 0" that told you nothing and, being red,
+         * read as an error. And for a sample with work in progress, "3 / 10"
+         * was ambiguous — three done, or three left? Spelling out all three
+         * numbers removes the guesswork:
+         *
+         *     done  — classified successfully (includes historical results)
+         *     to-do — running right now plus still queued
+         *     total — files this sample knows about
+         *
+         * A sample with no files at all shows an em dash rather than "0 / 0 / 0":
+         * zeros imply a measurement, and there is nothing to measure yet.
+         */
         sampleBadge(item){
             const q = this.sampleQueue(item.sample)
             const watching = this.isWatching(item)
-            if (q.pending > 0){
-                return { color: 'yellow', num: q.pending,
-                    label: `${q.pending} ${q.pending === 1 ? 'file' : 'files'} waiting to be analyzed` }
-            }
+            const done = q.done || 0
+            const todo = q.pending || 0        // sampleQueueMap: running + queued
+            const total = q.total || 0
+            const num = `${done} / ${todo} / ${total}`
+            const counts = { done, todo, left: todo, total, num }
+            const files = (n) => `${n} ${n === 1 ? 'file' : 'files'}`
+
             if (q.error > 0){
-                return { color: 'red', num: q.error,
-                    label: `${q.error} ${q.error === 1 ? 'job' : 'jobs'} failed — check logs` }
+                return { ...counts, color: 'red',
+                    label: `${q.error} ${q.error === 1 ? 'job' : 'jobs'} failed — check logs` +
+                        ` · ${done} done, ${todo} to go of ${total}` }
             }
-            if (q.total > 0){
-                return { color: 'green', num: q.done,
-                    label: watching ? 'All done — listening for new reads' : 'All done' }
+            if (todo > 0){
+                const running = q.running || 0
+                return { ...counts, color: 'yellow',
+                    label: running > 0
+                        ? `Analyzing — ${running} running, ${todo - running} queued, ${done} of ${files(total)} done`
+                        : `${todo} of ${files(total)} queued, ${done} done` }
             }
-            // nothing queued yet
+            if (total > 0){
+                return { ...counts, color: 'green',
+                    label: watching
+                        ? `All ${files(total)} done — listening for new reads`
+                        : `All ${files(total)} done` }
+            }
+            // No files yet. Three genuinely different situations, which used to
+            // collapse into one red "Not able to establish watching" badge — so a
+            // sample simply waiting for its first read looked identical to one
+            // that was misconfigured.
+            const idle = { ...counts, num: '—' }
             if (watching){
-                return { color: 'green', num: 0, label: 'Listening for new reads' }
+                return { ...idle, color: 'green', label: 'Listening for new reads — nothing analyzed yet' }
             }
-            return { color: 'red', num: 0, label: 'Not able to establish watching / read reports' }
+            if ((item.origin || 'server') === 'server' && item.status && item.status.watching === false){
+                // The backend positively reports no watcher: this one IS wrong.
+                return { ...idle, color: 'red',
+                    label: 'Not watching — no new reads will be picked up' }
+            }
+            // Watch state unconfirmed. Normal for a sample whose input directory
+            // has not produced a fastq, and for locally loaded reports.
+            return { ...idle, color: 'grey', label: 'No files analyzed yet' }
         },
         // Which classifier a sample ran (or is configured to run) with. Prefers the
         // live job config (what it actually ran), then the persisted samplesheet
@@ -2241,12 +2373,22 @@
         // A sample is "watching" when real-time watch mode is active on the
         // backend (status.watching) — falls back to the per-sample/config watch
         // flag for samples whose status hasn't been refreshed yet.
+        // Sheet entry for a sample, by name. The samplesheet is the run's
+        // configuration; it knows a sample's watch intent even when the sample
+        // has never produced a report and therefore has no live status.
+        sheetEntry(sample){
+            return this.sheetBySample[sample] || null
+        },
         isWatching(item){
             if (!item) return false
             const st = item.status || {}
+            // Live truth first: the backend attached (or did not attach) a watcher.
             if (st.watching === true) return true
             if (st.watching === false) return false
-            const cfgWatch = item.config && item.config.watch
+            // No live status yet — fall back to configured intent.
+            const sheet = this.sheetEntry(item.sample)
+            const cfgWatch = (item.config && item.config.watch) ||
+                (sheet && sheet.watch)
             return !!(item.watch || cfgWatch) && (item.origin || 'server') === 'server'
         },
         // Derive one status string from a job's status flags.
@@ -2259,7 +2401,7 @@
             const s = (job && job.status) || {}
             if (s.running) return 'running'
             if (s.cancelled) return 'cancelled'
-            if (s.success === true) return s.historical ? 'historical' : 'done'
+            if (s.success === true || s.success === 0) return s.historical ? 'historical' : 'done'
             if (s.success === false || (s.code != null && s.code !== 0)) return 'error'
             if (s.paused) return 'paused'
             if (s.preload) return 'preload'
@@ -2278,9 +2420,24 @@
                 done: 'mdi-check-circle', historical: 'mdi-history', paused: 'mdi-pause-circle',
                 preload: 'mdi-file', cancelled: 'mdi-cancel' })[st] || 'mdi-help-circle'
         },
+        // Request one job's log tail from the server. Replaces the old behaviour
+        // where every job's full log rode along inside every status frame.
+        fetchJobLogs(p){
+            if (!this.socket || !p) return
+            const run = p.run !== undefined && p.run !== null ? p.run : this.selectedRun
+            const sample = p.sample || p.samplename
+            if (!sample || p.index === undefined || p.index === null) return
+            try {
+                this.socket.emit('getJobLogs', { run, samplename: sample, index: p.index })
+            } catch (err) {
+                console.error(err)
+            }
+        },
         reviewJob(job){
             this.selectedQueueJob = job
             this.dialogQueue = true
+            // pull this job's logs on open rather than streaming them constantly
+            this.fetchJobLogs({ run: job.run || this.selectedRun, sample: job._sample || job.sample, index: job.index })
         },
         cancelAllRunning(){
             if (this.offlineMode) return;
@@ -2837,7 +2994,8 @@ code {
 .mtx-stable thead th.mtx-st-actions,
 .mtx-stable td.mtx-st-actions { text-align: right; }
 .mtx-stable thead th.mtx-st-status,
-.mtx-stable td.mtx-st-status { text-align: center; width: 64px; }
+/* wider than it was: the badge now carries three numbers, not two */
+.mtx-stable td.mtx-st-status { text-align: center; width: 92px; }
 .mtx-stable thead th.mtx-st-src,
 .mtx-stable td.mtx-st-src { width: 92px; }
 
@@ -2933,18 +3091,25 @@ code {
 	100% { transform: rotate(360deg) scale(1);    opacity: .65; }
 }
 
-/* composite per-sample status badge: coloured ring + count in the middle */
+/* composite per-sample status badge: coloured pill reading "<left> / <total>".
+   Was a fixed 30px circle, which clipped as soon as a sample had 3-digit file
+   counts (e.g. "127 / 433"), so it now sizes to its content. */
 .mtx-qbadge {
 	position: relative;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 30px;
-	height: 30px;
-	border-radius: 50%;
+	min-width: 30px;
+	height: 24px;
+	/* tighter horizontal padding and a slightly smaller face: the badge carries
+	   three numbers now and has to stay inside a narrow table column */
+	padding: 0 7px;
+	border-radius: 12px;
+	white-space: nowrap;
 	cursor: pointer;
 	font-weight: 700;
-	font-size: 0.8rem;
+	font-size: 0.72rem;
+	font-variant-numeric: tabular-nums;
 	color: #1f2937;
 	border: 2.5px solid #cbd5e1;
 	background: #f8fafc;
@@ -2959,6 +3124,9 @@ code {
 .mtx-qbadge--green  { border-color: #22c55e; background: #dcfce7; color: #166534; }
 /* red = can't watch / read, or a job failed */
 .mtx-qbadge--red    { border-color: #ef4444; background: #fee2e2; color: #991b1b; }
+/* Idle: known sample, nothing analysed yet. Deliberately quiet — this is a
+   normal resting state, not a problem to draw the eye to. */
+.mtx-qbadge--grey   { border-color: #cbd5e1; background: #f1f5f9; color: #64748b; }
 /* pulse while a report is actively generating */
 .mtx-qbadge--running { animation: mtx-qbadge-pulse 1.4s ease-in-out infinite; }
 @keyframes mtx-qbadge-pulse {

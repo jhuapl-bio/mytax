@@ -56,15 +56,23 @@
 import commonNames from '@/assets/taxon_common_names.json'
 import PhyloPicIcon from '@/components/PhyloPicIcon.vue'
 import { prefetchSvg } from '@/services/phylopic'
+import taxaSource from '@/mixins/taxaSource'
 const RANK_LABELS = { R: 'Root', D: 'Domain', K: 'Kingdom', P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', G: 'Genus', S: 'Species', U: 'Unclassified' }
 
 export default {
   name: 'DataTableTab',
+  // Store-backed data source: supplies `sampleData` on demand from the
+  // columnar store instead of receiving every parsed row as a prop.
+  mixins: [taxaSource],
   components: { PhyloPicIcon },
-  props: { sampleData: { type: Object, default: () => ({}) } },
+  // sampleData comes from taxaSource; the table pages through it, so it asks
+  // for a larger hydration cap than the chart tabs (see taxaLimit below).
+  props: {},
   filters: { n(v) { return (+v || 0).toLocaleString() } },
   data() {
     return {
+      // The table pages 50 rows at a time; this is the pool it pages through.
+      taxaLimit: 2000,
       search: '', rank: '', page: 0, pageSize: 50,
       sort: { key: 'num_fragments_clade', dir: -1 },
       cols: [

@@ -160,6 +160,9 @@ export default {
   props: ['socket', 'sampleData', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
   data() {
     return {
+      // Cross-sample comparison needs a wide slice per sample, but still a
+      // bounded one -- prevalence across samples is decided by the top taxa.
+      taxaLimit: 2000,
       CAT_COLOR,
       rank: 'S',
       subTab: 'table',
@@ -264,7 +267,11 @@ export default {
     }
   },
   watch: {
-    sampleData: { deep: true, handler() { this.syncRanks(); this.$nextTick(this.renderActive) } },
+    // Deep watch removed: see Heatmap.vue for the reasoning. This tab compares
+    // taxa across every loaded sample, so it asks the store for a wider slice
+    // (taxaLimit below) but still never holds full reports.
+    storeTick() { this.syncRanks(); this.$nextTick(this.renderActive) },
+    'taxaQuery.version'() { this.syncRanks(); this.$nextTick(this.renderActive) },
     rank() { this.$nextTick(this.renderActive) },
     subTab() { this.$nextTick(this.renderActive) },
     metric() { this.$nextTick(this.renderHeat) }

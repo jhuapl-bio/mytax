@@ -223,7 +223,12 @@ export default {
     board: { type: Object, default: () => ({}) },
     // ALL-runs counts-only summary: { runs:[{run,pending,lanes}], total, active }
     boardAll: { type: Object, default: () => ({ runs: [], total: 0, active: 0 }) },
-    selectedRun: { type: [String, Number], default: null }
+    selectedRun: { type: [String, Number], default: null },
+    // On-demand log tail for ONE job: { run, samplename, index, logs, error, command }.
+    // Job logs are no longer streamed with every status frame (that duplication
+    // is what ballooned the socket + browser heap on 500-file barcodes), so the
+    // parent fetches them only for the job the user has opened.
+    jobLogs: { type: Object, default: () => ({}) }
   },
   data() {
     return {
@@ -249,7 +254,16 @@ export default {
       }
     },
     groups: { immediate: true, handler() { this.syncCollapsed(false) } },
-    selectedRun() { this.syncCollapsed(true) }
+    selectedRun() { this.syncCollapsed(true) },
+    // Opening the log drawer triggers a fetch (and starts the slow refresh for
+    // a running job); closing it stops the polling entirely.
+    showLogs(open) {
+      if (open) { this.requestLogs(); this.startLogPoll() }
+      else { this.stopLogPoll() }
+    }
+  },
+  beforeDestroy() {
+    this.stopLogPoll()
   },
   computed: {
     // every sample we know about, ordered by the rotation (laneOrder) first,
@@ -271,7 +285,11 @@ export default {
             index: j.index != null ? j.index : 0,
             filepath: j.filepath || (j.config && j.config.filepath) || '',
             state: this.jobState(j),
-            logs: (j.status && j.status.logs) || [],
+            // `status.logs` no longer arrives over the wire. We keep only the
+            // count + newest line for the collapsed view; the full tail is
+            // fetched on demand when the dot's log panel is opened.
+            logCount: (j.status && j.status.logCount) || 0,
+            lastLog: (j.status && j.status.lastLog) || '',
             error: (j.status && j.status.error) || '',
             command: j.command || (j.config && j.config.command) || ''
           }))
@@ -339,24 +357,43 @@ export default {
       return (this.selDot && this.selDot.state) || (this.selected && this.selected.state) || 'queued'
     },
     selCommand() {
-      return this.selDot ? this.selDot.command : ''
+      return this.selDot ? this.selDot.command : (this.fetchedLogs.command || '')
     },
-    // combine captured log lines + stderr (kraken2 writes progress to stderr)
-    selLogText() {
-      if (!this.selDot) return ''
-      const lines = (this.selDot.logs || []).map((l) => (typeof l === 'string' ? l : JSON.stringify(l)))
-      if (this.selDot.error) lines.push(this.selDot.error)
-      return lines.join('\n').trim()
+    // The fetched payload, but only if it actually belongs to the open job --
+    // otherwise a stale reply for a previously-selected dot would leak in.
+    fetchedLogs() {
+      const p = this.jobLogs || {}
+      if (!this.selected) return {}
+      if (p.samplename !== this.selected.sample) return {}
+      if (p.index !== this.selected.index) return {}
+      return p
     },
     // array form for the LogViewer component
     selLines() {
-      if (!this.selDot) return []
-      const lines = (this.selDot.logs || []).map((l) => (typeof l === 'string' ? l : JSON.stringify(l)))
-      if (this.selDot.error) lines.push(this.selDot.error)
+      if (!this.selDot && !this.selected) return []
+      const raw = this.fetchedLogs.logs
+      let lines
+      if (Array.isArray(raw) && raw.length) {
+        lines = raw.map((l) => (typeof l === 'string' ? l : JSON.stringify(l)))
+      } else if (this.selDot && this.selDot.lastLog) {
+        // not fetched yet (or nothing to fetch): show the newest line we already
+        // have from the lightweight status frame
+        lines = [this.selDot.lastLog]
+      } else {
+        lines = []
+      }
+      const err = this.fetchedLogs.error || (this.selDot && this.selDot.error)
+      if (err) lines = lines.concat([err])
       return lines
     },
+    // combine captured log lines + stderr (kraken2 writes progress to stderr)
+    selLogText() {
+      return this.selLines.join('\n').trim()
+    },
     logCount() {
-      return this.selDot ? (this.selDot.logs || []).length : 0
+      const raw = this.fetchedLogs.logs
+      if (Array.isArray(raw) && raw.length) return raw.length
+      return this.selDot ? (this.selDot.logCount || 0) : 0
     }
   },
   methods: {
@@ -390,8 +427,32 @@ export default {
       return this.selected && this.selected.sample === sample && this.selected.index === index
     },
     selectDot(sample, dot) {
-      if (this.isSelected(sample, dot.index)) { this.selected = null; return }
+      if (this.isSelected(sample, dot.index)) { this.selected = null; this.stopLogPoll(); return }
       this.selected = { sample, index: dot.index, filepath: dot.filepath, state: dot.state }
+      this.requestLogs()
+    },
+    // Ask the parent (which owns the socket) for THIS job's log tail. Cheap and
+    // targeted: one job, on user action, instead of every job continuously.
+    requestLogs() {
+      if (!this.selected) return
+      this.$emit('fetch-logs', {
+        run: this.selectedRun,
+        sample: this.selected.sample,
+        index: this.selected.index
+      })
+    },
+    // While the log panel is open on a RUNNING job, refresh its tail on a slow
+    // timer so it still feels live -- one small request every 2s for one job.
+    startLogPoll() {
+      this.stopLogPoll()
+      this._logPoll = setInterval(() => {
+        if (!this.selected || !this.showLogs) return
+        if (this.liveState !== 'running') return
+        this.requestLogs()
+      }, 2000)
+    },
+    stopLogPoll() {
+      if (this._logPoll) { clearInterval(this._logPoll); this._logPoll = null }
     },
     act(kind) {
       if (!this.selected) return

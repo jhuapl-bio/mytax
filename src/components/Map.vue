@@ -110,18 +110,24 @@ import 'leaflet/dist/leaflet.css'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
+import taxaSource from '@/mixins/taxaSource'
 
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
 const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 
 export default {
   name: 'Map',
+  // Store-backed data source: supplies `sampleData` on demand from the
+  // columnar store instead of receiving every parsed row as a prop.
+  mixins: [taxaSource],
   props: {
-    sampleData: { type: Object, default: () => ({}) },
+    // sampleData is provided by the taxaSource mixin.
     sampleMeta: { type: Object, default: () => ({}) }
   },
   data() {
     return {
+      // Map docks show a top-N breakdown per location.
+      taxaLimit: 500,
       color: d3.scaleOrdinal(PAL),
       groupColor: d3.scaleOrdinal(PAL),
       map: null,
@@ -229,11 +235,18 @@ export default {
     }
   },
   watch: {
-    placed: {
-      deep: true,
-      handler() {
-        this.renderLeafletData()
-      }
+    // `placed` is recomputed from the store, so a reference change is a real
+    // change -- no deep traversal needed to detect it.
+    placed() {
+      this.renderLeafletData()
+    },
+    // The map and its detail dock draw imperatively, so a reactive computed
+    // alone does not repaint them. Without this the markers and the dock froze
+    // at whatever the data looked like when the tab was opened, and only
+    // refreshed if you clicked something.
+    storeTick() {
+      this.renderLeafletData()
+      this.$nextTick(this.renderDock)
     },
     selectedSample() {
       // Always default to Species for bar/heat tabs; keep donutRank at Genus unless unavailable

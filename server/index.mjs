@@ -11,7 +11,9 @@ import {Orchestrator} from "./server.mjs"
 import  { WebSocketServer } from 'ws';
 import { Server } from "socket.io";
 import { storage } from './storage.mjs';
-import  { broadcastToAllActiveConnections, startRunUpdateFlusher } from './messenger.mjs';
+import  { broadcastToAllActiveConnections, startProtocol } from './messenger.mjs';
+import { protocol } from './protocol.mjs';
+import { scheduler } from './scheduler.mjs';
 import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
 import { getHealth, installDependency } from './health.mjs';
 // Our port
@@ -141,9 +143,28 @@ ensureIndexBuilding();
 
 logger.info(`Orchestrator creation...`)
 storage.orchestrator = new Orchestrator();
-// Start the batched, run-scoped update flusher (single 'runUpdate' frame per
-// window for whichever run each client is viewing).
-startRunUpdateFlusher();
+// Start the single batched frame channel. The load probe lets the flusher slow
+// its cadence while the scheduler is deep in a backlog: under load, bigger and
+// less frequent frames are strictly better than more of them.
+startProtocol(
+  () => {
+    try { return scheduler.totalPending() + scheduler.active } catch (e) { return 0 }
+  },
+  // Queue + rollup for one sample, used to seed a client's first taxa payload.
+  (run, sampleName) => {
+    try {
+      const runObj = storage.orchestrator.runs.find((r) => r.run === run)
+      const sample = runObj && runObj.samples ? runObj.samples[sampleName] : null
+      if (!sample) return null
+      return {
+        queue: typeof sample.formatQueueInfo === 'function' ? sample.formatQueueInfo() : [],
+        status: typeof sample.getStatus === 'function' ? sample.getStatus() : null
+      }
+    } catch (e) {
+      return null
+    }
+  }
+);
 
 
 io.on('connection', (ws) => {
@@ -162,7 +183,54 @@ io.on('connection', (ws) => {
   }
   // Store the new connection
   storage.activeConnections.set(userId, ws);
+  // Register with the frame bus. Until the client sends `mtx:hello` it has no
+  // run selected and therefore receives no data-plane traffic at all.
+  protocol.attach(userId, ws);
   logger.info(`A user connected! ID: ${userId}`);
+
+  // ---- data-plane handshake ------------------------------------------------
+  //
+  // mtx:hello  -> client announces the protocol version it speaks. We reply with
+  //               the server's version so a stale bundle can tell the user to
+  //               reload instead of silently mis-parsing frames.
+  // mtx:ack    -> flow control. The client acks each frame once it has APPLIED
+  //               it (not on receipt), which is what makes the backpressure
+  //               window track real render capacity rather than network speed.
+  // mtx:view   -> the client's viewport: which samples are mounted and which one
+  //               is focused. Off-screen samples cost nothing; the focused one
+  //               gets full taxon detail.
+  ws.on('mtx:hello', (msg) => {
+    try {
+      ws.emit('mtx:hello', { v: 1, server: true });
+      if (msg && msg.run) {
+        const conn = protocol.get(userId);
+        if (conn) conn.selectRun(msg.run);
+      }
+    } catch (err) { logger.error(`${err} in mtx:hello`) }
+  });
+  ws.on('mtx:ack', (msg) => {
+    try { protocol.ack(userId, msg && msg.seq) } catch (err) { logger.error(`${err} in mtx:ack`) }
+  });
+  // The client believes its view of these samples is incomplete (see
+  // protocol.resync). Re-send their authoritative queue and status.
+  ws.on('mtx:resync', (msg) => {
+    try {
+      const run = msg && msg.run
+      const samples = (msg && Array.isArray(msg.samples)) ? msg.samples.slice(0, 200) : []
+      if (!run || !samples.length) return
+      const healed = protocol.resync(userId, run, samples, storage.orchestrator)
+      if (healed) logger.info(`Resynced ${healed} sample(s) for ${userId} on run ${run}`)
+    } catch (err) { logger.error(`${err} in mtx:resync`) }
+  });
+  ws.on('mtx:view', (msg) => {
+    try {
+      protocol.setView(userId, {
+        visible: msg && msg.visible,
+        focus: msg && msg.focus,
+        topN: msg && msg.topN
+      })
+    } catch (err) { logger.error(`${err} in mtx:view`) }
+  });
 
   // Send a message to the client with the imported uer settings from storage.orchestrator
   async function sendUserSettings() {
@@ -193,6 +261,7 @@ io.on('connection', (ws) => {
     storage.activeConnections.delete(userId);
     // Stop scoping live updates to this (now gone) connection's run.
     storage.selectedRuns.delete(userId);
+    protocol.detach(userId);
     logger.info(`User disconnected! ID: ${userId}`);
   });
   ws.on("getStatus", async (msg) => {
@@ -209,6 +278,36 @@ io.on('connection', (ws) => {
       logger.error(err)
     }
   })
+  // --- on-demand job logs --------------------------------------------------
+  // Per-job kraken/minimap output is NO LONGER streamed with every status frame
+  // (that duplication is what pushed a 500-file barcode into GBs on the wire and
+  // in the browser heap). The UI asks for one job's log tail only when the user
+  // opens that job, and gets it back on a private, single-socket reply.
+  ws.on("getJobLogs", (msg) => {
+    const reply = (payload) => {
+      try { ws.emit('jobLogs', payload) } catch (err) { logger.error(`${err} emitting jobLogs`) }
+    }
+    try {
+      const run = msg && msg.run
+      const samplename = msg && (msg.samplename || msg.sample)
+      const index = msg && msg.index
+      if (!run || !samplename || index === undefined || index === null){
+        reply({ run, samplename, index, logs: [], error: 'Missing run/sample/index' })
+        return
+      }
+      const runObj = storage.orchestrator.runs.find((r) => r.run === run)
+      const sample = runObj && runObj.samples ? runObj.samples[samplename] : null
+      if (!sample || typeof sample.getJobLogs !== 'function'){
+        reply({ run, samplename, index, logs: [], error: 'Sample not found' })
+        return
+      }
+      reply(sample.getJobLogs(index))
+    } catch (err) {
+      logger.error(`${err} error in getJobLogs`)
+      reply({ logs: [], error: `${err}` })
+    }
+  })
+
   ws.emit("sendQueueStatus",  storage.orchestrator.getQueueStatus() );
   ws.on('downloaddb', (msg) => {
     try {
@@ -452,8 +551,16 @@ io.on('connection', (ws) => {
         // to it (and the other run's 1000s of job frames don't clog this socket).
         if (msg && msg.run){
           storage.selectedRuns.set(userId, msg.run)
-          // hand the viewer the current round-robin board straight away
-          try { ws.emit('queueBoard', storage.orchestrator.getQueueBoard(msg.run)) } catch (e) { logger.error(e) }
+          // Point this connection's delta cursors at the new run. Everything the
+          // client held for the previous run is discarded on both ends, so the
+          // first frame after this is a clean snapshot rather than a delta
+          // against state the client no longer has.
+          const conn = protocol.get(userId)
+          if (conn) conn.selectRun(msg.run)
+          try {
+            const board = storage.orchestrator.getQueueBoard(msg.run)
+            if (conn) conn.pendingQueue = { board }
+          } catch (e) { logger.error(e) }
         }
         storage.orchestrator.getRunInformation(msg.run)
     } catch(err){
