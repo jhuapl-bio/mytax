@@ -341,12 +341,15 @@ export  class Sample {
             // obj.generateKrakenCommand()
             const controller = new AbortController();
             obj.controller = controller
-            obj.status = {
-                ...obj.status,
+            // Mutate in place -- do NOT replace the object. queueList[i].info.status
+            // holds a reference to it (see updateStatusQueueList); replacing it
+            // left getStatus() reading a stale copy, so a finished job still
+            // counted as done:0 and the sample never showed success.
+            obj.status = Object.assign(obj.status || {}, {
                 waiting: true,
                 running: false,
                 cancelled: false
-            }
+            })
             // Notify clients that a job was queued. Coalesced per (sample,index)
             // into the run-scoped batched 'runUpdate' frame, and only buffered if
             // someone is actually viewing this run.
@@ -525,7 +528,7 @@ export  class Sample {
         for (let index = 0; index < knownTotal; index++){
             const queued = jobs[index]
             const record = this.queueRecords && this.queueRecords[index]
-            const s = (queued && queued.info && queued.info.status) || (record && record.status) || { waiting: true }
+            const s = (queued && queued.job && queued.job.status) || (queued && queued.info && queued.info.status) || (record && record.status) || { waiting: true }
             if (s.running) runningCount++
             if (s.waiting) waiting++
             if (s.success === true || s.success === 0) done++
@@ -579,7 +582,7 @@ export  class Sample {
         for (let index = 0; index < total; index++) {
             const queued = this.queueList[index]
             const record = this.queueRecords && this.queueRecords[index]
-            const s = (queued && queued.info && queued.info.status) || (record && record.status)
+            const s = (queued && queued.job && queued.job.status) || (queued && queued.info && queued.info.status) || (record && record.status)
             if (s && s[flag]) return true
         }
         return false

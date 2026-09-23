@@ -928,7 +928,10 @@ import * as d3 from 'd3'
 import Samplesheet from "@/components/Samplesheet"
 import Heatmap from "@/components/Heatmap"
 import Explore from "@/components/Explore"
-import Map from "@/components/Map"
+// Imported as MapView, NOT `Map`: a binding named `Map` shadows the global
+// Map constructor for this whole module, so `new Map()` (queue aggregates)
+// threw "is not a constructor" and every job frame failed to apply.
+import MapView from "@/components/Map"
 import CrossSample from "@/components/CrossSample"
 import DataTableTab from "@/components/DataTableTab"
 import Metadata from "@/components/Metadata"
@@ -954,7 +957,7 @@ export default {
       AddRun,
       Heatmap,
       Explore,
-      Map,
+      Map: MapView,   // registered as "Map" -- the tab list refers to it by that name
       CrossSample,
       DataTableTab,
       Metadata,
@@ -2646,8 +2649,13 @@ export default {
           const total = Math.max(agg.total, Number(prev.total || 0))
           const done = Math.max(agg.success, Number(prev.done || 0))
           const errorCount = Math.max(agg.error, Number(prev.errorCount || 0))
-          const runningCount = agg.running || Number(prev.runningCount || 0)
-          const waitingCount = agg.waiting || Number(prev.waiting || 0)
+          // Once we hold live job states for this sample they are authoritative;
+          // only fall back to the last server rollup when we have none. (The old
+          // `agg.waiting || prev.waiting` kept a stale waiting flag after the job
+          // had started, so a running sample also read as queued.)
+          const live = agg.total > 0
+          const runningCount = live ? agg.running : Number(prev.runningCount || 0)
+          const waitingCount = live ? agg.waiting : Number(prev.waiting || 0)
           this.$set(this.selectedsamplesAll[index], 'status', {
             running: runningCount > 0,
             paused: agg.paused > 0,
