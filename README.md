@@ -240,7 +240,7 @@ confirmation before overwriting. Available out of the box:
 | `k2_viral_20231009`, `k2_viral_20250714` | Kraken2 viral |
 | `flukraken2` | Influenza (FluKraken2) |
 | `MarineMitogenome20210629` | Marine mammal mitochondrion (RefSeq) |
-| `MarineMitogenome20260612` | Marine mammal mitochondrion (RefSeq, 2026-06-12) |
+| `MarineMitogenome20260916` | Marine mammal mitochondrion (RefSeq, 2026-09-16) |
 | `pluspf8` | Kraken2 PlusPFP 8 GB |
 | `Greengenes13.5`, `SILVA132`, `SILVA138`, `RDP11.5` | 16S rRNA reference sets |
 

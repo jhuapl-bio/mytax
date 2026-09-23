@@ -81,7 +81,11 @@ export  class Orchestrator {
                 label: 'Marine mammal mitogenomes (2026-09-16)',
                 description: 'Marine mammal mitochondrial genomes from RefSeq. Intended for eDNA / mitochondrial barcoding work.',
                 final: 'marine_mammal_mitochondrion-refseq-20260916',
-                nested: true,
+                // nested:false -> extract INTO databases/<final>/ so detection works
+                // whatever the tarball's internal top folder is called (or if the
+                // .k2d files sit at its root); resolveKrakenDbDirSync finds the
+                // index up to 2 levels down.
+                nested: false,
                 key: 'MarineMitogenome20260916',
                 fullpath: path.join(this.databasespath, "marine_mammal_mitochondrion-refseq-20260916")
             },
