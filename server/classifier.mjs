@@ -132,36 +132,43 @@ export  class Classifier {
     // lines were re-sent thousands of times and then retained in Vue's reactive
     // store on the client (the multi-GB browser footprint). Instead we send a
     // count plus the single most recent line; the UI fetches the rest on click.
+    //
+    // Only truthy / meaningful fields are included: every consumer reads these
+    // as flags (`s.running`, `s.success === true`, ...), so an absent key reads
+    // exactly like false/null -- and a big run ships this object once per job
+    // per transition, so the dropped keys add up.
     statusForWire(){
         const s = this.status || {}
         const logs = Array.isArray(s.logs) ? s.logs : []
-        return {
-            running: !!s.running,
-            waiting: !!s.waiting,
-            cancelled: !!s.cancelled,
-            paused: !!s.paused,
-            historical: !!s.historical,
-            success: s.success,
-            // errors are already capped at MAX_ERROR_CHARS; trim harder for the
-            // per-job frame since the UI only surfaces a short message inline.
-            error: s.error ? String(s.error).slice(-500) : s.error,
-            logCount: logs.length,
-            lastLog: logs.length ? logs[logs.length - 1] : null,
+        const out = {}
+        if (s.running) out.running = true
+        if (s.waiting) out.waiting = true
+        if (s.cancelled) out.cancelled = true
+        if (s.paused) out.paused = true
+        if (s.historical) out.historical = true
+        if (s.success !== null && s.success !== undefined) out.success = s.success
+        if (s.code !== null && s.code !== undefined) out.code = s.code
+        // errors are already capped at MAX_ERROR_CHARS; trim harder for the
+        // per-job frame since the UI only surfaces a short message inline.
+        if (s.error) out.error = String(s.error).slice(-500)
+        if (logs.length) {
+            out.logCount = logs.length
+            const last = logs[logs.length - 1]
+            out.lastLog = typeof last === 'string' && last.length > 300 ? last.slice(-300) : last
         }
+        return out
     }
 
     sendJobStatus(){
+        // Only what the UI reads. The command is served on demand via
+        // getJobLogs; the output paths (fullreport/outputdir/reportPath/
+        // sampleReport) were never read client-side and were the bulk of the
+        // bytes of this blob, sent once per job.
         let info = {
-            command: this.formatcommandstring(),
-            fullreport: this.fullreport,
-            outputdir: this.outputdir,
-            reportPath: this.reportPath,
             database: this.database,
-            sampleReport: this.sampleReport,
             filepath: this.filepath,
             path_2: this.sample.path_2,
             index: this.index,
-            run: this.run,
             sample: this.sample.sample,
             classifier: this.classifier,
             fastp: this.fastp,
@@ -189,6 +196,64 @@ export  class Classifier {
     initialize(){
         this.generateKrakenCommand()
     } 
+
+    // Forward the few meaningful progress lines to the server log so long
+    // alignments aren't silent: our own "[mytax]" stage markers, plus (for
+    // minimap2) its per-batch "[M::worker_pipeline] mapped N sequences" lines,
+    // index load/stat lines and samtools sort merge notices. kraken2 chatter is
+    // NOT forwarded (see note in start()).
+    forwardProgress(text){
+        if (!text) return
+        const isMinimap = this.classifier === 'minimap2'
+        let hit = false
+        for (const raw of String(text).split(/\r?\n/)){
+            const line = raw.trim()
+            if (!line) continue
+            const mine = line.startsWith('[mytax]')
+            const mm = isMinimap && /^\[(M::(main|worker_pipeline|mm_idx_gen|mm_idx_stat)|bam_sort_core|E::|W::)/.test(line)
+            if (!mine && !mm) continue
+            hit = true
+            this.lastProgress = line
+            if (/WARNING|\[E::|\[W::/.test(line)) logger.warn(`[${this.name}] ${line}`)
+            else logger.info(`[${this.name}] ${line}`)
+        }
+        // push the fresh lastLog to the UI, throttled
+        if (hit){
+            const now = Date.now()
+            if (!this._lastProgressSend || now - this._lastProgressSend > 3000){
+                this._lastProgressSend = now
+                this.pushLog(this.lastProgress)
+                this.sendJobStatus()
+            }
+        }
+    }
+    // Heartbeat for minimap2 jobs: every 30s log elapsed time, the last
+    // progress line and how much BAM (incl. samtools sort temp chunks) has been
+    // written, so a stalled job is distinguishable from a slow one.
+    startHeartbeat(){
+        this.stopHeartbeat()
+        if (this.classifier !== 'minimap2') return
+        const bam = `${this.sampleReport}.bam`
+        const dir = path.dirname(bam)
+        const base = path.basename(bam)
+        this._heartbeat = setInterval(() => {
+            let bytes = 0
+            try {
+                for (const f of fs.readdirSync(dir)){
+                    if (f.startsWith(base)){
+                        try { bytes += fs.statSync(path.join(dir, f)).size } catch (e) { /* racing sort */ }
+                    }
+                }
+            } catch (e) { /* dir not there yet */ }
+            const secs = Math.round((Date.now() - this.startedAt) / 1000)
+            logger.info(`[${this.name}] minimap2 still running ${secs}s on ${path.basename(this.filepath)} — BAM/tmp written: ${(bytes/1048576).toFixed(1)} MB — last: ${this.lastProgress || '(no progress output yet)'}`)
+        }, 30000)
+        if (typeof this._heartbeat.unref === 'function') this._heartbeat.unref()
+    }
+    stopHeartbeat(){
+        if (this._heartbeat){ clearInterval(this._heartbeat); this._heartbeat = null }
+    }
+
     
 
    
@@ -205,6 +270,7 @@ export  class Classifier {
                 // process group, so we can signal the WHOLE group (negative pid)
                 // and take kraken2 down with it. SIGTERM first, then a short
                 // SIGKILL escalation so it stops near-instantly.
+                this.stopHeartbeat()
                 killProcessTree(this.process)
                 this.status.running = false
                 this.status.error=`Canceled job`
@@ -254,25 +320,33 @@ export  class Classifier {
                         // work the queue board already shows. The output is still
                         // captured into status.logs (visible in the per-job log
                         // panel) and condensed into ONE line on exit.
+                        $this.startedAt = Date.now()
+                        $this.lastProgress = null
+                        $this.startHeartbeat()
                         classify.stdout.on('data', (data) => {
                             $this.pushLog(`${data}`)
+                            $this.forwardProgress(`${data}`)
                         });
 
                         classify.stderr.on('data', (data) => {
                             const text = `${data}`
                             $this.pushLog(text)
                             $this.captureSummary(text)
+                            $this.forwardProgress(text)
                             if (data){
                                 $this.status.error = appendCappedError($this.status.error, data)
                             }
                         });
                         classify.on('error', function(error) {
+                            $this.stopHeartbeat()
                             logger.error(`Error happened during classification of ${$this.filepath} ${error}`);
-                            $this.status.error = err
+                            $this.status.error = `${error}`
                             $this.status.running = false
                             reject(error)
                         })  
-                        classify.on('exit', (code) => {
+                        classify.on('exit', (code, signal) => {
+                            $this.stopHeartbeat()
+                            if (signal) logger.info(`${path.basename($this.filepath)} [${$this.name}] ${$this.classifier} killed by ${signal} after ${Math.round((Date.now() - ($this.startedAt || Date.now()))/1000)}s`)
                             // One condensed line per job instead of a running
                             // commentary. On failure log at error level with the
                             // tail of stderr so the failure is still diagnosable.
@@ -287,8 +361,11 @@ export  class Classifier {
                             $this.status.historical = false
                             $this.process = null
                             $this.sendJobStatus()
+                            // A fresh per-file report exists: hand it to the
+                            // sample's combiner, which merges it into full.report
+                            // off the job queue and then publishes.
                             if (code === 0 && typeof $this.onReportReady === 'function') {
-                                Promise.resolve($this.onReportReady()).catch((err) => logger.error(`${err} publishing report for ${$this.name}`))
+                                Promise.resolve($this.onReportReady(true)).catch((err) => logger.error(`${err} publishing report for ${$this.name}`))
                             }
 
                             resolve( `${code}`)                 
@@ -302,7 +379,7 @@ export  class Classifier {
                         $this.status.logs.push['Historically gathered report, pre-run already']
                         $this.sendJobStatus()
                         if (typeof $this.onReportReady === 'function') {
-                            Promise.resolve($this.onReportReady()).catch((err) => logger.error(`${err} publishing historical report for ${$this.name}`))
+                            Promise.resolve($this.onReportReady(false)).catch((err) => logger.error(`${err} publishing historical report for ${$this.name}`))
                         }
                         
                         resolve()
@@ -371,8 +448,11 @@ export  class Classifier {
             steps.push(this.buildKraken2Cmd(input1, input2, paired, fastpUsed, this.sampleReport))
         }
 
-        // step 3: merge this file's report into the sample-level full.report
-        steps.push(this.generateKReportCommand())
+        // step 3 (merging this file's report into the sample-level full.report)
+        // is NOT part of the job any more: it used to re-combine every report
+        // in the sample on every file (O(n^2), inside the single-slot queue).
+        // The sample's ReportCombiner does it incrementally once the job exits
+        // successfully -- see combiner.mjs / Sample.defineClassifier.
 
         const command = {
             main: "bash",
@@ -478,19 +558,40 @@ export  class Classifier {
         // The whole thing stays &&-chained; if the reference dir is read-only the
         // build quietly fails (|| true) and we fall back to mapping the FASTA.
         const mmi = `${ref}.${preset}.mmi`
-        // Emit a clear, human one-time notice to STDOUT (logged as info, so it
-        // isn't styled as an error like minimap2's own stderr progress) only when
-        // the index is actually being built -- so the first file doesn't look idle.
-        const buildMsg = `echo "[mytax] Building minimap2 ${preset} index (one-time; subsequent files reuse it)…"`
-        const doneMsg = `echo "[mytax] minimap2 ${preset} index ready — classifying reads"`
-        const buildOnce = `( [ -s '${mmi}' ] || ( ${buildMsg} ; minimap2 -x ${preset} -t ${threads} -d '${mmi}.tmp.'"$$" '${ref}' && mv '${mmi}.tmp.'"$$" '${mmi}' && ${doneMsg} ) || true )`
+        // Timestamped stage markers on STDOUT. The classifier forwards every
+        // "[mytax]" line to the server log (and the job's lastLog on the wire),
+        // so a slow alignment is visibly "aligning", not silently idle.
+        const fname = path.basename(input1)
+        const log = (msg) => `echo "[mytax] minimap2 [$(date +%H:%M:%S) +$SECONDS s] ${fname}: ${msg}"`
+        const buildMsg = log(`building ${preset} index from reference (one-time; subsequent files reuse it)…`)
+        const doneMsg = log(`${preset} index built -> ${mmi}`)
+        const buildOnce = `( [ -s '${mmi}' ] || ( ${buildMsg} ; minimap2 -x ${preset} -t ${threads} -d '${mmi}.tmp.'"$$" '${ref}' && mv '${mmi}.tmp.'"$$" '${mmi}' && ${doneMsg} ) || ${log('WARNING: index build failed/skipped; aligning directly against the FASTA (slower)')} )`
         // Prefer the cached index; fall back to the FASTA if it never got created.
         const target = `$( [ -s '${mmi}' ] && printf %s '${mmi}' || printf %s '${ref}' )`
+        // Peek at the first 1000 reads: log mean length and warn when the preset
+        // obviously doesn't match the data (e.g. ONT reads + 'sr' preset, which
+        // makes minimap2 crawl and look hung).
+        const reader = /\.gz$/i.test(input1) ? 'gzip -dc' : 'cat'
+        const peek = `( set -- $(${reader} '${input1}' 2>/dev/null | head -n 4000 | awk 'NR%4==2{s+=length($0);c++} END{printf "%d %d", c, (c?s/c:0)}'); ` +
+            `echo "[mytax] minimap2 [$(date +%H:%M:%S)] ${fname}: input check: first \${1:-0} reads, mean length \${2:-0} bp (preset=${preset}, platform=${platform || 'unset'})"; ` +
+            `if [ "${preset}" = sr ] && [ "\${2:-0}" -gt 400 ]; then echo "[mytax] minimap2 ${fname}: WARNING: long reads (~\${2}bp) with short-read 'sr' preset -- alignment will be VERY slow. Set the sample platform to Nanopore to use map-ont."; fi; ` +
+            `if [ "${preset}" = map-ont ] && [ "\${2:-0}" -gt 0 ] && [ "\${2:-0}" -lt 250 ]; then echo "[mytax] minimap2 ${fname}: WARNING: short reads (~\${2}bp) with map-ont preset; set platform to Illumina to use sr."; fi; true )`
         // Align (SAM) -> sort -> BAM -> index. pipefail in a subshell so a minimap2
         // failure aborts instead of leaving a truncated BAM look "successful".
-        const align = `( set -o pipefail; minimap2 -a -x ${preset} -t ${threads} --secondary=no "${target}" ${inputs} | samtools sort -@ ${threads} -o "${bam}" - ) && samtools index "${bam}"`
-        let cmd = `${buildOnce} && ${align}`
-        cmd += ` && python3 '${conv}' --bam "${bam}" --report "${this.sampleReport}" --ref '${ref}'`
+        const align = `( set -o pipefail; minimap2 -a -x ${preset} -t ${threads} --secondary=no "${target}" ${inputs} | samtools sort -@ ${threads} -o "${bam}" - )`
+        let cmd = [
+            log(`start: preset=${preset} platform=${platform || 'unset'} threads=${threads} ref=${ref}`),
+            peek,
+            `( [ -s '${mmi}' ] && ${log(`cached index found: ${mmi} ($(du -h '${mmi}' | cut -f1))`)} || true )`,
+            buildOnce,
+            log(`step 1/3: aligning + sorting against ${target} (minimap2 progress lines follow)…`),
+            align,
+            log(`step 1/3 done: BAM $(du -h "${bam}" | cut -f1) -> step 2/3: indexing BAM`),
+            `samtools index "${bam}"`,
+            log('step 3/3: converting alignments to Kraken2-style report'),
+            `python3 '${conv}' --bam "${bam}" --report "${this.sampleReport}" --ref '${ref}'`,
+            log('finished'),
+        ].join(' && ')
         return cmd
     }
     generateKReportCommand(){ 
@@ -505,21 +606,16 @@ export  class Classifier {
             full: false, 
             sample: false
         }
-        let fullreport = this.fullreport
+        // Two stats instead of globbing the whole sample directory per job (the
+        // glob was O(files) per job => O(n^2) for a big barcode, and its result
+        // only fed the per-job combine step that no longer exists).
+        const isFile = async (p) => {
+            try { return (await fs.promises.stat(p)).isFile() } catch (e) { return false }
+        }
         try {
-            const pattern = `${this.outputdir}/*.report`;
-            let files = await globFiles(pattern)
-            // Filter and display the files
-            const reportFiles = files.filter(file =>  {
-                if (file == fullreport){
-                    exists.full = true
-                }   
-                if (file == this.reportPath){  
-                    exists.sample = true  
-                }  
-                return file.endsWith('.report') && file !== fullreport  ;
-            });  
-            this.reportfiles_seen = reportFiles
+            const [full, sample] = await Promise.all([isFile(this.fullreport), isFile(this.reportPath)])
+            exists.full = full
+            exists.sample = sample
         } catch (err) {
             logger.error(`Error reading directory for reports on classifier pre-check: ${err}`);
         } finally {

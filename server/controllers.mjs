@@ -425,7 +425,26 @@ export function globFiles(pattern, options){
 // non-nested databases keep working exactly as before. Synchronous so it can
 // be used from the (sync) kraken2 command builder.
 // ---------------------------------------------------------------------------
+// The same database path is resolved several times per job (constructor,
+// queueing, start) -- i.e. thousands of blocking existsSync/readdirSync calls
+// on the event loop when a big directory is discovered. The answer only
+// changes when a database is (re)installed, so memoise it briefly.
+const _dbDirCache = new Map();   // baseDir -> { at, dir }
+const DB_DIR_TTL_MS = 15000;
 export function resolveKrakenDbDirSync(baseDir){
+    if (!baseDir) return baseDir;
+    const hit = _dbDirCache.get(baseDir);
+    const now = Date.now();
+    if (hit && now - hit.at < hit.ttl) return hit.dir;
+    const dir = _resolveKrakenDbDirSync(baseDir);
+    // A found index is stable; a miss (database still downloading) is only
+    // cached very briefly so a fresh install is picked up almost immediately.
+    let found = false;
+    try { found = fs.existsSync(path.join(dir, 'taxo.k2d')); } catch (e){ found = false; }
+    _dbDirCache.set(baseDir, { at: now, dir, ttl: found ? DB_DIR_TTL_MS : 2000 });
+    return dir;
+}
+function _resolveKrakenDbDirSync(baseDir){
     try {
         if (!baseDir) return baseDir;
         const hasIndex = (d) => {

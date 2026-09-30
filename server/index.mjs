@@ -156,9 +156,22 @@ startProtocol(
       const runObj = storage.orchestrator.runs.find((r) => r.run === run)
       const sample = runObj && runObj.samples ? runObj.samples[sampleName] : null
       if (!sample) return null
+      // Lazy: the bus reads `status` on every taxa section but only needs the
+      // (allocation-heavy) queue projection when the known file count grew,
+      // and then usually only the new tail of it.
+      let status
       return {
-        queue: typeof sample.formatQueueInfo === 'function' ? sample.formatQueueInfo() : [],
-        status: typeof sample.getStatus === 'function' ? sample.getStatus() : null
+        get status() {
+          if (status === undefined) status = typeof sample.getStatus === 'function' ? sample.getStatus() : null
+          return status
+        },
+        get queue() {
+          return typeof sample.formatQueueInfo === 'function' ? sample.formatQueueInfo() : []
+        },
+        queueFrom(from) {
+          if (typeof sample.formatQueueSnapshot === 'function') return sample.formatQueueSnapshot(from)
+          return typeof sample.formatQueueInfo === 'function' ? sample.formatQueueInfo() : []
+        }
       }
     } catch (e) {
       return null

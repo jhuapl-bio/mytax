@@ -13,6 +13,7 @@ import { pathEqual } from 'path-equal'
 import { storage } from './storage.mjs'
 import { scheduler } from './scheduler.mjs'
 import { broadcastToAllActiveConnections, queueSampleUpdate, queueJobUpdate } from './messenger.mjs';
+import { ReportCombiner } from './combiner.mjs'
 export  class Sample { 
 
     constructor(info, queue){
@@ -82,6 +83,20 @@ export  class Sample {
             brackenConfig: this.brackenConfig
         }
         this.database = info.database
+        // O(1) "have we seen this file" / "which record is it" lookups. The
+        // arrays above are kept (other code indexes into them), these just stop
+        // every new fastq from scanning all of its predecessors.
+        this._fileSet = new Set()      // every path ever discovered
+        this._liveFiles = new Set()    // paths discovered and not since unlinked
+        this._recordIndex = new Map()
+        // Merges each finished per-file report into full.report, one sample at
+        // a time, OUTSIDE the classification queue (see combiner.mjs).
+        this.combiner = new ReportCombiner({
+            outputdir: this.outputdir,
+            fullreport: this.fullreport,
+            label: this.sample,
+            onCombined: () => this.publishFullReport(this.fullreport).catch((err) => logger.error(`${err} publishing combined report for ${this.sample}`))
+        })
 
     }
 
@@ -147,10 +162,27 @@ export  class Sample {
 
         }
 
+        // Directory inputs: existing files are picked up by a single readdir pass
+        // (initialDirectoryScan) instead of chokidar's initial scan. With
+        // awaitWriteFinish on, chokidar polls EVERY pre-existing file every 200ms
+        // until it has been unchanged for 2s before emitting 'add' -- for a
+        // barcode directory holding thousands of finished fastqs that is tens of
+        // thousands of stat() calls and timers, a 2s+ stall before the first job,
+        // and then one burst of thousands of 'add' events. Files already on
+        // disk and not modified recently are finished; only fresh ones get the
+        // stability wait. chokidar then only reports files that appear later.
+        const manualInitial = format == "directory"
+        if (manualInitial && this.watch === false){
+            // One-shot mode: no live watcher at all, just the scan.
+            this.initialDirectoryScan(this.path_1).catch((err) => logger.error(`${err} scanning ${this.path_1}`))
+            return
+        }
+
         try{
             this.watcher = await chokidar.watch(watchpaths, {
                 ignored: /^\./,
                 persistent: true,
+                ignoreInitial: manualInitial,
                 // Local-disk inputs: use native fsevents/inotify instead of
                 // polling. Polling a 400-file directory means stat()-ing every
                 // file on every tick, which pins a CPU core and stalls the event
@@ -176,7 +208,14 @@ export  class Sample {
                 logger.info(`Directory ${directory} has been removed`);
             }).on('unlink', function(filepath) {
                 logger.info(`File ${filepath} has been removed`);
+                $this._liveFiles.delete(filepath)
             }).on('ready', function() {
+                if (manualInitial){
+                    // Watcher is live, so nothing created from here on can be
+                    // missed; now enumerate what was already there. Overlap is
+                    // harmless (addFile de-dupes by path).
+                    $this.initialDirectoryScan($this.path_1).catch((err) => logger.error(`${err} scanning ${$this.path_1}`))
+                }
                 // initial scan finished; if real-time watching is disabled, stop here
                 if ($this.watch === false){
                     logger.info(`Initial scan complete for ${$this.sample}; watch disabled, closing watcher`)
@@ -188,6 +227,52 @@ export  class Sample {
         } catch (err){
             logger.error(`${err} error in watching base dir files`)
         }
+    }
+    // Enumerate the fastq/fasta files already in `dir` and queue them in natural
+    // (read) order. Finished files are added straight away; files modified in
+    // the last couple of seconds (MinKNOW may still be writing them) wait until
+    // their size stops changing, mirroring chokidar's awaitWriteFinish.
+    async initialDirectoryScan(dir){
+        const SEQ_RE = /(fq|fastq|fastq\.gz|fq\.gz|fa|fna|faa|fasta)$/
+        const STABLE_MS = 2000
+        let entries = []
+        try {
+            entries = await fs.promises.readdir(dir, { withFileTypes: true })
+        } catch (err){
+            logger.error(`${err} listing ${dir}`)
+            return
+        }
+        const names = entries
+            .filter((e) => !e.isDirectory() && !e.name.startsWith('.') && SEQ_RE.test(e.name))
+            .map((e) => e.name)
+        const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+        names.sort((a, b) => coll.compare(a, b))
+        logger.info(`Initial scan of ${dir}: ${names.length} sequence file(s) (sample ${this.sample})`)
+        const gen = this._scanGen = (this._scanGen || 0) + 1
+        let n = 0
+        for (const name of names){
+            if (gen !== this._scanGen) return        // sample re-pointed mid-scan
+            const filepath = path.join(dir, name)
+            let st
+            try { st = await fs.promises.stat(filepath) } catch (e) { continue }
+            if (!st.isFile()) continue
+            if (Date.now() - st.mtimeMs >= STABLE_MS) this.addFile(filepath)
+            else this.addWhenStable(filepath, st.size, STABLE_MS)
+            // Yield regularly so a scan of thousands of files never blocks
+            // socket traffic (pings, acks) for more than a few ms at a time.
+            if (++n % 200 === 0) await new Promise((r) => setImmediate(r))
+        }
+    }
+    addWhenStable(filepath, lastSize, stableMs = 2000, pollMs = 500){
+        const gen = this._scanGen
+        const check = async () => {
+            if (gen !== this._scanGen || this._liveFiles.has(filepath)) return
+            let st
+            try { st = await fs.promises.stat(filepath) } catch (e) { return }   // removed
+            if (st.size === lastSize && Date.now() - st.mtimeMs >= stableMs) this.addFile(filepath)
+            else { lastSize = st.size; setTimeout(check, pollMs) }
+        }
+        setTimeout(check, pollMs)
     }
     async startWatcher(){
         this.cleanup()
@@ -220,14 +305,24 @@ export  class Sample {
     addFile(file) {
         logger.debug(`File added: ${file} ` );
         // check if file is in the "files" array if not then push it
-        if (!this._files.includes(file)){
+        // A path currently on disk is only ever queued once. The initial
+        // readdir scan and the live watcher can both report a file that lands
+        // right as watching starts; the second report is dropped here. (A file
+        // that is deleted and re-created is unlinked from _liveFiles first, so
+        // it is re-queued exactly as before.)
+        if (this._liveFiles.has(file)) return
+        this._liveFiles.add(file)
+        if (!this._fileSet.has(file)){
+            this._fileSet.add(file)
             this._files.push(file)
         } 
         this.setJob(file, 0, false)
     }
    
     getFullReportSample(filepath){
-        return this.publishFullReport(filepath)
+        // Watcher-driven: nobody awaits this, so never let a read error (e.g. the
+        // report being replaced mid-read) surface as an unhandled rejection.
+        return this.publishFullReport(filepath).catch((err) => logger.error(`${err} reading ${filepath}`))
     }
 
     publishFullReport(filepath = this.fullreport){
@@ -236,7 +331,12 @@ export  class Sample {
             return this._reportReadPending
         }
         let samplename = this.sample
-        return new Promise((resolve, reject)=>{
+        // NOTE: this promise used to be `return`ed directly, so the assignment to
+        // _reportReadPending below was unreachable and the coalescing guard above
+        // never engaged: every report change (watcher add/change + the job's own
+        // onReportReady) re-read and re-hashed the whole full.report. Now at most
+        // one read is in flight per sample, plus one trailing re-read.
+        this._reportReadPending = new Promise((resolve, reject)=>{
             try{
                 fs.readFile(filepath,(err,data)=>{
                     try{
@@ -447,7 +547,13 @@ export  class Sample {
         }
         let classifier = new Classifier(sampleObj)
         classifier.ws = this.ws
-        classifier.onReportReady = () => this.publishFullReport(this.fullreport)
+        // fresh === true: the job just wrote a new per-file report, which must be
+        // merged into full.report. fresh === false: historical, nothing new on
+        // disk, just (re)publish what is there.
+        classifier.onReportReady = (fresh) => {
+            if (fresh === false) return this.publishFullReport(this.fullreport)
+            return this.combiner.request(classifier.reportPath, { rebuild: !!classifier.overwrite })
+        }
         let msg;
 
         msg = this.defineQueueMessage(classifier)
@@ -486,11 +592,18 @@ export  class Sample {
     // per-file report and the sample's combined full.report both exist and are
     // non-empty. Used to avoid re-queuing finished work on startup.
     isAlreadyClassified(filepath){
+        // Called once per discovered file, synchronously. On an initial scan of a
+        // directory with thousands of fastqs that was 4 blocking syscalls per
+        // file; the full.report half is identical for every file of the sample,
+        // so it is cached briefly, and each check is a single stat.
+        const nonEmpty = (p) => { try { return fs.statSync(p).size > 0 } catch (e) { return false } }
         try {
-            const reportPath = getReportName(filepath, this.outputdir)
-            const perFile = fs.existsSync(reportPath) && fs.statSync(reportPath).size > 0
-            const full = fs.existsSync(this.fullreport) && fs.statSync(this.fullreport).size > 0
-            return perFile && full
+            const now = Date.now()
+            if (!this._fullCheck || now - this._fullCheck.at > 2000){
+                this._fullCheck = { at: now, ok: nonEmpty(this.fullreport) }
+            }
+            if (!this._fullCheck.ok) return false
+            return nonEmpty(getReportName(filepath, this.outputdir))
         } catch (err){
             return false
         }
@@ -628,22 +741,23 @@ export  class Sample {
         if (!d || !d.info) return null
         const info = d.info
         const job = d.job
-        const cmdObj = (info && info.command) ? info.command : (job ? job.command : null)
-        const command = (cmdObj && cmdObj.args) ? cmdObj.args[1] : cmdObj
         // Use the log-free wire projection. A run-hydrate snapshot for 96
         // barcodes x 500 files would otherwise inline every job's accumulated
         // kraken stderr into a single frame.
         const status = (job && typeof job.statusForWire === 'function')
             ? job.statusForWire()
             : (job ? job.status : info.status)
+        // (No run -- it is the frame's run -- and no reportPath: nothing in the
+        // UI reads it, and it's the longest string per job after `command`.)
         return {
             index: info.index,
             sample: info.sample,
-            run: info.run,
             filepath: info.filepath,
-            reportPath: job ? job.reportPath : info.sampleReport,
             database: info.database,
-            command: command,
+            // `command` is deliberately NOT on the wire: the full bash pipeline
+            // is ~0.5 KB and was repeated for every job in every snapshot/seed
+            // (MBs for a big run). The UI fetches it with the job's logs
+            // (getJobLogs) when a job is actually opened.
             status: status
         }
     }
@@ -675,14 +789,18 @@ export  class Sample {
             return hasIndex ? null : []
         }
     }
-    formatQueueSnapshot(){
+    // `from` lets callers that already hold the head of the queue (the frame
+    // bus re-seeding a growing barcode) build only the new tail. Entries before
+    // `from` are left as holes so indices still line up.
+    formatQueueSnapshot(from = 0){
         const total = Math.max(
             this.queueList.length,
             this.queueRecords ? this.queueRecords.length : 0,
             this._files ? this._files.length : 0
         )
         const out = []
-        for (let index = 0; index < total; index++) {
+        if (from > 0) out.length = Math.min(from, total)
+        for (let index = Math.max(0, from); index < total; index++) {
             const queued = this.formatJobInfo(this.queueList[index])
             if (queued) { out[index] = queued; continue }
             const record = this.queueRecords && this.queueRecords[index]
@@ -700,11 +818,8 @@ export  class Sample {
         return {
             index,
             sample: this.sample,
-            run: this.run,
             filepath: job.filepath || null,
-            reportPath: job.reportPath || job.sampleReport || null,
             database: job.database || (job.sample && job.sample.database) || this.database,
-            command: typeof job.formatcommandstring === 'function' ? job.formatcommandstring() : null,
             status
         }
     }
@@ -712,20 +827,9 @@ export  class Sample {
         return {
             index,
             sample: this.sample,
-            run: this.run,
             filepath,
-            reportPath: getReportName(filepath, this.outputdir),
             database: this.database,
-            command: null,
-            status: {
-                running: false,
-                waiting: true,
-                success: null,
-                historical: false,
-                error: null,
-                logCount: 0,
-                lastLog: null
-            }
+            status: { waiting: true }
         }
     }
     cancel(index){
@@ -834,15 +938,28 @@ export  class Sample {
     }
     getIndexJob(filepath){
         try{
-            return this.queueRecords.findIndex((f)=>{return f.filepath == filepath })
+            // Fast path: remembered index, verified (queueRecords can be
+            // filtered/reset elsewhere, so never trust the map blindly).
+            const hint = this._recordIndex.get(filepath)
+            if (hint !== undefined){
+                const rec = this.queueRecords[hint]
+                if (rec && rec.filepath == filepath) return hint
+            }
+            // Only files that already have a record can match, and a record only
+            // exists for a file we've seen -- skip the scan for brand-new files.
+            if (!this._fileSet.has(filepath)) return -1
+            const idx = this.queueRecords.findIndex((f)=>{return f && f.filepath == filepath })
+            if (idx !== -1) this._recordIndex.set(filepath, idx)
+            return idx
         } catch(err){
             logger.error(`${err}, couldn't get the index of the job in question`)
             return -1 
         }
     }
     async deleteReports(){    
-        console.log("deleting!")
-        // remove the outputdir 
+        // remove the outputdir
+        try { this.combiner.reset() } catch (e) { /* ignore */ }
+        this._fullCheck = null
         try{
             await rmDir(this.outputdir)
         } catch (err){
@@ -878,6 +995,11 @@ export  class Sample {
                 this.queueList = []
                 this.queueRecords = []
                 this._files = []
+                this._fileSet = new Set()
+                this._liveFiles = new Set()
+                this._recordIndex = new Map()
+                this._scanGen = (this._scanGen || 0) + 1
+                this._fullCheck = null
                 this._reports = []
                 this.data = ''
                 await this.deleteReports()

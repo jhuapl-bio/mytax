@@ -852,7 +852,7 @@
                 :title="selectedQueueJob.name || 'Job'"
                 :subtitle="selectedQueueJob.filepath"
                 :state="selectedJobState"
-                :command="selectedQueueJob.command"
+                :command="selectedJobCommand"
                 :lines="selectedJobLines"
                 max-height="68vh"
                 closable
@@ -899,7 +899,7 @@
                         </thead>
                         <tbody>
                             <tr
-                                v-for="job in panelJobs"
+                                v-for="job in panelJobsShown"
                                 :key="`${job._sample}-${job.index}`"
                                 class="mtx-jp-row"
                                 :class="'mtx-jp-row--' + job._state"
@@ -925,9 +925,16 @@
                                         <v-icon x-small>mdi-play-circle</v-icon>
                                     </v-btn>
                                     <v-btn icon x-small title="View command & logs"
-                                        @click="selectedQueueJob = job; dialogQueue = true">
+                                        @click="reviewJob(job)">
                                         <v-icon x-small>mdi-text-box-search</v-icon>
                                     </v-btn>
+                                </td>
+                            </tr>
+                            <tr v-if="panelJobs.length > panelJobsShown.length">
+                                <td :colspan="selectedQueueGroup ? 6 : 5" class="mtx-jp-empty">
+                                    Showing {{ panelJobsShown.length }} of {{ panelJobs.length }} files.
+                                    <v-btn x-small text color="primary" @click="panelLimit += 500">Show 500 more</v-btn>
+                                    <v-btn x-small text @click="panelLimit = panelJobs.length">Show all</v-btn>
                                 </td>
                             </tr>
                             <tr v-if="!panelJobs.length">
@@ -942,8 +949,12 @@
         </v-dialog>
         <!-- ===== consolidated full-width job queue ===== -->
         <!-- Full-screen live queue board (round-robin visualisation + reorder) -->
+        <!-- v-if: Vuetify keeps dialog content mounted after the first open, so a
+             board with one dot per fastq kept re-rendering on every frame even
+             while closed. Mount it only while it is actually open. -->
         <v-dialog v-model="dialogQueueBoard" fullscreen transition="dialog-bottom-transition">
             <QueueBoard
+                v-if="dialogQueueBoard"
                 :queueList="queueList"
                 :board="queueBoard"
                 :boardAll="queueBoardAll"
@@ -993,6 +1004,7 @@
 
                 <v-card-text class="pa-0" style="height: 70vh;">
                     <v-data-table
+                        v-if="dialogAllJobs"
                         :headers="jobHeaders"
                         :items="filteredJobs"
                         :items-per-page="25"
@@ -1162,6 +1174,7 @@
         }
       },
       dialogJobs(val){
+        this.panelLimit = 300
         if (!val){
           this.selectedQueueSample = null
           this.selectedQueueGroup = null
@@ -1330,6 +1343,16 @@
             if (!j) return ''
             return j._state || this.jobState(j)
         },
+        // Command line for the open job. Not streamed with job frames any more;
+        // it comes back with the on-demand getJobLogs reply.
+        selectedJobCommand(){
+            const j = this.selectedQueueJob
+            if (!j) return ''
+            if (j.command) return j.command
+            const p = this.jobLogs || {}
+            const matches = (p.samplename === (j._sample || j.sample)) && p.index === j.index
+            return (matches && p.command) || ''
+        },
         // Combined log body for the per-job LogViewer: captured log lines plus any
         // stderr the backend stored on status.error (kraken2 streams progress there).
         selectedJobLines(){
@@ -1349,9 +1372,25 @@
             return lines
         },
         // Counts per state for the summary chips / filters.
+        //
+        // Walks queueList directly. It used to go through allJobs, which copies
+        // every job into a new object -- and since this summary is always on
+        // screen, that meant allocating one object per job in the run (10k+ on
+        // a big run) on every single job-status frame.
         jobStats(){
             const c = { running: 0, queued: 0, error: 0, done: 0, historical: 0, paused: 0, preload: 0, total: 0 }
-            this.allJobs.forEach((j) => { c[j._state] = (c[j._state] || 0) + 1; c.total += 1 })
+            const ql = this.queueList || {}
+            for (const sample in ql){
+                const list = ql[sample]
+                if (!Array.isArray(list)) continue
+                for (let i = 0; i < list.length; i++){
+                    const j = list[i]
+                    if (!j) continue
+                    const st = this.jobState(j)
+                    c[st] = (c[st] || 0) + 1
+                    c.total += 1
+                }
+            }
             c.finished = c.done + c.historical
             return c
         },
@@ -1529,6 +1568,12 @@
                 jobs = jobs.filter(j => `${j.filepath || ''} ${j._sample}`.toLowerCase().includes(q))
             }
             return jobs
+        },
+        // A group panel can hold every file of every barcode in a run; each row
+        // carries three Vuetify buttons, so rendering thousands at once froze the
+        // dialog. Rows are revealed in pages instead (stats still count all).
+        panelJobsShown(){
+            return this.panelJobs.length > this.panelLimit ? this.panelJobs.slice(0, this.panelLimit) : this.panelJobs
         },
         panelStats(){
             const c = { running: 0, queued: 0, error: 0, done: 0, total: 0, percent: 0 }
@@ -1708,6 +1753,8 @@
           // longer pushed with every status frame, so we request them only for
           // the job the user actually opened.
           jobLogs: {},
+          // rows rendered in the per-sample/group jobs panel (see panelJobsShown)
+          panelLimit: 300,
           selectedQueueSample: null,
           recentDataFileadded: null,
           uploadDragOver: false,

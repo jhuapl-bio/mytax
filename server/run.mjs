@@ -8,6 +8,20 @@ import chokidar from 'chokidar'
 import { scheduler } from './scheduler.mjs'
 
 import { storage } from './storage.mjs';
+
+// Keep the FIRST entry per sample name (same semantics as the old
+// filter/findIndex idiom, but O(n) instead of O(n^2) on large samplesheets).
+function dedupeBySample(sheet){
+    const seen = new Set()
+    const out = []
+    for (const v of (sheet || [])){
+        const key = v && v.sample
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(v)
+    }
+    return out
+}
 export  class Run { 
     constructor(configuration, queue, ws){
         this.run = configuration.run
@@ -18,7 +32,7 @@ export  class Run {
             return d 
         })
         // remove dups for samoplesheet based on sample
-        this.samplesheet = this.samplesheet.filter((v,i,a)=>a.findIndex(t=>(t.sample === v.sample))===i)
+        this.samplesheet = dedupeBySample(this.samplesheet)
         this.entries = []  
         this.config = {}
         this.samples = {}
@@ -208,7 +222,7 @@ export  class Run {
         try{
             // set a configuration with run name, smaplesheet, and the bundle config information in it as a json
             // remove duplicate this.samplesheet entries
-            this.samplesheet = this.samplesheet.filter((v,i,a)=>a.findIndex(t=>(t.sample === v.sample))===i)
+            this.samplesheet = dedupeBySample(this.samplesheet)
             let config = {
                 samplesheet: this.samplesheet,
                 run: this.run,
@@ -236,7 +250,10 @@ export  class Run {
 
 
     }
-    async addSample(info){
+    // persist=false lets bulk discovery (checkSubdirs / scanReadPairs) add many
+    // samples and write the run file ONCE, instead of rewriting the whole run
+    // JSON after every barcode.
+    async addSample(info, { persist = true } = {}){
         const $this = this   
         let sample = info.sample
         let configuration = {
@@ -267,7 +284,7 @@ export  class Run {
         } else {
             $this.samplesheet[index] = info
         }
-        await this.saveRunInformation()
+        if (persist) await this.saveRunInformation()
         return 
     }
     async sendSampleData(sample){
@@ -321,13 +338,13 @@ export  class Run {
 
             } else {
                 logger.info(`Sample does not exist, creating a new class..`)
-                await $this.addSample(newinfo);
+                await $this.addSample(newinfo, { persist: false });
                 $this.sendSampleData(sample)
 
             }
             
         }
-       
+        await this.saveRunInformation()
     }
     // Expand a directory of R1/R2 FASTQ files into one paired-end sample per
     // pair. Mirrors checkSubdirs (barcoded runs) but pairs files by a shared
@@ -400,7 +417,7 @@ export  class Run {
                 }
             } else {
                 logger.info(`Adding read-pair sample ${sample} (R1 ${pair.path_1}${pair.path_2 ? `, R2 ${pair.path_2}` : ', no R2'})`)
-                await $this.addSample(newinfo)
+                await $this.addSample(newinfo, { persist: false })
                 $this.sendSampleData(sample)
                 changed++
             }

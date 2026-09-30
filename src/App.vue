@@ -947,7 +947,29 @@ import FrameClient from "@/services/frames"
 // Those copies were the bulk of this tab's memory footprint and are gone; the
 // import is kept out deliberately so it doesn't creep back in.
 import { io } from "socket.io-client";
- 
+
+// Charts redraw at most this often while taxa are streaming in (see storeTick).
+const STORE_TICK_MIN_MS = 500
+
+// Shallow equality for arrays of strings; used to keep computed arrays
+// referentially stable when their contents did not change.
+function sameStrings(a, b){
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+// Return the previously returned array for (vm, slot) if `next` has the same
+// contents, else remember and return `next`. Kept outside the component so the
+// computed properties that use it stay free of instance side effects.
+const _stableMemo = new WeakMap()
+function stableStrings(vm, slot, next){
+  let m = _stableMemo.get(vm)
+  if (!m) { m = {}; _stableMemo.set(vm, m) }
+  if (sameStrings(m[slot], next)) return m[slot]
+  m[slot] = next
+  return next
+}
 
 export default {
     name: 'App',
@@ -964,6 +986,7 @@ export default {
       RunStatusWheel,
     },
     beforeDestroy(){ 
+      if (this._tickTimer){ clearTimeout(this._tickTimer); this._tickTimer = null }
       if (this.interval){
         try{
           clearInterval(this.interval)
@@ -1136,8 +1159,14 @@ export default {
       // This used to be an object mapping every sample name to its full array of
       // row objects, rebuilt whenever any sample changed and handed as a prop to
       // every tab — so one arriving report re-rendered every chart in the app.
+      //
+      // Memoised by content: this is recomputed whenever ANY sample row changes
+      // (status/config updates arrive constantly during a run), and returning a
+      // fresh-but-identical array each time made every tab component see a
+      // "new" `samples` prop and redraw its charts.
       selectedsamples(){
-        return this.selectedsamplesAll.filter((obj) => !obj.hidden).map((f) => f.sample)
+        const next = this.selectedsamplesAll.filter((obj) => !obj.hidden).map((f) => f.sample)
+        return stableStrings(this, 'selectedsamples', next)
       },
       // The display-filter state, bundled for the store's query API. Chart
       // components take this as one prop and pass it straight through.
@@ -1151,7 +1180,16 @@ export default {
       },
       // "Something in the taxon store changed" — the ONLY reactive dependency
       // chart components need on the bulk data.
+      //
+      // Throttled (see the rawStoreTick watcher). The raw store tick bumps on
+      // every applied frame; while dozens of barcodes are updating that is
+      // several times a second, and every bump redraws every mounted d3 chart
+      // (sunburst, sankey, heatmap...). Charts now redraw at most every
+      // STORE_TICK_MIN_MS; the data underneath is always current.
       storeTick(){
+        return this.displayTick
+      },
+      rawStoreTick(){
         return taxaStore.state.tick
       },
       // The one tab that is actually mounted.
@@ -1177,7 +1215,10 @@ export default {
       samplekeys(){
         // eslint-disable-next-line no-unused-expressions
         this.storeTick
-        return taxaStore.sampleNames()
+        // Same memo trick as selectedsamples: passed to Samplesheet as `seen`,
+        // so a new-but-equal array re-rendered the whole sample table per tick.
+        const next = taxaStore.sampleNames()
+        return stableStrings(this, 'samplekeys', next)
       },
       // Tally samples by where they came from so the left panel can clearly
       // separate live server-watched samples from locally uploaded K2 reports.
@@ -1331,6 +1372,8 @@ export default {
             gpu: false,
             statussent: null,
             queueList: {},
+            // Throttled copy of taxaStore.state.tick; see storeTick.
+            displayTick: 0,
             queueBoard: {},
             // Counts-only queue summary across EVERY run (see queueBoardAll socket
             // handler); unlike queueBoard/queueList this is never dropped just
@@ -1373,6 +1416,21 @@ export default {
         }
     },
     watch: {
+      rawStoreTick(){
+        const now = Date.now()
+        const since = now - (this._tickAt || 0)
+        if (this._tickTimer) return
+        if (since >= STORE_TICK_MIN_MS){
+          this._tickAt = now
+          this.displayTick = taxaStore.state.tick
+          return
+        }
+        this._tickTimer = setTimeout(() => {
+          this._tickTimer = null
+          this._tickAt = Date.now()
+          this.displayTick = taxaStore.state.tick
+        }, STORE_TICK_MIN_MS - since)
+      },
       gpu(val){
         try{
           this.sendMessage({
@@ -2216,7 +2274,9 @@ export default {
                 for (const entry of list){
                   const sample = entry && entry.samplename
                   if (!sample) continue
-                  const queue = Array.isArray(entry.queue) ? entry.queue : []
+                  // Frozen for the same reason as in applyJobFrames: never
+                  // mutated, so no need for Vue to observe every job's fields.
+                  const queue = Array.isArray(entry.queue) ? entry.queue.map((job) => (job ? Object.freeze(job) : job)) : []
                   $this.$set($this.queueList, sample, queue)
                   // The queue is installed wholesale here, not job-by-job, so the
                   // incremental aggregate that applyJobFrames maintains knows
@@ -2706,33 +2766,54 @@ export default {
         // Per-job queue/status changes, already coalesced per (sample,index) by
         // the server. One frame typically carries the last window's worth of
         // transitions for the whole run.
+        //
+        // Perf notes (a 24-barcode x 400-file run means frames carrying
+        // thousands of jobs):
+        //   * job objects are frozen. They are always replaced wholesale, never
+        //     mutated, so there is nothing for Vue to track inside them; freezing
+        //     stops it installing a getter/setter + Dep on every field of every
+        //     job (tens of thousands of objects on a big run).
+        //   * updates are grouped per sample. A sample receiving many jobs in one
+        //     frame gets its array swapped once instead of one splice + notify
+        //     per job.
+        //   * the sample row (addSample -> config) and its rollup status are
+        //     touched once per sample per frame, not once per job.
         applyJobFrames(jobs){
-          const touched = new Set()
+          const bySample = new Map()
           for (const j of jobs){
             const sample = j.sample || j.samplename
             if (!sample) continue
-            if (!this.queueList[sample]) this.$set(this.queueList, sample, [])
-            const idx = (j.index != null) ? j.index : this.queueList[sample].length
-            const before = this.queueList[sample][idx]
-            const merged = {
-              ...(before || {}),
-              ...(j.job || {})
-            }
-            if (j.status) merged.status = j.status
-            if (j.config){ for (const k in j.config) merged[k] = j.config[k] }
-            if (!merged.status){
-              merged.status = {
-                running: false, waiting: true, success: null,
-                historical: false, error: null, logCount: 0, lastLog: null
-              }
-            }
-            this.updateQueueAggregate(sample, idx, before, merged)
-            this.$set(this.queueList[sample], idx, merged)
-            this.addSample(sample, merged, 'server', true)
-            touched.add(sample)
+            let list = bySample.get(sample)
+            if (!list) { list = []; bySample.set(sample, list) }
+            list.push(j)
           }
-          for (const sample of touched) this.publishQueueStatus(sample)
-          if (touched.size) this.scheduleConsistencyCheck()
+          for (const [sample, list] of bySample){
+            if (!this.queueList[sample]) this.$set(this.queueList, sample, [])
+            const current = this.queueList[sample]
+            const bulk = list.length > 32
+            const target = bulk ? current.slice() : current
+            let last = null
+            for (const j of list){
+              const idx = (j.index != null) ? j.index : target.length
+              const before = target[idx]
+              const merged = {
+                ...(before || {}),
+                ...(j.job || {})
+              }
+              if (j.status) merged.status = j.status
+              if (j.config){ for (const k in j.config) merged[k] = j.config[k] }
+              if (!merged.status) merged.status = { waiting: true }
+              Object.freeze(merged)
+              this.updateQueueAggregate(sample, idx, before, merged)
+              if (bulk) target[idx] = merged
+              else this.$set(target, idx, merged)
+              last = merged
+            }
+            if (bulk) this.$set(this.queueList, sample, target)
+            this.addSample(sample, last, 'server', true)
+            this.publishQueueStatus(sample)
+          }
+          if (bySample.size) this.scheduleConsistencyCheck()
         },
 
         // Sample-level rollup status. Report text is conspicuously absent: it

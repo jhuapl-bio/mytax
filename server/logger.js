@@ -14,8 +14,11 @@ const logger = winston.createLogger({
     // - Write all logs with importance level of `error` or less to `error.log`
     // - Write all logs with importance level of `info` or less to `combined.log`
     //
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
+    // Size-capped + rotated. combined.log previously grew without bound (a
+    // long real-time run logs a line per job), and winston appends to one
+    // ever-larger file.
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error', maxsize: 10 * 1024 * 1024, maxFiles: 3, tailable: true }),
+    new winston.transports.File({ filename: 'logs/combined.log', maxsize: 25 * 1024 * 1024, maxFiles: 4, tailable: true }),
   ],
 });
 

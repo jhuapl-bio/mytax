@@ -32,8 +32,16 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 import zlib
 from collections import Counter, defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from accession_taxid import resolve_seqids, append_map
+except ImportError:  # keep the converter usable on its own
+    resolve_seqids = append_map = None
 
 
 def parse_args():
@@ -46,12 +54,38 @@ def parse_args():
     p.add_argument("--nodes", default=None, help="Explicit nodes.dmp path")
     p.add_argument("--names", default=None, help="Explicit names.dmp path")
     p.add_argument("--taxdump", default=None, help="Directory containing nodes.dmp + names.dmp")
+    p.add_argument("--accession2taxid", default=None,
+                   help="NCBI accession2taxid(.gz) for offline accession->taxid lookup")
+    p.add_argument("--no-remote", action="store_true",
+                   help="Don't query NCBI E-utilities for accessions missing from the map")
     p.add_argument("--total", type=int, default=None,
                    help="Total input read count (to report unclassified reads); optional")
     return p.parse_args()
 
 
 # --- reference id -> taxid map ------------------------------------------------
+def user_cache_map(ref):
+    """Fallback map location when the reference folder isn't writable."""
+    if not ref:
+        return None
+    base = os.path.basename(strip_ref_ext(ref))
+    return os.path.expanduser(f"~/.cache/mytax2/maps/{base}.seqid2taxid.map")
+
+
+def writable_map_path(ref, explicit):
+    """Where newly resolved seqid->taxid rows get appended."""
+    if explicit:
+        return explicit
+    if not ref:
+        return None
+    primary = strip_ref_ext(ref) + ".seqid2taxid.map"
+    d = os.path.dirname(os.path.abspath(primary))
+    if (os.path.exists(primary) and os.access(primary, os.W_OK)) or \
+       (not os.path.exists(primary) and os.access(d, os.W_OK)):
+        return primary
+    return user_cache_map(ref)
+
+
 def candidate_map_paths(ref, explicit):
     cands = []
     if explicit:
@@ -82,24 +116,59 @@ def dedupe(seq):
     return out
 
 
+def _read_map(path, mapping):
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                mapping[parts[0]] = parts[1]
+
+
 def load_seqid2taxid(ref, explicit):
+    """First map found beside the reference, merged with the user-level cache map
+    (where auto-resolved accessions land if the reference dir is read-only)."""
+    mapping = {}
+    paths = []
     for path in candidate_map_paths(ref, explicit):
         if os.path.isfile(path):
-            mapping = {}
-            try:
-                with open(path) as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            mapping[parts[0]] = parts[1]
-                sys.stderr.write(f"[mytax] minimap2: using taxid map {path} ({len(mapping)} entries)\n")
-                return mapping
-            except OSError as e:
-                sys.stderr.write(f"[mytax] minimap2: could not read {path}: {e}\n")
-    return {}
+            paths.append(path)
+            break
+    cache = user_cache_map(ref)
+    if cache and os.path.isfile(cache) and cache not in paths:
+        paths.append(cache)
+    for path in paths:
+        try:
+            before = len(mapping)
+            _read_map(path, mapping)
+            sys.stderr.write(f"[mytax] minimap2: using taxid map {path} ({len(mapping) - before} entries)\n")
+        except OSError as e:
+            sys.stderr.write(f"[mytax] minimap2: could not read {path}: {e}\n")
+    return mapping
+
+
+def link_missing_accessions(counts, taxmap, args):
+    """Resolve reference ids that got hits but have no taxid yet (embedded
+    kraken:taxid, accession2taxid file, or NCBI E-utilities) and persist them."""
+    if resolve_seqids is None:
+        return taxmap
+    missing = [r for r in counts if r not in taxmap]
+    if not missing:
+        return taxmap
+    log(f"{len(missing)} hit reference(s) have no taxid yet -> linking accessions to taxonomy")
+    found = resolve_seqids(missing, a2t_path=args.accession2taxid, remote=not args.no_remote)
+    if found:
+        taxmap = dict(taxmap)
+        taxmap.update(found)
+        dest = writable_map_path(args.ref, args.map)
+        if dest and append_map(dest, found):
+            log(f"saved {len(found)} new accession->taxid row(s) to {dest}")
+    left = len(missing) - len(found)
+    if left:
+        log(f"{left} reference(s) still unlinked -> synthetic taxids (they show as flat entries)")
+    return taxmap
 
 
 def synthetic_taxid(seqid):
@@ -108,19 +177,35 @@ def synthetic_taxid(seqid):
     return 90000000 + (zlib.crc32(seqid.encode("utf-8")) % 9000000)
 
 
+_T0 = time.time()
+
+
+def log(msg):
+    sys.stderr.write(f"[mytax] minimap2 convert [+{time.time() - _T0:.1f}s]: {msg}\n")
+    sys.stderr.flush()
+
+
 # --- alignment counting -------------------------------------------------------
 def bam_ref_counts(bam):
     """Count primary, mapped, non-supplementary alignments per reference."""
     counts = Counter()
+    log(f"reading primary alignments from {bam}")
+    # stderr goes to a temp file, not a PIPE: a PIPE that is only read after
+    # wait() can fill up and deadlock samtools (looks like a silent hang).
+    errf = tempfile.TemporaryFile(mode="w+")
     try:
         proc = subprocess.Popen(
             ["samtools", "view", "-F", "0x904", bam],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdout=subprocess.PIPE, stderr=errf, text=True,
         )
     except FileNotFoundError:
         sys.stderr.write("[mytax] minimap2: samtools not found on PATH\n")
         return counts
+    n = 0
     for line in proc.stdout:
+        n += 1
+        if n % 1000000 == 0:
+            log(f"{n:,} alignments read, {len(counts):,} references hit so far")
         # RNAME is column 3 (0-based index 2)
         parts = line.split("\t", 3)
         if len(parts) < 3:
@@ -129,8 +214,10 @@ def bam_ref_counts(bam):
         if rname and rname != "*":
             counts[rname] += 1
     proc.wait()
+    log(f"read {n:,} primary alignments across {len(counts):,} references")
     if proc.returncode not in (0, None):
-        err = proc.stderr.read() if proc.stderr else ""
+        errf.seek(0)
+        err = errf.read()
         sys.stderr.write(f"[mytax] minimap2: samtools view exited {proc.returncode}: {err}\n")
     return counts
 
@@ -239,6 +326,7 @@ def build_lineage_cache(taxids, nodes_path, names_path):
 def load_or_build_lineage(ref, taxids, nodes_path, names_path):
     cache_path = (strip_ref_ext(ref) + ".lineage.json") if ref else None
     # Try cache first (must cover all needed taxids).
+    cache = {}
     if cache_path and os.path.isfile(cache_path):
         try:
             with open(cache_path) as fh:
@@ -247,8 +335,11 @@ def load_or_build_lineage(ref, taxids, nodes_path, names_path):
                 sys.stderr.write(f"[mytax] minimap2: using cached lineages {cache_path}\n")
                 return cache
         except (OSError, ValueError):
-            pass
-    cache = build_lineage_cache(taxids, nodes_path, names_path)
+            cache = {}
+    # Only build the taxids we don't have yet, and MERGE so earlier files'
+    # lineages aren't thrown away (avoids re-parsing the dmp files per file).
+    todo = [t for t in taxids if str(t) not in cache]
+    cache.update(build_lineage_cache(todo, nodes_path, names_path))
     if cache_path:
         try:
             tmp = f"{cache_path}.tmp.{os.getpid()}"
@@ -342,7 +433,10 @@ def main():
         sys.exit(2)
 
     counts = bam_ref_counts(args.bam) if args.bam else paf_ref_counts(args.paf)
+    log("loading seqid -> taxid map")
     taxmap = load_seqid2taxid(args.ref, args.map)
+    log(f"taxid map: {len(taxmap) if taxmap else 0} entries")
+    taxmap = link_missing_accessions(counts, taxmap, args)
 
     # Only attempt full lineage when we can turn references into real taxids.
     lineage = None
@@ -351,12 +445,14 @@ def main():
         if needed:
             nodes_path, names_path = find_taxdump(args.ref, args.nodes, args.names, args.taxdump)
             if nodes_path and names_path:
+                log(f"resolving lineages for {len(needed)} taxids ({nodes_path})")
                 try:
                     lineage = load_or_build_lineage(args.ref, needed, nodes_path, names_path)
                 except Exception as e:  # noqa: BLE001 - never let taxonomy break a run
                     sys.stderr.write(f"[mytax] minimap2: lineage build failed ({e}); using flat report\n")
                     lineage = None
 
+    log("writing report")
     if lineage:
         classified, unclassified, ntax = write_tree_report(args.report, counts, taxmap, lineage, args.total)
         mode = "taxdump lineage"

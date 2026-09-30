@@ -107,16 +107,22 @@
 
             <div class="qb-line">
               <div class="qb-track"></div>
-              <div class="qb-dots">
+              <!-- One set of delegated listeners per row instead of four per
+                   dot: a barcode with hundreds of fastqs used to allocate and
+                   patch 4 handlers x N dots on every re-render. -->
+              <div
+                class="qb-dots"
+                @click="onDotsClick(row, $event)"
+                @mouseover="onDotsOver(row, $event)"
+                @mousemove="moveTip($event)"
+                @mouseleave="onDotsLeave"
+              >
                 <button
                   v-for="dot in row.dots"
                   :key="dot.index"
+                  :data-i="dot.index"
                   class="qb-dot"
                   :class="[dot.state, { selected: isSelected(row.sample, dot.index) }]"
-                  @click="selectDot(row.sample, dot)"
-                  @mouseenter="showTip($event, dotTooltip(row.sample, dot))"
-                  @mousemove="moveTip($event)"
-                  @mouseleave="hideTip"
                 >
                   <span v-if="dot.state === 'running'" class="qb-dot-pulse"></span>
                 </button>
@@ -206,7 +212,10 @@
     </v-slide-y-reverse-transition>
 
     <!-- floating cursor tooltip (escapes overflow / hint-bar clipping) -->
-    <div v-if="tip.show" class="qb-tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">{{ tip.text }}</div>
+    <!-- Positioned/filled directly through the DOM (see showTip): keeping x/y
+         in reactive data re-rendered the entire board, every dot, on every
+         mousemove. -->
+    <div ref="tip" class="qb-tip" style="display: none"></div>
   </div>
 </template>
 
@@ -236,8 +245,6 @@ export default {
       overIndex: null,
       selected: null,
       showLogs: false,
-      // floating cursor tooltip
-      tip: { show: false, x: 0, y: 0, text: '' },
       // local rotation order (sample names) so dragging feels instant; synced
       // from the server board whenever it changes.
       laneOrder: [],
@@ -357,7 +364,9 @@ export default {
       return (this.selDot && this.selDot.state) || (this.selected && this.selected.state) || 'queued'
     },
     selCommand() {
-      return this.selDot ? this.selDot.command : (this.fetchedLogs.command || '')
+      // The command is no longer streamed with every job; it arrives with the
+      // on-demand log fetch for the opened job.
+      return (this.selDot && this.selDot.command) || this.fetchedLogs.command || ''
     },
     // The fetched payload, but only if it actually belongs to the open job --
     // otherwise a stale reply for a previously-selected dot would leak in.
@@ -490,12 +499,40 @@ export default {
       this.$emit('remove-all-samples', { run: group.name, samples: group.samples.slice() })
     },
     // ---- floating cursor tooltip ----
+    // --- delegated dot events ---------------------------------------------
+    dotFromEvent(row, ev) {
+      const el = ev && ev.target && ev.target.closest ? ev.target.closest('.qb-dot') : null
+      if (!el || !el.dataset) return null
+      const i = Number(el.dataset.i)
+      return row.dots.find((d) => d.index === i) || null
+    },
+    onDotsClick(row, ev) {
+      const dot = this.dotFromEvent(row, ev)
+      if (dot) this.selectDot(row.sample, dot)
+    },
+    onDotsOver(row, ev) {
+      const dot = this.dotFromEvent(row, ev)
+      if (!dot) { this._tipKey = null; this.hideTip(); return }
+      const key = `${row.sample}::${dot.index}`
+      if (this._tipKey === key) return
+      this._tipKey = key
+      this.showTip(ev, this.dotTooltip(row.sample, dot))
+    },
+    onDotsLeave() {
+      this._tipKey = null
+      this.hideTip()
+    },
+    // --- tooltip (non-reactive on purpose) ----------------------------------
     showTip(ev, text) {
-      this.tip = { show: true, text, x: ev.clientX, y: ev.clientY }
+      const el = this.$refs.tip
+      if (!el) return
+      el.textContent = text
+      el.style.display = 'block'
+      this._tipShown = true
       this.placeTip(ev)
     },
     moveTip(ev) {
-      if (this.tip.show) this.placeTip(ev)
+      if (this._tipShown) this.placeTip(ev)
     },
     placeTip(ev) {
       const pad = 14
@@ -506,11 +543,13 @@ export default {
       if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad
       if (y < 8) y = ev.clientY + pad + 8
       if (x < 8) x = 8
-      this.tip.x = x
-      this.tip.y = y
+      const el = this.$refs.tip
+      if (el) { el.style.left = x + 'px'; el.style.top = y + 'px' }
     },
     hideTip() {
-      this.tip.show = false
+      this._tipShown = false
+      const el = this.$refs.tip
+      if (el) el.style.display = 'none'
     },
     // ---- row drag reorder ----
     onDragStart(ri, ev) {

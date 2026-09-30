@@ -1,6 +1,6 @@
 import { logger } from './logger.js'
 import { storage } from './storage.mjs'
-import { broadcastThrottled, queueMetrics } from './messenger.mjs'
+import { broadcastToAllActiveConnections, queueMetrics } from './messenger.mjs'
 import { protocol } from './protocol.mjs'
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,13 @@ class RoundRobinScheduler {
 		this._seenJobs = new Set()
 		// per-run board-emit throttle timers.
 		this._boardTimers = new Map()
+		// jobId -> lane holding its pending entry. removeJob() used to scan every
+		// lane with findIndex, and add() calls removeJob() for de-dupe -- so
+		// discovering N files was O(N^2). This makes the lookup O(1).
+		this._jobLane = new Map()
+		// global (all-runs) board throttle; the summary is computed when the
+		// timer FIRES, not on every add() that schedules it.
+		this._globalBoardTimer = null
 	}
 
 	_knownJob(jobId) {
@@ -120,10 +127,18 @@ class RoundRobinScheduler {
 		if (!wasKnown) this._stats(entry.runName).total += 1
 		this._seenJobs.add(entry.jobId)
 		const lane = this.ensureLane(entry.runName, entry.sample)
-		// keep a lane's files ordered by their index so tier-2 stays in read order
-		const at = lane.pending.findIndex((e) => e.index > entry.index)
-		if (at === -1) lane.pending.push(entry)
-		else lane.pending.splice(at, 0, entry)
+		// keep a lane's files ordered by their index so tier-2 stays in read order.
+		// Files are discovered in index order almost always, so check the tail
+		// first (O(1)) before falling back to a scan for the insertion point.
+		const tail = lane.pending.length ? lane.pending[lane.pending.length - 1] : null
+		if (!tail || !(tail.index > entry.index)) {
+			lane.pending.push(entry)
+		} else {
+			const at = lane.pending.findIndex((e) => e.index > entry.index)
+			if (at === -1) lane.pending.push(entry)
+			else lane.pending.splice(at, 0, entry)
+		}
+		this._jobLane.set(entry.jobId, lane)
 		this.pump()
 		this.scheduleBoard(entry.runName)
 		this.scheduleGlobalBoard()
@@ -134,6 +149,7 @@ class RoundRobinScheduler {
 		// drop any aborted jobs sitting at the front of the priority list
 		while (this.priorityFront.length) {
 			const e = this.priorityFront.shift()
+			this._jobLane.delete(e.jobId)
 			if (!this._aborted(e)) return e
 		}
 		const order = this.laneOrder
@@ -151,11 +167,13 @@ class RoundRobinScheduler {
 			if (lane && lane.pending.length) {
 				// skip aborted jobs in this lane
 				while (lane.pending.length && this._aborted(lane.pending[0])) {
-					lane.pending.shift()
+					this._jobLane.delete(lane.pending.shift().jobId)
 				}
 				if (!lane.pending.length) continue
 				this.lastServedKey = key
-				return lane.pending.shift()
+				const e = lane.pending.shift()
+				this._jobLane.delete(e.jobId)
+				return e
 			}
 		}
 		return null
@@ -230,11 +248,15 @@ class RoundRobinScheduler {
 	removeJob(jobId, silent) {
 		if (!jobId) return
 		let runName = null
-		const pf = this.priorityFront.findIndex((e) => e.jobId === jobId)
-		if (pf > -1) { runName = this.priorityFront[pf].runName; this.priorityFront.splice(pf, 1) }
-		for (const lane of this.lanes.values()) {
-			const i = lane.pending.findIndex((e) => e.jobId === jobId)
-			if (i > -1) { runName = lane.runName; lane.pending.splice(i, 1); break }
+		const where = this._jobLane.get(jobId)
+		if (!where) return   // not pending anywhere (never added, running, or done)
+		this._jobLane.delete(jobId)
+		if (where === 'front') {
+			const pf = this.priorityFront.findIndex((e) => e.jobId === jobId)
+			if (pf > -1) { runName = this.priorityFront[pf].runName; this.priorityFront.splice(pf, 1) }
+		} else {
+			const i = where.pending.findIndex((e) => e.jobId === jobId)
+			if (i > -1) { runName = where.runName; where.pending.splice(i, 1) }
 		}
 		if (!silent && runName) { this.scheduleBoard(runName); this.emitLength(); this.scheduleGlobalBoard() }
 	}
@@ -245,6 +267,11 @@ class RoundRobinScheduler {
 	// board. Call this when a sample is deleted so it disappears from the board.
 	removeSample(runName, sample) {
 		const key = this.laneKeyFor(runName, sample)
+		const doomed = this.lanes.get(key)
+		if (doomed) for (const e of doomed.pending) this._jobLane.delete(e.jobId)
+		for (const e of this.priorityFront) {
+			if (e.runName === runName && e.sample === sample) this._jobLane.delete(e.jobId)
+		}
 		const existed = this.lanes.delete(key)
 		this.laneOrder = this.laneOrder.filter((k) => k !== key)
 		const beforeLen = this.priorityFront.length
@@ -268,6 +295,7 @@ class RoundRobinScheduler {
 		if (i === -1) return
 		const [entry] = lane.pending.splice(i, 1)
 		this.priorityFront.unshift(entry)
+		this._jobLane.set(entry.jobId, 'front')
 		this.pump()
 		this.scheduleBoard(runName)
 	}
@@ -302,6 +330,7 @@ class RoundRobinScheduler {
 			const affectedRuns = new Set()
 			for (const lane of this.lanes.values()) affectedRuns.add(lane.runName)
 			this.lanes.clear()
+			this._jobLane.clear()
 			this.laneOrder = []
 			this.priorityFront = []
 			this.lastServedKey = null
@@ -313,7 +342,13 @@ class RoundRobinScheduler {
 			return
 		}
 		for (const [key, lane] of Array.from(this.lanes.entries())) {
-			if (lane.runName === runName) this.lanes.delete(key)
+			if (lane.runName === runName) {
+				for (const e of lane.pending) this._jobLane.delete(e.jobId)
+				this.lanes.delete(key)
+			}
+		}
+		for (const e of this.priorityFront) {
+			if (e.runName === runName) this._jobLane.delete(e.jobId)
 		}
 		this.laneOrder = this.laneOrder.filter((k) => this.lanes.has(k))
 		this.priorityFront = this.priorityFront.filter((e) => e.runName !== runName)
@@ -450,12 +485,22 @@ class RoundRobinScheduler {
 
 	// Throttled broadcast of the ALL-runs summary to every connected client
 	// (not run-scoped -- it's small and everyone benefits from seeing it).
+	//
+	// The summary is built when the timer fires. It used to be built eagerly on
+	// every call (and add() calls this once per discovered file), i.e. a full
+	// walk of every lane per fastq during an initial scan -- only for all but the
+	// last result to be thrown away by the throttle.
 	scheduleGlobalBoard(wait = 300) {
-		try {
-			broadcastThrottled('queueBoardAll', this.getBoardAll(), 'queueBoardAll', wait)
-		} catch (err) {
-			logger.error(`${err} error scheduling global queue board`)
-		}
+		if (this._globalBoardTimer) return
+		this._globalBoardTimer = setTimeout(() => {
+			this._globalBoardTimer = null
+			try {
+				broadcastToAllActiveConnections('queueBoardAll', this.getBoardAll())
+			} catch (err) {
+				logger.error(`${err} error broadcasting global queue board`)
+			}
+		}, wait)
+		if (typeof this._globalBoardTimer.unref === 'function') this._globalBoardTimer.unref()
 	}
 }
 

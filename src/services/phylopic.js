@@ -23,7 +23,12 @@
  *      <img> src.
  */
 
-import indexData from '@/assets/phylopic_image_index.json'
+// The index JSON is ~10 MB. It used to be a static import, which put it in the
+// main app bundle: every page load downloaded and parsed it before the UI could
+// render. It is now a separate webpack chunk, fetched in the background once
+// the app is idle (or on the first silhouette lookup, whichever comes first).
+let indexData = null
+let indexPromise = null
 
 const FETCH_TIMEOUT = 15000
 
@@ -124,16 +129,29 @@ function buildIndex() {
   return map
 }
 
-/** Ensure the index is loaded. Safe to call many times; builds once. */
+/** Ensure the index is loaded. Safe to call many times; loads/builds once. */
 export function ensureIndex() {
-  if (!indexMap) indexMap = buildIndex()
-  return Promise.resolve(indexMap)
+  if (indexMap) return Promise.resolve(indexMap)
+  if (!indexPromise) {
+    indexPromise = import(/* webpackChunkName: "phylopic-index" */ '@/assets/phylopic_image_index.json')
+      .then((mod) => {
+        indexData = (mod && mod.default) || mod
+        indexMap = buildIndex()
+        indexData = null   // the normalized map is all we keep
+        return indexMap
+      })
+      .catch((err) => {
+        indexPromise = null   // allow a retry on the next lookup
+        console.error('PhyloPic index failed to load', err)
+        return Object.create(null)
+      })
+  }
+  return indexPromise
 }
 
-/** Synchronous accessor (the index is always available — it's bundled). */
+/** Synchronous accessor. Empty until the lazily-loaded index has arrived. */
 export function getIndex() {
-  if (!indexMap) indexMap = buildIndex()
-  return indexMap
+  return indexMap || Object.create(null)
 }
 
 /** Look up an index record for a taxon by name, then by lineage ancestors. */
@@ -222,7 +240,7 @@ async function loadSource(svgUrl) {
  */
 export async function resolveSvgMarkup(name, lineage = []) {
   if (!normalizeName(name)) return null
-  const rec = lookupRecord(getIndex(), name, lineage)
+  const rec = lookupRecord(await ensureIndex(), name, lineage)
   if (!rec) return null
   const loaded = await loadSource(rec.svgUrl)
   if (!loaded) return null
@@ -249,7 +267,11 @@ export function prefetchSvg(items, concurrency = 6) {
   for (let w = 0; w < n; w += 1) worker()
 }
 
-// Build the in-memory lookup as soon as the app bundle loads ("on HTML load").
-ensureIndex()
+// Warm the index in the background once the page is idle, so silhouettes are
+// ready by the time a table asks for them without delaying first render.
+if (typeof window !== 'undefined') {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500))
+  idle(() => { ensureIndex() })
+}
 
 export default { ensureIndex, getIndex, resolveSvgMarkup, prefetchSvg }

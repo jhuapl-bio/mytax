@@ -74,6 +74,21 @@ const MAX_IN_FLIGHT = 2
 // to unthrottled-but-still-batched sending.
 const ACK_GRACE_MS = 15000
 
+// Even a client that HAS acked before can wedge (tab backgrounded mid-frame, a
+// frame lost across a transport upgrade). Without this the connection would
+// silently stop receiving updates forever. After this long with the window
+// full we assume the outstanding frames are lost and reopen it; the delta
+// cursors make that safe (the next frame simply carries more).
+const STALL_RESET_MS = 30000
+
+// Minimum gap between "urgent" (event-driven or ack-driven) flushes to one
+// connection while the scheduler is busy. With hundreds of fastqs finishing,
+// an immediate flush per completed file turns into a stream of tiny frames,
+// each one costing the browser a full apply + re-render. Under load the
+// periodic tick picks the work up instead, so updates coalesce.
+const URGENT_MIN_GAP_BUSY_MS = 600
+const BUSY_THRESHOLD = 25
+
 // ---------------------------------------------------------------------------
 // Per-connection view state.
 // ---------------------------------------------------------------------------
@@ -85,6 +100,7 @@ class Connection {
         this.seq = 0
         this.inFlight = 0
         this.lastAckAt = Date.now()
+        this.lastSentAt = 0
         this.acksSeen = false
         // sample -> { version, mode: 'top'|'full', topN, sentMode }
         this.cursors = new Map()
@@ -99,6 +115,10 @@ class Connection {
         // Coalescing buffers, drained on flush.
         this.dirtyTaxa = new Set()
         this.pendingJobs = new Map()    // `${sample}::${index}` -> payload
+        // sample -> Set(job index) already delivered on this connection since
+        // it selected the run. Lets the queue seed below fill only real gaps
+        // instead of re-sending every job the client already holds.
+        this.sentJobs = new Map()
         this.pendingSamples = new Map() // sample -> payload
         this.pendingQueue = null
         this.pendingMeta = null
@@ -115,10 +135,20 @@ class Connection {
         this.needsReset = true
         this.dirtyTaxa = new Set()
         this.pendingJobs = new Map()
+        this.sentJobs = new Map()
         this.pendingSamples = new Map()
         this.pendingQueue = null
         this.pendingMeta = null
         this.inFlight = 0
+    }
+
+    markJobsSent(jobs) {
+        for (const j of jobs) {
+            if (!j || j.index === undefined || j.index === null) continue
+            let set = this.sentJobs.get(j.sample)
+            if (!set) { set = new Set(); this.sentJobs.set(j.sample, set) }
+            set.add(j.index)
+        }
     }
 
     cursorFor(sample) {
@@ -133,8 +163,15 @@ class Connection {
     // Is this connection allowed to send right now? Backpressure gate.
     canSend() {
         if (this.inFlight < MAX_IN_FLIGHT) return true
+        const now = Date.now()
         // Client stopped acking entirely — don't starve it forever.
-        if (!this.acksSeen && Date.now() - this.lastAckAt > ACK_GRACE_MS) {
+        if (!this.acksSeen && now - this.lastAckAt > ACK_GRACE_MS) {
+            this.inFlight = 0
+            return true
+        }
+        // Client used to ack but the window has been full for a long time:
+        // treat the outstanding frames as lost rather than going dark.
+        if (now - Math.max(this.lastAckAt, this.lastSentAt) > STALL_RESET_MS) {
             this.inFlight = 0
             return true
         }
@@ -205,6 +242,18 @@ class ProtocolBus {
         return this.connections.get(userId)
     }
 
+    isBusy() {
+        try { return (this.loadProbe ? this.loadProbe() : 0) > BUSY_THRESHOLD } catch (e) { return false }
+    }
+
+    // Event-driven flush. Immediate when idle (keeps the UI feeling live);
+    // rate-limited per connection when the scheduler is deep in a backlog.
+    flushUrgent(conn) {
+        if (!conn) return
+        if (conn.lastSentAt && this.isBusy() && Date.now() - conn.lastSentAt < URGENT_MIN_GAP_BUSY_MS) return
+        this.flushConnection(conn)
+    }
+
     // All connections currently viewing `run`.
     *viewers(run) {
         for (const conn of this.connections.values()) {
@@ -265,7 +314,7 @@ class ProtocolBus {
             const runs = new Set(this.urgentRuns)
             this.urgentRuns.clear()
             for (const conn of this.connections.values()) {
-                if (conn.run && runs.has(conn.run)) this.flushConnection(conn)
+                if (conn.run && runs.has(conn.run)) this.flushUrgent(conn)
             }
         })
     }
@@ -293,7 +342,7 @@ class ProtocolBus {
         // A client that acks promptly gets the next frame without waiting out
         // the interval — keeps the "live" feel when the machine can keep up.
         if (conn.inFlight === 0 && (conn.dirtyTaxa.size || conn.pendingJobs.size || conn.pendingSamples.size)) {
-            setImmediate(() => this.flushConnection(conn))
+            setImmediate(() => this.flushUrgent(conn))
         }
     }
 
@@ -457,20 +506,39 @@ class ProtocolBus {
                     if (!seededQueue.has(sample) && this.sampleProvider) {
                         try {
                             const snap = this.sampleProvider(conn.run, sample)
-                            const total = Number((snap && snap.status && snap.status.total) || (snap && Array.isArray(snap.queue) ? snap.queue.length : 0) || 0)
+                            // `status` is read first and is cheap; the queue
+                            // projection is only built when it will be sent.
+                            const total = Number((snap && snap.status && snap.status.total) || (snap && typeof snap.queueFrom !== 'function' && Array.isArray(snap.queue) ? snap.queue.length : 0) || 0)
                             const lastTotal = conn.queueSeededTotals.get(sample) || 0
                             if (section.full || total > lastTotal) {
                                 seededQueue.add(sample)
                                 conn.queueSeededTotals.set(sample, total)
-                                if (snap && Array.isArray(snap.queue)) {
-                                    snap.queue.forEach((job, index) => {
-                                        if (!job) return
+                                const from = section.full ? 0 : lastTotal
+                                const queue = snap
+                                    ? (typeof snap.queueFrom === 'function' ? snap.queueFrom(from) : snap.queue)
+                                    : null
+                                if (Array.isArray(queue)) {
+                                    // A snapshot section means the client holds
+                                    // nothing for this sample: send the whole
+                                    // queue. Otherwise the client already has
+                                    // jobs [0, lastTotal) (and live updates for
+                                    // them ride queueJobUpdate), so only the
+                                    // newly discovered tail is missing. Resending
+                                    // the entire queue each time a barcode grew
+                                    // by one file was O(n^2) on the wire.
+                                    const have = conn.sentJobs.get(sample)
+                                    for (let index = from; index < queue.length; index++) {
+                                        const job = queue[index]
+                                        if (!job) continue
+                                        // Already delivered on this connection
+                                        // (and kept current by queueJobUpdate).
+                                        if (have && have.has(index)) continue
                                         const key = `${sample}::${index}`
                                         conn.pendingJobs.set(key, {
                                             ...(conn.pendingJobs.get(key) || {}),
                                             job, sample, index
                                         })
-                                    })
+                                    }
                                 }
                                 if (snap && snap.status) {
                                     conn.pendingSamples.set(sample, {
@@ -501,6 +569,7 @@ class ProtocolBus {
         if (conn.pendingJobs.size) {
             frame.jobs = Array.from(conn.pendingJobs.values())
             conn.pendingJobs.clear()
+            conn.markJobsSent(frame.jobs)
             hasContent = true
         }
 
@@ -520,6 +589,7 @@ class ProtocolBus {
         conn.seq += 1
         conn.needsReset = false
         conn.inFlight += 1
+        conn.lastSentAt = Date.now()
         try {
             conn.socket.emit(FRAME_EVENT, frame)
         } catch (err) {
