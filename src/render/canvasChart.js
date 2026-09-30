@@ -122,7 +122,7 @@ export function drawBars(canvas, opts) {
 
     ctx.fillStyle = highlighted ? '#0f172a' : LABEL_COLOR
     ctx.textAlign = 'right'
-    ctx.fillText(truncate(ctx, String(row.target || ''), labelWidth), labelWidth, y + rowHeight / 2)
+    ctx.fillText(truncate(ctx, String(row.target || row.name || ''), labelWidth), labelWidth, y + rowHeight / 2)
 
     ctx.fillStyle = MUTED_COLOR
     ctx.textAlign = 'left'
@@ -176,7 +176,7 @@ export function drawLollipop(canvas, opts) {
 
     ctx.fillStyle = highlighted ? '#0f172a' : LABEL_COLOR
     ctx.textAlign = 'right'
-    ctx.fillText(truncate(ctx, String(row.target || ''), labelWidth), labelWidth, y)
+    ctx.fillText(truncate(ctx, String(row.target || row.name || ''), labelWidth), labelWidth, y)
 
     ctx.fillStyle = MUTED_COLOR
     ctx.textAlign = 'left'
