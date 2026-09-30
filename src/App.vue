@@ -175,44 +175,15 @@
                 <v-icon x-small class="mr-1">mdi-database-outline</v-icon>
                 Reference databases
               </div>
-              <div v-if="databases && databases.length">
-                <div v-for="db in databases" :key="db.key" class="mtx-set-db-row">
-                  <v-icon small :color="db.size ? 'green' : 'orange'" class="mr-1">
-                    {{ db.size ? 'mdi-check-circle' : 'mdi-alert-circle-outline' }}
-                  </v-icon>
-                  <span class="mtx-set-db-key">{{ db.key }}</span>
-                  <span class="mtx-set-db-path">{{ db.fullpath || db.final || db.url || '—' }}</span>
-                  <v-spacer></v-spacer>
-                  <!-- Open the database folder in the OS file browser -->
-                  <v-tooltip bottom>
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-btn
-                        x-small icon v-bind="attrs" v-on="on"
-                        class="mtx-set-db-btn"
-                        :disabled="!isOnline"
-                        @click="openDatabasePath(db)"
-                      >
-                        <v-icon x-small>mdi-folder-open-outline</v-icon>
-                      </v-btn>
-                    </template>
-                    Open this database's folder on the server
-                  </v-tooltip>
-                  <!-- Delete the downloaded database from disk (asks first) -->
-                  <v-tooltip bottom>
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-btn
-                        x-small icon v-bind="attrs" v-on="on"
-                        class="mtx-set-db-btn"
-                        color="red darken-1"
-                        :disabled="!isOnline || db.downloading || !dbIsOnDisk(db)"
-                        @click="confirmDeleteDatabase(db)"
-                      >
-                        <v-icon x-small>mdi-delete-outline</v-icon>
-                      </v-btn>
-                    </template>
-                    Delete this database from disk
-                  </v-tooltip>
-                </div>
+              <div v-if="databases && databases.length" class="mtx-set-dblist">
+                <DatabaseCard
+                  v-for="db in databases" :key="db.key"
+                  dense :db="db" :online="isOnline" :show-description="false"
+                  @download="downloaddb"
+                  @cancel="canceldownload"
+                  @open="openDatabasePath"
+                  @delete="confirmDeleteDatabase"
+                />
               </div>
               <div v-else class="mtx-set-empty">No database info received yet</div>
             </div>
@@ -424,141 +395,16 @@
 
           <div class="mtx-drawer-scroll" v-show="!navigation.collapsed">
 
-            <!-- ===== Database section ===== -->
-            <section class="mtx-sec">
-              <div class="mtx-sec-head">
-                <v-icon x-small class="mr-1">mdi-database</v-icon>
-                <span>Reference database</span>
-              </div>
-              <div v-if="!isOnline" class="mtx-db-offline-note">
-                <v-icon x-small class="mr-1" color="#b45309">mdi-cloud-off-outline</v-icon>
-                Offline — databases require a backend connection
-              </div>
-              <div class="mtx-sec-body mtx-row-end" v-else>
-                <!-- Options are grouped by the engine that consumes them
-                     (kraken2 index dirs vs minimap2 FASTA refs vs support
-                     resources) so it's obvious which classifier a database
-                     belongs to before you pick it. -->
-                <v-select
-                  v-model="database"
-                  :items="groupedDatabases"
-                  label="Database"
-                  item-key="url"
-                  item-value="key"
-                  return-object
-                  item-text="key"
-                  :hint="`${database.size}`"
-                  dense outlined
-                  persistent-hint class="flex mtx-db-select" >
-                  <template v-slot:prepend>
-                    <v-tooltip bottom>
-                    <template v-slot:activator="{ on }">
-                      <v-btn @click="downloaddb" v-on="on" icon small>
-                        <v-icon>mdi-download</v-icon>
-                      </v-btn>
-                    </template>
-                    Download Database to home directory
-                    </v-tooltip>
-                  </template>
-                  <template v-slot:selection="{ item }">
-                    {{ item.key }} <v-spacer vertical></v-spacer>
-                      <template v-if="item.downloading">
-                        <v-progress-circular
-                          :indeterminate="item.progress == null"
-                          :value="item.progress || 0"
-                          :rotate="-90"
-                          class="mr-1"
-                          size="18" width="2" color="blue lighten-2" >
-                        </v-progress-circular>
-                        <span v-if="item.progress != null" class="caption blue--text text--lighten-1 mr-2">
-                          {{ item.progress }}%
-                        </span>
-                      </template>
-                      <v-icon v-else
-                        :color="item.size != 0 ? 'green' : 'orange lighten-1' "
-                      >{{ item.size != 0 ? 'mdi-check' : 'mdi-alert'  }}
-                      </v-icon>
-                  </template>
-                  <!-- Each option shows its name, on-disk state and a one-line
-                       description of what it actually covers. -->
-                  <template v-slot:item="{ item, on, attrs }">
-                    <v-list-item v-bind="attrs" v-on="on" class="mtx-db-option">
-                      <v-list-item-content>
-                        <v-list-item-title class="mtx-db-option-title">
-                          <span>{{ item.label || item.key }}</span>
-                          <v-progress-circular
-                            v-if="item.downloading"
-                            :indeterminate="item.progress == null"
-                            :value="item.progress || 0"
-                            :rotate="-90"
-                            size="14" width="2" color="blue lighten-2" class="ml-2" >
-                          </v-progress-circular>
-                          <v-icon v-else x-small class="ml-2"
-                            :color="item.size != 0 ? 'green' : 'orange lighten-1'"
-                          >{{ item.size != 0 ? 'mdi-check-circle' : 'mdi-download-circle-outline' }}</v-icon>
-                        </v-list-item-title>
-                        <v-list-item-subtitle class="mtx-db-option-desc">
-                          {{ item.description || item.final || item.url }}
-                        </v-list-item-subtitle>
-                      </v-list-item-content>
-                    </v-list-item>
-                  </template>
-                </v-select>
-                <v-btn class="ml-1" @click="canceldownload" v-if="database.downloading" icon small>
-                  <v-icon>mdi-cancel</v-icon>
-                </v-btn>
-              </div>
-
-              <!-- What the selected database actually covers, plus quick access
-                   to its folder on disk. -->
-              <div v-if="isOnline && database && database.key" class="mtx-db-meta">
-                <div v-if="database.description" class="mtx-db-desc">{{ database.description }}</div>
-                <div class="mtx-db-actions">
-                  <v-chip x-small label outlined class="mtx-db-engine">
-                    {{ classifierLabel(database) }}
-                  </v-chip>
-                  <v-spacer></v-spacer>
-                  <v-tooltip bottom>
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-btn x-small icon v-bind="attrs" v-on="on" @click="openDatabasePath(database)">
-                        <v-icon x-small>mdi-folder-open-outline</v-icon>
-                      </v-btn>
-                    </template>
-                    Open this database's folder on the server
-                  </v-tooltip>
-                  <v-tooltip bottom>
-                    <template v-slot:activator="{ on, attrs }">
-                      <v-btn
-                        x-small icon color="red darken-1" v-bind="attrs" v-on="on"
-                        :disabled="database.downloading || !dbIsOnDisk(database)"
-                        @click="confirmDeleteDatabase(database)"
-                      >
-                        <v-icon x-small>mdi-delete-outline</v-icon>
-                      </v-btn>
-                    </template>
-                    Delete this database from disk
-                  </v-tooltip>
-                </div>
-              </div>
-              <v-progress-linear
-                v-if="isOnline && database.downloading"
-                :indeterminate="database.progress == null"
-                :value="database.progress || 0"
-                height="6" rounded color="blue lighten-1" class="mt-1" >
-              </v-progress-linear>
-              <div v-if="isOnline && database.downloading" class="caption grey--text mt-1">
-                Downloading {{ database.key }}
-                <span v-if="database.progress != null">— {{ database.progress }}%</span>
-              </div>
-            </section>
-
-            <!-- ===== Run section ===== -->
-            <section class="mtx-sec">
-              <div class="mtx-sec-head">
+            <!-- ===== Run ===== -->
+            <section class="mtx-sec" :class="{ 'mtx-sec--closed': !secOpen.run }">
+              <button class="mtx-sec-head" @click="toggleSec('run')" :aria-expanded="secOpen.run ? 'true' : 'false'">
                 <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>
                 <span>Run</span>
-              </div>
-              <div class="mtx-sec-body">
+                <span class="mtx-sec-peek" v-if="!secOpen.run && selectedRun">{{ selectedRun }}</span>
+                <v-spacer></v-spacer>
+                <v-icon small class="mtx-sec-caret">{{ secOpen.run ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </button>
+              <div class="mtx-sec-body" v-show="secOpen.run">
                 <!-- Run selector with a per-run status wheel.
                      Classification is global across runs (one round-robin
                      scheduler), so work can be in flight on a run you aren't
@@ -570,7 +416,7 @@
                   v-if="isOnline && runs && runs.length > 0"
                   :items="runs"
                   v-model="selectedRun"
-                  label="Available runs"
+                  label="Run"
                   :hint="runSelectHint"
                   dense outlined
                   persistent-hint
@@ -604,9 +450,12 @@
                     </v-list-item>
                   </template>
                 </v-select>
-                <div class="mtx-run-actions">
+                <div v-else-if="isOnline" class="mtx-empty-note">
+                  <v-icon small class="mr-1">mdi-information-outline</v-icon>
+                  No runs yet — create one to start adding samples.
+                </div>
+                <div class="mtx-run-actions" v-if="isOnline">
                   <AddRun
-                    v-if="isOnline"
                     ref="addRun"
                     @sendMessage="sendMessage"
                     @runAdded="onRunAdded"
@@ -615,50 +464,46 @@
                     :pathOptions="pathOptions"
                     :reportSavePath="reportSavePath"
                   />
-                  <v-tooltip bottom>
-                    <template v-slot:activator="{ on }">
-                      <v-btn v-on="on" icon
-                        @click="sendMessage({type: 'openPath' })">
-                        <v-icon color="black">mdi-home</v-icon>
-                      </v-btn>
-                    </template>
-                    Open Base Path to default database(s), reports, information
-                  </v-tooltip>
+                  <v-spacer></v-spacer>
+                  <v-btn x-small icon @click="sendMessage({type: 'openPath' })"
+                    title="Open the data folder (databases, reports) on the server">
+                    <v-icon small>mdi-folder-home-outline</v-icon>
+                  </v-btn>
                 </div>
               </div>
             </section>
 
-            <!-- ===== Samples section ===== -->
-            <section class="mtx-sec">
-              <div class="mtx-sec-head">
+            <!-- ===== Samples ===== -->
+            <section class="mtx-sec" :class="{ 'mtx-sec--closed': !secOpen.samples }">
+              <button class="mtx-sec-head" @click="toggleSec('samples')" :aria-expanded="secOpen.samples ? 'true' : 'false'">
                 <v-icon x-small class="mr-1">mdi-test-tube</v-icon>
-                <span>Samples &amp; fastq sources</span>
-              </div>
-
-              <!-- Source legend: separates live server-watched samples from local uploads -->
-              <div class="mtx-source-legend" v-if="selectedsamplesAll.length">
-                <span class="mtx-src-chip mtx-src-server">
-                  <v-icon x-small class="mr-1">mdi-server-network</v-icon>{{ sampleSourceCounts.server }} listened
-                </span>
-                <span class="mtx-src-chip mtx-src-upload">
-                  <v-icon x-small class="mr-1">mdi-tray-arrow-up</v-icon>{{ sampleSourceCounts.upload }} uploaded
-                </span>
-                <span class="mtx-src-chip mtx-src-demo" v-if="sampleSourceCounts.demo">
-                  <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>{{ sampleSourceCounts.demo }} demo
-                </span>
+                <span>Samples</span>
+                <span class="mtx-sec-count" v-if="selectedsamplesAll.length">{{ selectedsamplesAll.length }}</span>
                 <v-spacer></v-spacer>
-                <button
-                  class="mtx-src-clear"
-                  v-if="hasUploads"
-                  @click="clearUploadedData"
-                  title="Remove uploaded & demo reports (keeps live server samples)"
-                >
-                  <v-icon x-small class="mr-1">mdi-broom</v-icon>Clear local
-                </button>
-              </div>
-
-          <!-- Button click to save run information, sned to backend as a method -->
+                <!-- Source tally: live server-watched vs local uploads -->
+                <span class="mtx-src-mini" v-if="sampleSourceCounts.upload || sampleSourceCounts.demo" @click.stop>
+                  <span class="mtx-src-chip mtx-src-server" title="Samples watched/classified by the server">
+                    <v-icon x-small class="mr-1">mdi-server-network</v-icon>{{ sampleSourceCounts.server }}
+                  </span>
+                  <span class="mtx-src-chip mtx-src-upload" v-if="sampleSourceCounts.upload" title="Kraken2 reports you uploaded">
+                    <v-icon x-small class="mr-1">mdi-tray-arrow-up</v-icon>{{ sampleSourceCounts.upload }}
+                  </span>
+                  <span class="mtx-src-chip mtx-src-demo" v-if="sampleSourceCounts.demo" title="Demo samples">
+                    <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>{{ sampleSourceCounts.demo }}
+                  </span>
+                  <button class="mtx-src-clear" v-if="hasUploads" @click="clearUploadedData"
+                    title="Remove uploaded & demo reports (keeps live server samples)">
+                    <v-icon x-small>mdi-broom</v-icon>
+                  </button>
+                </span>
+                <v-icon small class="mtx-sec-caret">{{ secOpen.samples ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </button>
+              <div class="mtx-sec-body" v-show="secOpen.samples">
+                <v-alert class="py-1 my-0 mb-2 mtx-norun" dense text type="info" v-if="isOnline && !selectedRun">
+                  No run selected. Create one in the Run section first.
+                </v-alert>
           <Samplesheet
+        ref="samplesheet"
         :samplesheet="samplesheet"
         :queueLength="queueLength"
         :queueList="queueList"
@@ -705,18 +550,108 @@
         :offlineMode="!isOnline"  
       >
       </Samplesheet>
-      <v-alert class="py-0 my-0 mt-2" dense type="info" v-if="isOnline && !selectedRun">
-        No run selected. Create one with the “+” button first.
-      </v-alert>
+              </div>
             </section>
 
-            <!-- ===== Filters section ===== -->
-            <section class="mtx-sec">
-              <div class="mtx-sec-head">
+            <!-- ===== Databases ===== -->
+            <section class="mtx-sec" :class="{ 'mtx-sec--closed': !secOpen.databases }">
+              <button class="mtx-sec-head" @click="toggleSec('databases')" :aria-expanded="secOpen.databases ? 'true' : 'false'">
+                <v-icon x-small class="mr-1">mdi-database</v-icon>
+                <span>Reference databases</span>
+                <span class="mtx-sec-peek mtx-sec-peek--dl" v-if="activeDownloads.length">
+                  <v-progress-circular indeterminate size="10" width="2" color="blue darken-1" class="mr-1"></v-progress-circular>
+                  {{ activeDownloads.length }} downloading
+                </span>
+                <v-spacer></v-spacer>
+                <v-icon small class="mtx-sec-caret">{{ secOpen.databases ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </button>
+              <div class="mtx-sec-body" v-show="secOpen.databases">
+                <div v-if="!isOnline" class="mtx-db-offline-note">
+                  <v-icon x-small class="mr-1" color="#b45309">mdi-cloud-off-outline</v-icon>
+                  Offline — databases require a backend connection
+                </div>
+                <template v-else>
+                  <!-- Options are grouped by the engine that consumes them
+                       (kraken2 index dirs vs minimap2 FASTA refs vs support
+                       resources). Every status icon explains itself on hover. -->
+                  <v-select
+                    v-model="database"
+                    :items="groupedDatabases"
+                    label="Database"
+                    item-key="url"
+                    item-value="key"
+                    return-object
+                    item-text="key"
+                    dense outlined hide-details
+                    :menu-props="{ maxHeight: 460 }"
+                    class="mtx-db-select"
+                  >
+                    <template v-slot:selection="{ item }">
+                      <v-icon small :color="dbStatus(item).color" class="mr-2">{{ dbStatus(item).icon }}</v-icon>
+                      <span class="mtx-db-selname">{{ item.label || item.key }}</span>
+                    </template>
+                    <template v-slot:item="{ item, on, attrs }">
+                      <v-list-item v-bind="attrs" v-on="on" class="mtx-db-option">
+                        <v-list-item-icon class="mr-3 my-auto">
+                          <v-tooltip left max-width="320">
+                            <template v-slot:activator="{ on: tip }">
+                              <v-icon v-on="tip" :color="dbStatus(item).color">{{ dbStatus(item).icon }}</v-icon>
+                            </template>
+                            {{ dbStatus(item).tip }}
+                          </v-tooltip>
+                        </v-list-item-icon>
+                        <v-list-item-content>
+                          <v-list-item-title class="mtx-db-option-title">{{ item.label || item.key }}</v-list-item-title>
+                          <v-list-item-subtitle class="mtx-db-option-desc">
+                            <b :class="'mtx-db-state mtx-db-state--' + dbStatus(item).state">{{ dbStatus(item).label }}</b>
+                            · {{ item.description || item.final || item.url }}
+                          </v-list-item-subtitle>
+                        </v-list-item-content>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+
+                  <DatabaseCard
+                    v-if="database && database.key"
+                    class="mt-2"
+                    :db="database"
+                    :online="isOnline"
+                    @download="downloaddb"
+                    @cancel="canceldownload"
+                    @open="openDatabasePath"
+                    @delete="confirmDeleteDatabase"
+                  />
+
+                  <!-- other databases downloading in the background -->
+                  <div v-if="otherDownloads.length" class="mtx-dl-others">
+                    <div class="mtx-dl-others-head">Also downloading</div>
+                    <DatabaseCard
+                      v-for="db in otherDownloads" :key="db.key"
+                      class="mt-1" dense
+                      :db="db" :online="isOnline" :show-description="false" :show-engine="false"
+                      @cancel="canceldownload"
+                    />
+                  </div>
+                  <div class="mtx-db-foot">
+                    <span>{{ dbReadyCount }} of {{ dbCatalogCount }} downloaded</span>
+                    <v-spacer></v-spacer>
+                    <v-btn x-small text color="primary" @click="settingsDialog = true">
+                      <v-icon x-small left>mdi-database-cog-outline</v-icon>Manage all
+                    </v-btn>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <!-- ===== Display filters ===== -->
+            <section class="mtx-sec" :class="{ 'mtx-sec--closed': !secOpen.filters }">
+              <button class="mtx-sec-head" @click="toggleSec('filters')" :aria-expanded="secOpen.filters ? 'true' : 'false'">
                 <v-icon x-small class="mr-1">mdi-tune-variant</v-icon>
                 <span>Display filters</span>
-              </div>
-              <div class="mtx-sec-body mtx-filters">
+                <v-spacer></v-spacer>
+                <v-icon small class="mtx-sec-caret">{{ secOpen.filters ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </button>
+              <div class="mtx-sec-body mtx-filters" v-show="secOpen.filters">
 
             <div class="mtx-filter-block">
               <div class="mtx-filter-row">
@@ -784,38 +719,28 @@
               </v-slider>
             </div>
 
-            <v-select
-              label="Tax Rank Codes"
-              v-model="defaults" multiple
-              :items="rankItems"
-              item-text="text"
-              @change="filter"
-              item-value="value"
-              menu-props="auto"
-              persistent-hint 
-              
-              >
-              <template v-slot:prepend-item>
-                <v-list-item
-                  ripple
-                  @mousedown.prevent
-                  @click="toggle"
-                >
-                  <v-list-item-action>
-                    <v-icon :color="defaults.length > 0 ? 'indigo darken-4' : ''">
-                      {{ icon }}
-                    </v-icon>
-                  </v-list-item-action>
-                  <v-list-item-content>
-                    <v-list-item-title>
-                      Select All
-                    </v-list-item-title>
-                  </v-list-item-content>
-                </v-list-item>
-                <v-divider class="mt-2"></v-divider>
-              </template>
-            
-            </v-select>
+
+            <!-- Taxonomic ranks: presets + one chip per rank (was a long
+                 multi-select that rendered as a wall of comma-separated text). -->
+            <div class="mtx-filter-block mtx-rank-block">
+              <div class="mtx-filter-row">
+                <span class="mtx-filter-label">Taxonomic ranks</span>
+                <span class="mtx-filter-chip">{{ ranksSelectedCount }} / {{ rankItems.length }}</span>
+              </div>
+              <div class="mtx-rank-presets">
+                <button v-for="p in rankPresets" :key="p.key"
+                  class="mtx-rank-preset" :class="{ active: rankPresetActive === p.key }"
+                  :title="p.tip" @click="applyRankPreset(p)">{{ p.text }}</button>
+              </div>
+              <div class="mtx-rank-chips">
+                <button v-for="r in rankItems" :key="r.value"
+                  class="mtx-rank-chip" :class="{ on: defaults.includes(r.value) }"
+                  :title="r.text + (defaults.includes(r.value) ? ' — shown (click to hide)' : ' — hidden (click to show)')"
+                  @click="toggleRank(r.value)">
+                  <v-icon x-small class="mr-1">{{ defaults.includes(r.value) ? 'mdi-check' : 'mdi-plus' }}</v-icon>{{ rankShort(r.value) }}
+                </button>
+              </div>
+            </div>
               </div>
             </section>
 
@@ -943,10 +868,35 @@ import demoSamples from "@/assets/demoData"
 // objects per sample) and roughly forty independent socket.on handlers.
 import taxaStore, { sortRankCodes as sortRanks } from "@/store/taxa"
 import FrameClient from "@/services/frames"
+import DatabaseCard from "@/components/DatabaseCard"
+import { dbStatus, dbOnDisk } from "@/utils/databases"
 // NOTE: lodash's cloneDeep used to be used here to copy parsed report rows.
 // Those copies were the bulk of this tab's memory footprint and are gone; the
 // import is kept out deliberately so it doesn't creep back in.
 import { io } from "socket.io-client";
+
+const SEC_KEY = 'mtx_drawer_sections'
+function loadSecOpen(){
+  const def = { run: true, samples: true, databases: true, filters: true }
+  try {
+    const raw = localStorage.getItem(SEC_KEY)
+    return raw ? { ...def, ...JSON.parse(raw) } : def
+  } catch (e) { return def }
+}
+
+// Taxonomic rank presets for the Display filters.
+const RANK_PRESETS = [
+  { key: 'all', text: 'All', tip: 'Show every rank', codes: null },
+  { key: 'major', text: 'Major ranks', tip: 'Domain, kingdom, phylum, class, order, family, genus, species (+ unclassified)', codes: ['U', 'D', 'K', 'P', 'C', 'O', 'F', 'G', 'S'] },
+  { key: 'gs', text: 'Genus + species', tip: 'Only genus and species rows', codes: ['G', 'S'] },
+  { key: 'species', text: 'Species', tip: 'Species and sub-species rows', codes: ['S', 'S1', 'S2', 'S3', 'S4', 'S5'] },
+  { key: 'none', text: 'None', tip: 'Clear the selection', codes: [] },
+]
+const RANK_SHORT = {
+  U: 'Unclassified', R: 'Root', R1: 'Root 1', D: 'Domain', D1: 'Subdomain', K: 'Kingdom',
+  P: 'Phylum', C: 'Class', O: 'Order', F: 'Family', F1: 'Subfamily', F2: 'Tribe',
+  G: 'Genus', G1: 'Subgenus', S: 'Species'
+}
 
 // Charts redraw at most this often while taxa are streaming in (see storeTick).
 const STORE_TICK_MIN_MS = 500
@@ -984,6 +934,7 @@ export default {
       DataTableTab,
       Metadata,
       RunStatusWheel,
+      DatabaseCard,
     },
     beforeDestroy(){ 
       if (this._tickTimer){ clearTimeout(this._tickTimer); this._tickTimer = null }
@@ -1083,6 +1034,37 @@ export default {
         return items
       },
       // Rank selector items with explicit subspecies depth labels (S1, S2, ...).
+      activeDownloads() {
+        return (this.databases || []).filter((d) => d && d.downloading)
+      },
+      // Downloads for databases OTHER than the one shown in the panel's card.
+      otherDownloads() {
+        const cur = this.database && this.database.key
+        return this.activeDownloads.filter((d) => d.key !== cur)
+      },
+      dbCatalogCount() {
+        return (this.databases || []).length
+      },
+      dbReadyCount() {
+        return (this.databases || []).filter((d) => dbOnDisk(d)).length
+      },
+      ranksSelectedCount() {
+        const set = new Set(this.defaults || [])
+        return this.rankItems.filter((r) => set.has(r.value)).length
+      },
+      rankPresets() {
+        return RANK_PRESETS
+      },
+      // Which preset (if any) exactly describes the current selection.
+      rankPresetActive() {
+        const avail = this.rankItems.map((r) => r.value)
+        const cur = new Set((this.defaults || []).filter((c) => avail.includes(c)))
+        for (const p of RANK_PRESETS) {
+          const want = new Set((p.codes || avail).filter((c) => avail.includes(c)))
+          if (want.size === cur.size && [...want].every((c) => cur.has(c))) return p.key
+        }
+        return null
+      },
       rankItems() {
         return this.sortRankCodes(this.defaultsList)
           .map(c => ({ text: this.rankLabel(c), value: c }))
@@ -1374,6 +1356,8 @@ export default {
             queueList: {},
             // Throttled copy of taxaStore.state.tick; see storeTick.
             displayTick: 0,
+            // Left-panel sections open/closed (remembered per browser).
+            secOpen: loadSecOpen(),
             queueBoard: {},
             // Counts-only queue summary across EVERY run (see queueBoardAll socket
             // handler); unlike queueBoard/queueList this is never dropped just
@@ -1619,19 +1603,55 @@ export default {
           
         }  
       },
-      canceldownload(){
+      // Both accept the database entry to act on (the panel card, the settings
+      // list and "also downloading" rows all pass their own); default is the
+      // database selected in the panel.
+      canceldownload(db){
+        const key = (db && db.key) || (this.database && this.database.key)
+        if (!key) return
         this.sendMessage({
             type: "canceldownload", 
-            database: this.database.key,
-            "message" : `Cancel Database Download ${this.database} `
+            database: key,
+            "message" : `Cancel Database Download ${key} `
         });
       },
-      downloaddb(){
+      downloaddb(db){
+        const key = (db && db.key) || (this.database && this.database.key)
+        if (!key) return
         this.sendMessage({
             type: "downloaddb", 
-            database: this.database.key,
-            "message" : `Download Database ${this.database} `
+            database: key,
+            "message" : `Download Database ${key} `
         });
+      },
+      dbStatus,
+      toggleSec(key){
+        this.$set(this.secOpen, key, !this.secOpen[key])
+        try { localStorage.setItem(SEC_KEY, JSON.stringify(this.secOpen)) } catch (e) { /* private mode */ }
+      },
+      openRunOverview(){
+        if (!this.secOpen.samples) this.toggleSec('samples')
+        this.$nextTick(() => {
+          const ss = this.$refs.samplesheet
+          if (ss && typeof ss.openRunSummary === 'function') ss.openRunSummary()
+        })
+      },
+      rankShort(code){
+        if (/^S\d+$/.test(String(code || ''))) return code
+        return RANK_SHORT[code] || code
+      },
+      applyRankPreset(p){
+        const avail = this.rankItems.map((r) => r.value)
+        const codes = p.codes === null ? avail : p.codes.filter((c) => avail.includes(c))
+        // keep any codes not offered as chips (e.g. R/R1) as they were
+        const hidden = (this.defaults || []).filter((c) => !avail.includes(c))
+        this.defaults = [...hidden, ...codes]
+        this.filter()
+      },
+      toggleRank(code){
+        const cur = this.defaults || []
+        this.defaults = cur.includes(code) ? cur.filter((c) => c !== code) : [...cur, code]
+        this.filter()
       },
       stopPairWatch(payload){
         // payload: { group } or { dir }
@@ -2728,7 +2748,15 @@ export default {
             errorCount,
             logCount: agg.logCount,
             error: Array.from(agg.errorsByIndex.values()).slice(0, 5),
-            watching: prev && prev.watching
+            watching: prev && prev.watching,
+            // summary figures from the server rollup (sample/run overview)
+            files: prev.files,
+            inputBytes: prev.inputBytes,
+            yieldReads: prev.yieldReads,
+            yieldMbp: prev.yieldMbp,
+            yieldFiles: prev.yieldFiles,
+            classifier: prev.classifier,
+            database: prev.database
           })
         },
         // Load the canned demo reports so the frontend-only (GitHub Pages) build
@@ -2975,6 +3003,9 @@ export default {
 </script>
 
 <style>
+/* Database pickers render in detached menus, outside the scoped styles. */
+.mtx-db-option, .mtx-dbopt { text-align: left; }
+
 th, td {
   white-space: normal
 }
@@ -3075,14 +3106,75 @@ th, td {
 .mtx-sec-head {
   display: flex;
   align-items: center;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .05em;
   text-transform: uppercase;
   color: #5b6573;
   margin-bottom: 6px;
+  gap: 4px;
 }
+.mtx-sec-head:focus-visible { outline: 2px solid #1e6b97; outline-offset: 2px; border-radius: 6px; }
+.mtx-sec--closed { padding-bottom: 6px; }
+.mtx-sec--closed .mtx-sec-head { margin-bottom: 0; }
+.mtx-sec-caret { color: #94a3b8 !important; }
+.mtx-sec-peek {
+  margin-left: 6px; font-weight: 600; text-transform: none; letter-spacing: 0;
+  color: #1e6b97; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+}
+.mtx-sec-peek--dl { display: inline-flex; align-items: center; }
+.mtx-sec-count {
+  margin-left: 4px; font-size: 10.5px; font-weight: 700; color: #1e6b97; background: #eaf3fa;
+  border-radius: 9px; padding: 0 7px; letter-spacing: 0;
+}
+.mtx-src-mini { display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; text-transform: none; letter-spacing: 0; cursor: default; }
+.mtx-src-mini .mtx-src-chip { padding: 0 6px; font-size: 10.5px; }
+.mtx-src-mini .mtx-src-clear { padding: 0 4px; }
 .mtx-sec-body { padding-top: 2px; }
+.mtx-empty-note { display: flex; align-items: center; font-size: 12px; color: #5b6573; background: #f4f8fb; border-radius: 8px; padding: 6px 10px; }
+.mtx-run-actions { display: flex; align-items: center; gap: 2px; margin: 6px 0 4px; }
+.mtx-norun { font-size: 12px; }
+
+/* ---- databases section ---- */
+.mtx-db-selname { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mtx-db-option { min-height: 52px; }
+.mtx-db-option-title { font-size: 13px; font-weight: 600; }
+.mtx-db-option-desc { font-size: 11.5px !important; white-space: normal !important; line-height: 1.35 !important; }
+.mtx-db-state--ready { color: #15803d; }
+.mtx-db-state--missing { color: #b45309; }
+.mtx-db-state--downloading { color: #1d4ed8; }
+.mtx-db-state--extracting { color: #6d28d9; }
+.mtx-db-state--error { color: #b91c1c; }
+.mtx-dl-others { margin-top: 10px; text-align: left; }
+.mtx-dl-others-head { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #5b6573; }
+.mtx-db-foot { display: flex; align-items: center; margin: 6px 0 2px; font-size: 11px; color: #6b7f92; }
+.mtx-set-dblist { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- rank filter ---- */
+.mtx-rank-block { padding-bottom: 10px; }
+.mtx-rank-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.mtx-rank-preset {
+  font-size: 11.5px; font-weight: 600; color: #1e6b97; background: #fff;
+  border: 1px solid #c9dbea; border-radius: 999px; padding: 2px 10px; cursor: pointer;
+}
+.mtx-rank-preset:hover { background: #f0f7fd; }
+.mtx-rank-preset.active { background: #1e6b97; border-color: #1e6b97; color: #fff; }
+.mtx-rank-chips { display: flex; flex-wrap: wrap; gap: 6px 6px; }
+.mtx-rank-chip {
+  display: inline-flex; align-items: center;
+  font-size: 12px; line-height: 1; color: #64748b;
+  background: #fff; border: 1px dashed #cbd5e1; border-radius: 8px;
+  padding: 5px 9px; cursor: pointer; transition: background .12s, border-color .12s, color .12s;
+}
+.mtx-rank-chip .v-icon { color: inherit !important; }
+.mtx-rank-chip:hover { border-color: #1e6b97; color: #1e6b97; }
+.mtx-rank-chip.on { background: #e3f0fa; border: 1px solid #9cc3e0; color: #0e3f6a; font-weight: 600; }
 
 /* ---- modern Display-filters ---- */
 .mtx-filters { display: flex; flex-direction: column; gap: 16px; padding-top: 6px; }

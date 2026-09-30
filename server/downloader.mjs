@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
+import http from 'http';
 import unzipper from 'unzipper';
 import zlib from 'zlib';
 import { logger } from './logger.js';
@@ -76,7 +77,9 @@ export class Downloader {
 
     // GET that transparently follows 3xx redirects (github media URLs redirect).
     _getFollow(url, onResponse, onError, redirectsLeft = 5) {
-        const req = https.get(url, (response) => {
+        // http: too, so a local/institutional mirror can be used.
+        const client = String(url).startsWith('http:') ? http : https;
+        const req = client.get(url, (response) => {
             const status = response.statusCode;
             if (status >= 300 && status < 400 && response.headers.location) {
                 response.resume(); // drain
@@ -116,9 +119,31 @@ export class Downloader {
 
             logger.info(`Starting download of ${db.key}`);
             const fileStream = fs.createWriteStream(targetPath);
-            this.databases[index].stream = fileStream;
+            // Internal handles are NON-enumerable so they never ride along when
+            // the database list is emitted to the browser. (`stream` used to be a
+            // plain property, so every progress frame tried to serialise the
+            // whole fs.WriteStream.)
+            const hide = (key, value) => Object.defineProperty(db, key, { value, writable: true, configurable: true, enumerable: false });
+            hide('stream', fileStream);
+            hide('_cancel', null);
+            let settled = false;
+            const fail = (err) => { if (settled) return; settled = true; reject(err); };
+            const done = (msg) => { if (settled) return; settled = true; resolve(msg); };
+            // Cancelling aborts the HTTP transfer too (destroying only the file
+            // stream left the download running in the background) and removes
+            // the partial file.
+            db._cancel = () => {
+                try { if (db._response) db._response.destroy(); } catch (e) { /* ignore */ }
+                try { fileStream.destroy(); } catch (e) { /* ignore */ }
+                fs.unlink(targetPath, () => {});
+                const err = new Error('Download cancelled');
+                err.cancelled = true;
+                fail(err);
+            };
+            if (typeof onProgress === 'function') onProgress({ key: db.key, phase: 'downloading', downloaded: 0, total: 0, percent: null });
 
             this._getFollow(url, (response) => {
+                hide('_response', response);
                 const total = parseInt(response.headers['content-length'], 10) || 0;
                 let downloaded = 0;
                 let lastLoggedPct = -1;   // throttle stdout to whole-percent steps
@@ -152,9 +177,11 @@ export class Downloader {
                     logger.info(`${db.key}  ${this.renderProgressBar(total || downloaded, total || downloaded)}`);
                     logger.info(`Downloaded '${url}' to '${targetPath}'`);
 
+                    if (settled) return;   // cancelled
                     if (db.decompress) {
                         try {
                             logger.info(`${db.key}  extracting archive...`);
+                            if (typeof onProgress === 'function') onProgress({ key: db.key, phase: 'extracting', downloaded: total || downloaded, total: total || downloaded, percent: 100 });
                             const msg = await this.extractFile(targetPath, path.join(this.databaseSavePath, db.nested ? '' : db.final));
                             try{
                                 // try to remove the url donwloaded file
@@ -164,19 +191,20 @@ export class Downloader {
                                 console.error(err)
                             }
                             logger.info(msg);
-                            resolve(msg);
+                            done(msg);
                         } catch (err) {
-                            reject(err);
+                            fail(err);
                         }
                     }
                     else {
-                        resolve(`Downloaded '${url}' to '${targetPath}'`);
+                        done(`Downloaded '${url}' to '${targetPath}'`);
                     }
                 });
             }, (err) => {
                 fs.unlink(targetPath, () => {}); // Delete the file on error
+                if (settled) return;
                 logger.error(`Error downloading ${url}: ${err.message}`);
-                reject(err.message);
+                fail(err instanceof Error ? err : new Error(String(err && err.message ? err.message : err)));
             });
         });
     }

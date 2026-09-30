@@ -21,36 +21,99 @@
 
 
 <template>     
-    <div class="mx-4 my-6"  id="file" @drop.prevent="addDropFileData" @dragover.prevent   
-        style="overflow-y: auto; ">
-        <div class="" style=" box-shadow: 2px 2px 20px rgba(0,0,0,0.2);">
-                <v-text-field
-                    v-model="search" clearable
-                    label="Search"
-                    class="mb-3"
-                >
-                    <template v-slot:append>
-                    <v-list-item
-                        ripple
-                        @mousedown.prevent
-                        @click="toggleSamples"
+    <div class="mtx-ss" id="file" @drop.prevent="addDropFileData" @dragover.prevent>
+        <div>
+                <!-- ===== toolbar: primary actions + overflow menu ===== -->
+                <div class="mtx-ss-toolbar">
+                    <v-btn v-if="!offlineMode" small depressed color="primary" @click="openAddDialog">
+                        <v-icon small left>mdi-plus</v-icon>Add samples
+                    </v-btn>
+                    <v-btn small outlined color="primary" :disabled="!hasSamples" @click="openRunSummary()"
+                        title="Reads, % classified, files and sizes for every sample in this run">
+                        <v-icon small left>mdi-chart-box-outline</v-icon>Run overview
+                    </v-btn>
+                    <v-spacer></v-spacer>
+                    <v-menu offset-y left>
+                        <template v-slot:activator="{ on, attrs }">
+                            <v-btn icon small v-bind="attrs" v-on="on" title="More actions">
+                                <v-icon>mdi-dots-vertical</v-icon>
+                            </v-btn>
+                        </template>
+                        <v-list dense class="mtx-ss-menu">
+                            <v-list-item @click="pickUpload">
+                                <v-list-item-icon><v-icon small>mdi-tray-arrow-up</v-icon></v-list-item-icon>
+                                <v-list-item-title>Upload a Kraken2 report…</v-list-item-title>
+                            </v-list-item>
+                            <template v-if="!offlineMode">
+                                <v-list-item @click="sheet = true">
+                                    <v-list-item-icon><v-icon small>mdi-text-box-outline</v-icon></v-list-item-icon>
+                                    <v-list-item-title>Server logs</v-list-item-title>
+                                </v-list-item>
+                                <v-list-item @click="dialogAdvanced = true">
+                                    <v-list-item-icon><v-icon small>mdi-tune</v-icon></v-list-item-icon>
+                                    <v-list-item-title>Kraken2 advanced settings</v-list-item-title>
+                                </v-list-item>
+                                <v-divider class="my-1"></v-divider>
+                                <v-list-item @click="forceRestart()">
+                                    <v-list-item-icon><v-icon small color="blue darken-1">mdi-restart</v-icon></v-list-item-icon>
+                                    <v-list-item-title>Re-run all jobs in this run</v-list-item-title>
+                                </v-list-item>
+                                <v-list-item @click="flush()">
+                                    <v-list-item-icon><v-icon small color="red darken-1">mdi-stop-circle-outline</v-icon></v-list-item-icon>
+                                    <v-list-item-title>Stop all jobs</v-list-item-title>
+                                </v-list-item>
+                            </template>
+                        </v-list>
+                    </v-menu>
+                </div>
+
+                <!-- ===== search (regex) + "only matches" isolation ===== -->
+                <div class="mtx-ss-search">
+                    <v-text-field
+                        v-model="search" clearable dense outlined hide-details
+                        prepend-inner-icon="mdi-magnify"
+                        placeholder="Filter samples — e.g. barcode0[1-3] or bc01|S2"
+                        :error="!!searchMatcher.error"
+                        class="mtx-ss-searchfield"
+                    ></v-text-field>
+                    <v-tooltip bottom>
+                        <template v-slot:activator="{ on }">
+                            <v-btn icon small v-on="on" @click="toggleSamples" class="ml-1">
+                                <v-icon small>{{ selectedAllSamples ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}</v-icon>
+                            </v-btn>
+                        </template>
+                        {{ selectedAllSamples ? 'Hide every sample from the plots' : 'Show every sample in the plots' }}
+                    </v-tooltip>
+                </div>
+                <div class="mtx-ss-searchmeta">
+                    <v-switch
+                        v-model="searchIsolate" dense hide-details inset
+                        class="mtx-ss-isolate ma-0 pa-0"
+                        :disabled="!hasSamples"
                     >
-                        <v-list-item-action>
-                        <v-icon :color="nonhiddensamples.length > 0 ? 'indigo darken-4' : ''">
-                        {{ icon  }}
-                        </v-icon>
-                    </v-list-item-action>
-                    <v-list-item-content>
-                        <v-list-item-title v-if="!selectedAllSamples">
-                        Show All
-                        </v-list-item-title>
-                        <v-list-item-title v-else>
-                        Hide All
-                        </v-list-item-title>
-                    </v-list-item-content>
-                    </v-list-item>
-                    </template>
-                </v-text-field>
+                        <template v-slot:label>
+                            <span class="mtx-ss-isolate-label">Show only matches in plots</span>
+                        </template>
+                    </v-switch>
+                    <v-tooltip bottom max-width="320">
+                        <template v-slot:activator="{ on }">
+                            <v-icon v-on="on" x-small class="ml-1 mtx-ss-info">mdi-information-outline</v-icon>
+                        </template>
+                        <div>
+                            <b>Show only matches in plots</b><br>
+                            When on, every sample that does NOT match the search is hidden from the
+                            charts (nothing is deleted). Turn it off to restore what was visible before.<br><br>
+                            The search is a case-insensitive regular expression: separate alternatives
+                            with <code>|</code> (e.g. <code>Sample5|S2|specimenA</code>); empty
+                            alternatives are ignored. Invalid patterns fall back to plain text.
+                        </div>
+                    </v-tooltip>
+                    <v-spacer></v-spacer>
+                    <span v-if="!searchMatcher.empty" class="mtx-ss-matchcount" :class="{ 'mtx-ss-matchcount--warn': searchMatcher.error }">
+                        {{ matchCount }} / {{ selectedsamplesAll.length }} match<template v-if="searchMatcher.error"> · plain-text</template>
+                    </span>
+                </div>
+
                 <!-- ===== compact, grouped sample table =====
                      Samples are grouped by their parent run/folder so two runs
                      that both contain barcode01..24 stay visually separate. Each
@@ -94,6 +157,11 @@
                                             <span v-if="groupStats(grp).queued" class="mtx-gpill queued">{{ groupStats(grp).queued }} queued</span>
                                             <span v-if="groupStats(grp).error" class="mtx-gpill error">{{ groupStats(grp).error }} err</span>
                                             <span v-if="groupStats(grp).done" class="mtx-gpill done">{{ groupStats(grp).done }} done</span>
+                                        </span>
+                                        <span class="mtx-st-gactions" @click.stop>
+                                            <v-btn icon x-small title="Overview of this group (reads, % classified, files)" @click="openGroupSummary(grp)">
+                                                <v-icon small>mdi-information-outline</v-icon>
+                                            </v-btn>
                                         </span>
                                         <span class="mtx-st-gactions" v-if="grp.group && !offlineMode" @click.stop>
                                             <v-btn icon x-small title="Run every sample in this group" @click="startGroup(grp)">
@@ -184,6 +252,10 @@
                                         <!-- row actions: jobs / hide / edit / delete -->
                                         <td class="mtx-st-actions">
                                             <div class="mtx-st-actionbar">
+                                                <v-btn icon x-small title="Sample overview: reads, % classified, files, size"
+                                                    @click="openSampleSummary(item.sample)">
+                                                    <v-icon small color="blue darken-2">mdi-information-outline</v-icon>
+                                                </v-btn>
                                                 <v-btn v-if="!offlineMode" icon x-small title="View jobs for this sample"
                                                     @click="selectedQueueSample = item.sample; dialogJobs = true">
                                                     <v-icon small>mdi-format-list-checks</v-icon>
@@ -246,31 +318,9 @@
                         </v-btn>
                     </div>
                 </div>
-                <span v-else>Jobs in Queue: {{ queueLength }}</span>
-                <h2 v-if="selectedsamples && Object.keys(selectedsamples).length == 0">No samples detected yet</h2>
-                <!-- Quick-access buttons near the sample table -->
-                <div class="mtx-quick-actions" v-if="!offlineMode">
-                    <v-tooltip bottom>
-                        <template v-slot:activator="{ on }">
-                            <v-btn small depressed color="primary" v-on="on" @click="openAddDialog" class="mr-2">
-                                <v-icon small left>mdi-plus</v-icon>Add Entry to Samplesheet
-                            </v-btn>
-                        </template>
-                        Add a new sample entry to the samplesheet
-                    </v-tooltip>
-                    <v-tooltip bottom>
-                        <template v-slot:activator="{ on }">
-                            <v-btn small depressed color="info" v-on="on" @click="forceRestart()">
-                                <v-icon small left>mdi-restart</v-icon>Rerun All Jobs
-                            </v-btn>
-                        </template>
-                        Restart all jobs for this run
-                    </v-tooltip>
-                </div>
-
                 <div
                     class="mtx-upbox"
-                    :class="{ 'mtx-upbox--over': uploadDragOver }"
+                    :class="{ 'mtx-upbox--over': uploadDragOver, 'mtx-upbox--compact': hasSamples }"
                     @click="pickUpload"
                     @drop.prevent="onUploadDrop"
                     @dragover.prevent="uploadDragOver = true"
@@ -302,63 +352,7 @@
                     />
                 </div>
             </div>
-        <v-toolbar extended>
-            <v-tooltip  bottom v-if="!offlineMode" >
-                <template v-slot:activator="{ on }">
-                <v-btn
-                    color="black lighten-2"
-                    dark  fab x-small
-                    class="mx-2"  v-on="on"
-                    @click="sheet = true"
-                >
-                    <v-icon class="" x-small >mdi-comment</v-icon>
-                    
-                </v-btn>
-                </template>
-                View Logging
-            </v-tooltip>
-            
-            <v-tooltip bottom  v-if="!offlineMode">
-                <template v-slot:activator="{ on }">
-                    <v-btn color="primary "
-                        dark  v-on="on" x-small fab
-                        class="mx-2"
-                        @click="flush()">
-                        <v-icon>mdi-close-circle-multiple-outline</v-icon>
-                    </v-btn>
-                </template>
-                Stop All Jobs
-            </v-tooltip>
-            <v-tooltip   bottom v-if="!offlineMode && !paused" :key="`${paused}-pausedbutton`">
-                <template v-slot:activator="{ on }">
-                    <v-badge 
-                        color="green lighten-2"  overlap 
-                        :content="`${queueLength > 0 ? queueLength : ''}`" 
-                    >
-                        <v-btn color="orange "
-                                dark  fab x-small
-                                v-on="on"  
-                                class="mx-2 "
-                                @click="paused = true">
-                            <v-icon>mdi-pause-circle</v-icon>
-                        </v-btn>
-                    </v-badge>
-                </template>
-                Pause Queued Jobs
-            </v-tooltip>
-            <v-tooltip v-if="paused && !offlineMode" >
-                <template v-slot:activator="{ on }">
-                    <v-btn color="secondary "
-                        dark  fab x-small
-                        v-on="on"
-                        class="mx-2"
-                        @click="paused = false">
-                        <v-icon>mdi-play-box</v-icon>
-                    </v-btn>
-                </template>
-                Resume Jobs Waiting
-            </v-tooltip>
-            
+        <div class="mtx-ss-dialogs">
             <v-dialog
                 v-model="dialog"
                 max-width="720px"
@@ -575,38 +569,57 @@
                                 dense hide-details class="mt-0 mb-2"
                                 :label="toggleDatabases ? 'Use a standard (downloaded) database' : 'Use a custom database path'"
                             ></v-switch>
-                            <v-select v-if="toggleDatabases" chips
+                            <v-select v-if="toggleDatabases"
                                 v-model="editedItem.database" class="truncate-text"
                                 :items="kraken2Databases" :error-messages="dbErrors"
                                 label="Database" item-text="key" item-value="fullpath"
-                                dense outlined persistent-hint
+                                dense outlined hide-details="auto"
+                                :menu-props="{ maxHeight: 420 }"
                             >
                                 <template v-slot:selection="{ item }">
-                                    <v-tooltip bottom>
-                                    <template v-slot:activator="{ on, attrs }">
-                                        <span v-bind="attrs" v-on="on" class="tooltip-content">
-                                        <span v-if="item.downloading">
-                                            <v-progress-circular :indeterminate="true" class="mr-2" size="14" color="blue lighten-2"></v-progress-circular>
-                                            {{ item.key }}
-                                        </span>
-                                        <span v-else-if="item.size == 0">
-                                            <v-chip>
-                                            <v-icon color="orange lighten-1" class="mr-2">mdi-alert-circle-outline</v-icon>
-                                            {{ item.key }}; Size is empty
-                                            </v-chip>
-                                        </span>
-                                        <span v-else>
-                                            <v-chip>
-                                            <v-icon color="green lighten-1">mdi-check-circle-outline</v-icon>
-                                            {{ item.key }}
-                                            </v-chip>
-                                        </span>
-                                        </span>
-                                    </template>
-                                    <span>{{ item.key }}</span>
-                                    </v-tooltip>
+                                    <v-icon small :color="dbStatus(item).color" class="mr-2">{{ dbStatus(item).icon }}</v-icon>
+                                    <span class="mtx-dbsel-name">{{ item.label || item.key }}</span>
+                                    <span class="mtx-dbsel-state">{{ dbStatus(item).label }}</span>
+                                </template>
+                                <template v-slot:item="{ item, on, attrs }">
+                                    <v-list-item v-bind="attrs" v-on="on" class="mtx-dbopt">
+                                        <v-list-item-icon class="mr-3 my-auto">
+                                            <v-tooltip left max-width="320">
+                                                <template v-slot:activator="{ on: tip }">
+                                                    <v-icon v-on="tip" :color="dbStatus(item).color">{{ dbStatus(item).icon }}</v-icon>
+                                                </template>
+                                                {{ dbStatus(item).tip }}
+                                            </v-tooltip>
+                                        </v-list-item-icon>
+                                        <v-list-item-content>
+                                            <v-list-item-title class="mtx-dbopt-title">{{ item.label || item.key }}</v-list-item-title>
+                                            <v-list-item-subtitle class="mtx-dbopt-sub">
+                                                <b :class="'mtx-dbopt-state mtx-dbopt-state--' + dbStatus(item).state">{{ dbStatus(item).label }}</b>
+                                                · {{ item.description || item.final }}
+                                            </v-list-item-subtitle>
+                                        </v-list-item-content>
+                                    </v-list-item>
                                 </template>
                             </v-select>
+                            <DatabaseCard
+                                v-if="toggleDatabases && selectedDbEntry"
+                                class="mt-2"
+                                :db="selectedDbEntry"
+                                :online="!offlineMode"
+                                :deletable="false"
+                                :show-description="false"
+                                @download="downloadDb"
+                                @cancel="cancelDbDownload"
+                                @open="openDbFolder"
+                            />
+                            <div v-if="toggleDatabases && selectedDbEntry && dbStatus(selectedDbEntry).state !== 'ready'" class="mtx-db-warn">
+                                <v-icon small color="orange darken-2" class="mr-1">mdi-information-outline</v-icon>
+                                <span v-if="dbStatus(selectedDbEntry).state === 'missing' || dbStatus(selectedDbEntry).state === 'error'">
+                                    This database isn't on disk yet. You can add the sample now, but its files will fail to classify until the
+                                    download finishes — download first, or re-run the sample afterwards.
+                                </span>
+                                <span v-else>Download in progress — you can close this dialog; progress is also shown in the left panel.</span>
+                            </div>
                             <v-combobox v-else
                                 v-model="editedItem.database"
                                 :items="pathOptionsDb"
@@ -629,22 +642,49 @@
                                 dense hide-details class="mt-0 mb-2"
                                 :label="toggleMinimapDb ? 'Use a standard (downloaded) reference' : 'Use a custom FASTA/MMI path'"
                             ></v-switch>
-                            <v-select v-if="toggleMinimapDb" chips
+                            <v-select v-if="toggleMinimapDb"
                                 v-model="editedItem.minimapDatabase" class="truncate-text"
                                 :items="minimap2Databases" :error-messages="dbErrors"
                                 label="minimap2 reference" item-text="key" item-value="fullpath"
-                                dense outlined persistent-hint
-                                no-data-text="No downloaded minimap2 references — add one from the Databases panel or use a custom path"
+                                dense outlined hide-details="auto"
+                                no-data-text="No minimap2 references in the catalogue — use a custom path"
                             >
                                 <template v-slot:selection="{ item }">
-                                    <v-chip>
-                                        <v-icon :color="item.size == 0 ? 'orange lighten-1' : 'green lighten-1'" class="mr-1">
-                                            {{ item.size == 0 ? 'mdi-alert-circle-outline' : 'mdi-check-circle-outline' }}
-                                        </v-icon>
-                                        {{ item.key }}
-                                    </v-chip>
+                                    <v-icon small :color="dbStatus(item).color" class="mr-2">{{ dbStatus(item).icon }}</v-icon>
+                                    <span class="mtx-dbsel-name">{{ item.label || item.key }}</span>
+                                    <span class="mtx-dbsel-state">{{ dbStatus(item).label }}</span>
+                                </template>
+                                <template v-slot:item="{ item, on, attrs }">
+                                    <v-list-item v-bind="attrs" v-on="on" class="mtx-dbopt">
+                                        <v-list-item-icon class="mr-3 my-auto">
+                                            <v-tooltip left max-width="320">
+                                                <template v-slot:activator="{ on: tip }">
+                                                    <v-icon v-on="tip" :color="dbStatus(item).color">{{ dbStatus(item).icon }}</v-icon>
+                                                </template>
+                                                {{ dbStatus(item).tip }}
+                                            </v-tooltip>
+                                        </v-list-item-icon>
+                                        <v-list-item-content>
+                                            <v-list-item-title class="mtx-dbopt-title">{{ item.label || item.key }}</v-list-item-title>
+                                            <v-list-item-subtitle class="mtx-dbopt-sub">
+                                                <b :class="'mtx-dbopt-state mtx-dbopt-state--' + dbStatus(item).state">{{ dbStatus(item).label }}</b>
+                                                · {{ item.description || item.final }}
+                                            </v-list-item-subtitle>
+                                        </v-list-item-content>
+                                    </v-list-item>
                                 </template>
                             </v-select>
+                            <DatabaseCard
+                                v-if="toggleMinimapDb && selectedRefEntry"
+                                class="mt-2"
+                                :db="selectedRefEntry"
+                                :online="!offlineMode"
+                                :deletable="false"
+                                :show-description="false"
+                                @download="downloadDb"
+                                @cancel="cancelDbDownload"
+                                @open="openDbFolder"
+                            />
                             <v-combobox v-else
                                 v-model="editedItem.minimapDatabase"
                                 :items="pathOptionsRef"
@@ -700,22 +740,6 @@
             <v-dialog
                 v-model="dialogAdvanced" max-width="500px" v-if="!offlineMode"
             >
-                <template v-slot:activator="{ on, attrs }">
-                    <v-btn
-                        color="red lighten-2"
-                        dark fab x-small
-                        class="mx-4"
-                        v-bind="attrs"
-                        v-on="on"
-                    >
-                        <v-tooltip  left>
-                            <template v-slot:activator="{ on }">
-                                <v-icon v-on="on">mdi-cog</v-icon>
-                            </template>
-                            Advanced Configurations
-                        </v-tooltip>
-                    </v-btn>
-                </template>
                 <v-toolbar extended
                     dark
                 >
@@ -766,7 +790,7 @@
                 </v-tabs-items>
                 
             </v-dialog>
-        </v-toolbar>
+        </div>
         <v-spacer></v-spacer>
         <v-dialog
             v-model="sheet"
@@ -860,6 +884,35 @@
             />
         </v-dialog>
         
+        <!-- ===== sample / run overview dialogs ===== -->
+        <v-dialog v-model="dialogSampleSummary" max-width="760" scrollable>
+            <SampleSummary
+                v-if="dialogSampleSummary && summaryItem"
+                :sample="summaryItem.sample"
+                :label="summaryItem.label"
+                :group="summaryItem.group"
+                :row="summaryItem.row"
+                :queue="summaryItem.queue"
+                :sheet="summaryItem.sheet"
+                :online="!offlineMode"
+                @close="dialogSampleSummary = false"
+                @open-jobs="(s) => { dialogSampleSummary = false; selectedQueueSample = s; dialogJobs = true }"
+                @rerun="(s) => start(-1, s)"
+            />
+        </v-dialog>
+        <v-dialog v-model="dialogRunSummary" max-width="920" scrollable>
+            <RunSummary
+                v-if="dialogRunSummary"
+                :title="runSummaryScope || selectedRun || ''"
+                :kicker="runSummaryScope ? `Group overview · ${selectedRun || ''}` : 'Run overview'"
+                :scope="runSummaryScope ? 'group' : 'run'"
+                :icon="runSummaryScope ? 'mdi-folder-multiple-outline' : 'mdi-flask-outline'"
+                :samples="runSummarySamples"
+                @close="dialogRunSummary = false"
+                @open-sample="(s) => openSampleSummary(s)"
+            />
+        </v-dialog>
+
         <!-- ===== per-sample / per-group jobs panel =====
              Replaces the old card-grid popup. Shows every file/job for the
              selected sample (or an entire run group) as a compact, scrollable,
@@ -873,77 +926,72 @@
                     <v-btn icon @click="dialogJobs = false"><v-icon>mdi-close</v-icon></v-btn>
                 </v-toolbar>
 
-                <!-- summary strip -->
+                <!-- summary + filters -->
                 <div class="mtx-jp-strip">
                     <span class="mtx-jp-total">{{ panelJobs.length }} file{{ panelJobs.length === 1 ? '' : 's' }}</span>
-                    <span class="mtx-jp-pill running" v-if="panelStats.running">{{ panelStats.running }} running</span>
-                    <span class="mtx-jp-pill queued"  v-if="panelStats.queued">{{ panelStats.queued }} queued</span>
-                    <span class="mtx-jp-pill error"   v-if="panelStats.error">{{ panelStats.error }} error</span>
-                    <span class="mtx-jp-pill done"    v-if="panelStats.done">{{ panelStats.done }} done</span>
                     <span class="mtx-jp-pct" v-if="panelJobs.length">{{ panelStats.percent }}% complete</span>
                     <v-spacer></v-spacer>
-                    <input v-model="jobsPanelSearch" class="mtx-jp-search" placeholder="Filter files…" />
+                    <v-text-field
+                        v-model="jobsPanelSearch" dense outlined hide-details clearable
+                        prepend-inner-icon="mdi-magnify" placeholder="Filter by file or sample (regex ok)"
+                        class="mtx-jp-searchfield"
+                    ></v-text-field>
+                </div>
+                <div class="mtx-jp-filters">
+                    <v-chip-group v-model="panelStateFilter" mandatory active-class="mtx-jp-chip--on">
+                        <v-chip v-for="f in panelFilterChips" :key="f.value" :value="f.value" small outlined
+                            :class="'mtx-jp-chip mtx-jp-chip--' + f.value" :disabled="f.value !== 'all' && !f.count">
+                            <v-icon small left>{{ f.icon }}</v-icon>{{ f.text }}<b class="ml-1">{{ f.count }}</b>
+                        </v-chip>
+                    </v-chip-group>
                 </div>
 
                 <v-card-text class="pa-0 mtx-jp-body">
-                    <table class="mtx-jp-table">
-                        <thead>
-                            <tr>
-                                <th class="mtx-jp-c-idx">#</th>
-                                <th class="mtx-jp-c-state">State</th>
-                                <th class="mtx-jp-c-sample" v-if="selectedQueueGroup">Sample</th>
-                                <th class="mtx-jp-c-file">File</th>
-                                <th class="mtx-jp-c-type">Type</th>
-                                <th class="mtx-jp-c-act">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr
-                                v-for="job in panelJobsShown"
-                                :key="`${job._sample}-${job.index}`"
-                                class="mtx-jp-row"
-                                :class="'mtx-jp-row--' + job._state"
-                            >
-                                <td class="mtx-jp-c-idx">{{ job.index }}</td>
-                                <td class="mtx-jp-c-state">
-                                    <span class="mtx-jp-state" :class="job._state">
-                                        <v-progress-circular v-if="job._state === 'running'" indeterminate size="13" width="2" color="blue" class="mr-1"></v-progress-circular>
-                                        <v-icon v-else x-small :color="stateColor(job._state)" class="mr-1">{{ stateIcon(job._state) }}</v-icon>
-                                        {{ stateLabel(job._state) }}
-                                    </span>
-                                </td>
-                                <td class="mtx-jp-c-sample" v-if="selectedQueueGroup">{{ sampleHierarchy(job._sample).label }}</td>
-                                <td class="mtx-jp-c-file" :title="job.filepath">{{ shortFile(job.filepath) }}</td>
-                                <td class="mtx-jp-c-type">{{ job.name || (job.sample && job.sample.demux ? 'Demux' : 'Classify') }}</td>
-                                <td class="mtx-jp-c-act">
-                                    <v-btn icon x-small :disabled="!job.status || !job.status.running"
-                                        title="Cancel this job" @click="cancelJob(job.index, job._sample)">
-                                        <v-icon x-small>mdi-cancel</v-icon>
-                                    </v-btn>
-                                    <v-btn icon x-small :disabled="job.status && job.status.running"
-                                        title="Re-run this file" @click="start(job.index, job._sample)">
-                                        <v-icon x-small>mdi-play-circle</v-icon>
-                                    </v-btn>
-                                    <v-btn icon x-small title="View command & logs"
-                                        @click="reviewJob(job)">
-                                        <v-icon x-small>mdi-text-box-search</v-icon>
-                                    </v-btn>
-                                </td>
-                            </tr>
-                            <tr v-if="panelJobs.length > panelJobsShown.length">
-                                <td :colspan="selectedQueueGroup ? 6 : 5" class="mtx-jp-empty">
-                                    Showing {{ panelJobsShown.length }} of {{ panelJobs.length }} files.
-                                    <v-btn x-small text color="primary" @click="panelLimit += 500">Show 500 more</v-btn>
-                                    <v-btn x-small text @click="panelLimit = panelJobs.length">Show all</v-btn>
-                                </td>
-                            </tr>
-                            <tr v-if="!panelJobs.length">
-                                <td :colspan="selectedQueueGroup ? 6 : 5" class="mtx-jp-empty">
-                                    {{ jobsPanelSearch ? 'No files match your filter.' : 'No files queued for this ' + (selectedQueueGroup ? 'group' : 'sample') + ' yet.' }}
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+                    <v-data-table
+                        v-if="dialogJobs"
+                        :headers="panelHeaders"
+                        :items="panelJobsFiltered"
+                        :items-per-page.sync="panelPerPage"
+                        :footer-props="{ 'items-per-page-options': [25, 50, 100, 250, -1], showFirstLastPage: true }"
+                        item-key="_key"
+                        fixed-header
+                        height="calc(64vh - 120px)"
+                        class="mtx-jp-dtable"
+                        no-data-text="No files queued yet."
+                        no-results-text="No files match your filter."
+                    >
+                        <template v-slot:[`item.index`]="{ item }">
+                            <span class="mtx-jp-idx">{{ item.index }}</span>
+                        </template>
+                        <template v-slot:[`item._state`]="{ item }">
+                            <span class="mtx-jp-state" :class="item._state">
+                                <v-progress-circular v-if="item._state === 'running'" indeterminate size="16" width="2" color="blue" class="mr-2"></v-progress-circular>
+                                <v-icon v-else small :color="stateColor(item._state)" class="mr-1">{{ stateIcon(item._state) }}</v-icon>
+                                {{ stateLabel(item._state) }}
+                            </span>
+                        </template>
+                        <template v-slot:[`item._sample`]="{ item }">
+                            {{ sampleHierarchy(item._sample).label }}
+                        </template>
+                        <template v-slot:[`item.filepath`]="{ item }">
+                            <span class="mtx-jp-file" :title="item.filepath">{{ shortFile(item.filepath) }}</span>
+                        </template>
+                        <template v-slot:[`item.actions`]="{ item }">
+                            <div class="mtx-jp-acts">
+                                <v-btn icon small :disabled="!item.status || !item.status.running"
+                                    title="Cancel this job" @click="cancelJob(item.index, item._sample)">
+                                    <v-icon>mdi-cancel</v-icon>
+                                </v-btn>
+                                <v-btn icon small :disabled="item.status && item.status.running"
+                                    title="Re-run this file" @click="start(item.index, item._sample)">
+                                    <v-icon>mdi-play-circle-outline</v-icon>
+                                </v-btn>
+                                <v-btn icon small title="View command & logs" @click="reviewJob(item)">
+                                    <v-icon>mdi-text-box-search-outline</v-icon>
+                                </v-btn>
+                            </div>
+                        </template>
+                    </v-data-table>
                 </v-card-text>
             </v-card>
         </v-dialog>
@@ -1078,6 +1126,11 @@
   import _ from 'lodash';
   import QueueBoard from '@/components/QueueBoard'
   import LogViewer from '@/components/LogViewer'
+  import DatabaseCard from '@/components/DatabaseCard'
+  import SampleSummary from '@/components/SampleSummary'
+  import RunSummary from '@/components/RunSummary'
+  import { makeMatcher } from '@/utils/format'
+  import { dbStatus, findDbByPath } from '@/utils/databases'
 
   export default {
     name: 'Samplesheet',
@@ -1114,6 +1167,9 @@
         VueJsonToCsv,
         QueueBoard,
         LogViewer,
+        DatabaseCard,
+        SampleSummary,
+        RunSummary,
     },
     updated: function(){
       const $this = this;
@@ -1173,8 +1229,37 @@
           }
         }
       },
+      // A download can move a database's resolved path (nested kraken2 index
+      // folders). Keep the dialog's selection pointing at the real location.
+      databases(){
+        if (!this.dialog || !this.editedItem) return
+        const db = this.selectedDbEntry
+        if (this.toggleDatabases && db && db.fullpath && this.editedItem.database !== db.fullpath){
+            this.$set(this.editedItem, 'database', db.fullpath)
+        }
+        const ref = this.selectedRefEntry
+        if (this.toggleMinimapDb && ref && ref.fullpath && this.editedItem.minimapDatabase !== ref.fullpath){
+            this.$set(this.editedItem, 'minimapDatabase', ref.fullpath)
+        }
+      },
+      isolationKey(){
+        this.applySearchIsolation()
+      },
+      searchIsolate(on){
+        if (on){
+            this.snapshotVisibility()
+            this.applySearchIsolation()
+        } else if (this._preIsolate){
+            const prev = this._preIsolate
+            this._preIsolate = null
+            ;(this.selectedsamplesAll || []).forEach((s) => {
+                const want = Object.prototype.hasOwnProperty.call(prev, s.sample) ? prev[s.sample] : false
+                if (!!s.hidden !== want) this.$set(s, 'hidden', want)
+            })
+        }
+      },
       dialogJobs(val){
-        this.panelLimit = 300
+        if (val) this.panelStateFilter = 'all'
         if (!val){
           this.selectedQueueSample = null
           this.selectedQueueGroup = null
@@ -1287,6 +1372,13 @@
         },
         minimap2Databases() {
             return (this.databases || []).filter((d) => d && d.type === 'minimap2');
+        },
+        // Catalogue entries behind the database / reference picked in the dialog.
+        selectedDbEntry() {
+            return findDbByPath(this.kraken2Databases, this.editedItem && this.editedItem.database)
+        },
+        selectedRefEntry() {
+            return findDbByPath(this.minimap2Databases, this.editedItem && this.editedItem.minimapDatabase)
         },
         dbErrors() {
             if (this.editedItem.classifier === 'minimap2') {
@@ -1508,8 +1600,39 @@
         // Build the grouped, searchable view of samples. Each top-level entry is a
         // parent run/folder ("group") containing its barcode child rows. Samples
         // with no parent are collected under a single "Individual samples" bucket.
+        // Regex-aware matcher for the sample search box (see utils/format).
+        searchMatcher(){
+            return makeMatcher(this.search)
+        },
+        matchCount(){
+            if (this.searchMatcher.empty) return (this.selectedsamplesAll || []).length
+            return (this.selectedsamplesAll || []).filter((it) => this.sampleMatches(it.sample)).length
+        },
+        // Re-apply "only matches" whenever the query, the toggle or the sample
+        // list changes (new barcodes appear mid-run).
+        isolationKey(){
+            if (!this.searchIsolate) return 'off'
+            return `${this.search || ''}|${(this.selectedsamplesAll || []).map((s) => s.sample).join(',')}`
+        },
+        summaryItem(){
+            const name = this.summarySample
+            if (!name) return null
+            const row = (this.selectedsamplesAll || []).find((s) => s.sample === name) || { sample: name }
+            const h = this.sampleHierarchy(name)
+            return { sample: name, row, label: h.label || name, group: h.group || '', queue: this.sampleQueue(name), sheet: this.sheetBySample[name] || {} }
+        },
+        runSummarySamples(){
+            if (!this.dialogRunSummary) return []
+            const scope = this.runSummaryScope
+            return (this.selectedsamplesAll || [])
+                .filter((s) => !scope || this.sampleHierarchy(s.sample).group === scope)
+                .map((s) => {
+                    const h = this.sampleHierarchy(s.sample)
+                    return { sample: s.sample, label: scope ? h.label : (h.group ? `${h.group} / ${h.label}` : h.label), row: s, queue: this.sampleQueue(s.sample) }
+                })
+        },
         groupedSamples(){
-            const q = (this.search || '').toString().trim().toLowerCase()
+            const m = this.searchMatcher
             const samples = (this.selectedsamplesAll || [])
             // Collect every parent run/group name that is present so a leftover
             // run-level placeholder row (whose id === the group name) isn't also
@@ -1525,8 +1648,7 @@
                 const h = this.sampleHierarchy(item.sample)
                 // skip the phantom parent-run row (the un-demuxed run entry)
                 if (!h.group && groupNames.has(item.sample)) return
-                const hay = `${h.label} ${h.group || ''} ${item.sample}`.toLowerCase()
-                if (q && !hay.includes(q)) return
+                if (!m.empty && !this.sampleMatches(item.sample)) return
                 const key = h.group || '__individual__'
                 if (!map.has(key)){
                     const g = { key, group: h.group || null, samples: [] }
@@ -1553,7 +1675,7 @@
             let jobs = []
             const push = (sample) => {
                 (ql[sample] || []).forEach((job) => {
-                    if (job) jobs.push(Object.assign({}, job, { _sample: sample, _state: this.jobState(job) }))
+                    if (job) jobs.push(Object.assign({}, job, { _sample: sample, _state: this.jobState(job), _key: `${sample}::${job.index}` }))
                 })
             }
             if (this.selectedQueueGroup){
@@ -1563,17 +1685,41 @@
             } else if (this.selectedQueueSample){
                 push(this.selectedQueueSample)
             }
-            const q = (this.jobsPanelSearch || '').toString().trim().toLowerCase()
-            if (q){
-                jobs = jobs.filter(j => `${j.filepath || ''} ${j._sample}`.toLowerCase().includes(q))
+            const m = makeMatcher(this.jobsPanelSearch)
+            if (!m.empty){
+                jobs = jobs.filter(j => m.test(j.filepath || '') || m.test(j._sample))
             }
             return jobs
         },
         // A group panel can hold every file of every barcode in a run; each row
         // carries three Vuetify buttons, so rendering thousands at once froze the
         // dialog. Rows are revealed in pages instead (stats still count all).
-        panelJobsShown(){
-            return this.panelJobs.length > this.panelLimit ? this.panelJobs.slice(0, this.panelLimit) : this.panelJobs
+        panelJobsFiltered(){
+            const f = this.panelStateFilter
+            if (!f || f === 'all') return this.panelJobs
+            if (f === 'done') return this.panelJobs.filter((j) => j._state === 'done' || j._state === 'historical')
+            if (f === 'queued') return this.panelJobs.filter((j) => j._state === 'queued' || j._state === 'paused' || j._state === 'preload')
+            return this.panelJobs.filter((j) => j._state === f)
+        },
+        panelHeaders(){
+            const h = [
+                { text: '#', value: 'index', width: 64 },
+                { text: 'State', value: '_state', width: 150 },
+            ]
+            if (this.selectedQueueGroup) h.push({ text: 'Sample', value: '_sample', width: 140 })
+            h.push({ text: 'File', value: 'filepath' })
+            h.push({ text: 'Actions', value: 'actions', sortable: false, align: 'end', width: 140 })
+            return h
+        },
+        panelFilterChips(){
+            const c = this.panelStats
+            return [
+                { value: 'all', text: 'All', icon: 'mdi-format-list-bulleted', count: c.total },
+                { value: 'running', text: 'Running', icon: 'mdi-progress-clock', count: c.running },
+                { value: 'queued', text: 'Queued', icon: 'mdi-tray-full', count: c.queued },
+                { value: 'error', text: 'Failed', icon: 'mdi-alert-circle-outline', count: c.error },
+                { value: 'done', text: 'Done', icon: 'mdi-check-circle-outline', count: c.done },
+            ]
         },
         panelStats(){
             const c = { running: 0, queued: 0, error: 0, done: 0, total: 0, percent: 0 }
@@ -1753,8 +1899,16 @@
           // longer pushed with every status frame, so we request them only for
           // the job the user actually opened.
           jobLogs: {},
-          // rows rendered in the per-sample/group jobs panel (see panelJobsShown)
-          panelLimit: 300,
+          // per-sample/group files popup: state filter + page size
+          panelStateFilter: 'all',
+          panelPerPage: 50,
+          // search: hide non-matching samples from plots (see applySearchIsolation)
+          searchIsolate: false,
+          // sample / run overview dialogs
+          dialogSampleSummary: false,
+          summarySample: null,
+          dialogRunSummary: false,
+          runSummaryScope: null,
           selectedQueueSample: null,
           recentDataFileadded: null,
           uploadDragOver: false,
@@ -2012,6 +2166,60 @@
                 r1: this.pairR1Marker,
                 r2: this.pairR2Marker
             })
+        },
+        dbStatus,
+        downloadDb(db){
+            if (!db || this.offlineMode) return
+            this.$emit('sendMessage', { type: 'downloaddb', database: db.key, message: `Download database ${db.key}` })
+        },
+        cancelDbDownload(db){
+            if (!db || this.offlineMode) return
+            this.$emit('sendMessage', { type: 'canceldownload', database: db.key, message: `Cancel download ${db.key}` })
+        },
+        openDbFolder(db){
+            if (!db || this.offlineMode) return
+            this.$emit('sendMessage', { type: 'openPath', path: db.fullpath || null, database: db.key })
+        },
+        sampleMatches(sample){
+            const m = this.searchMatcher
+            if (m.empty) return true
+            const h = this.sampleHierarchy(sample)
+            return m.test(sample) || m.test(h.label) || (!!h.group && m.test(h.group))
+        },
+        // "Show only matches in plots": hide every sample the search doesn't
+        // match, show every one it does. Empty query = show everything.
+        // Remember what was visible before isolation so turning it off restores
+        // exactly that. Taken once, before the first sample is hidden (watchers
+        // for the toggle and the query can fire in either order).
+        snapshotVisibility(){
+            if (this._preIsolate) return
+            this._preIsolate = {}
+            ;(this.selectedsamplesAll || []).forEach((s) => { this._preIsolate[s.sample] = !!s.hidden })
+        },
+        applySearchIsolation(){
+            if (!this.searchIsolate) return
+            this.snapshotVisibility()
+            const empty = this.searchMatcher.empty
+            ;(this.selectedsamplesAll || []).forEach((s) => {
+                const hide = !empty && !this.sampleMatches(s.sample)
+                if (!!s.hidden !== hide) this.$set(s, 'hidden', hide)
+            })
+        },
+        openSampleSummary(sample){
+            this.summarySample = sample
+            this.dialogSampleSummary = true
+        },
+        openGroupSummary(grp){
+            this.runSummaryScope = grp && grp.group ? grp.group : null
+            if (!this.runSummaryScope && grp && grp.samples && grp.samples.length === 1){
+                this.openSampleSummary(grp.samples[0].sample)
+                return
+            }
+            this.dialogRunSummary = true
+        },
+        openRunSummary(){
+            this.runSummaryScope = null
+            this.dialogRunSummary = true
         },
         hideSample(sample){
             let index = this.selectedsamplesAll.findIndex(x => x.sample === sample)
@@ -2833,12 +3041,12 @@ code {
 
 /* ===== per-sample / per-group jobs panel ===== */
 .mtx-jp-card { border-radius: 12px; overflow: hidden; }
-.mtx-jp-title { font-size: 14px; font-weight: 600; }
+.mtx-jp-title { font-size: 16px; font-weight: 600; }
 .mtx-jp-strip {
     display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
     padding: 8px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0;
 }
-.mtx-jp-total { font-size: 12px; font-weight: 700; color: #334155; }
+.mtx-jp-total { font-size: 14px; font-weight: 700; color: #334155; }
 .mtx-jp-pill {
     font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
     background: #e2e8f0; color: #475569;
@@ -2847,13 +3055,14 @@ code {
 .mtx-jp-pill.queued  { background: #e2e8f0; color: #475569; }
 .mtx-jp-pill.error   { background: #ffedd5; color: #c2410c; }
 .mtx-jp-pill.done    { background: #dcfce7; color: #15803d; }
-.mtx-jp-pct { font-size: 11px; color: #64748b; margin-left: 4px; }
+.mtx-jp-pct { font-size: 13px; color: #64748b; margin-left: 8px; }
 .mtx-jp-search {
     font-size: 12px; padding: 4px 10px; border: 1px solid #cbd5e1;
     border-radius: 8px; background: #fff; outline: none; min-width: 160px;
 }
 .mtx-jp-search:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
-.mtx-jp-body { height: 64vh; overflow: auto; }
+.mtx-jp-body { overflow: hidden; }
+.mtx-jp-body > .v-data-table { flex: 1 1 auto; }
 .mtx-jp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .mtx-jp-table thead th {
     position: sticky; top: 0; z-index: 2; text-align: left;
@@ -3188,6 +3397,54 @@ code {
 .mtx-qbadge-table td { padding: 2px 6px; }
 .mtx-qbadge-table td:last-child { text-align: right; font-weight: 600; }
 .mtx-qbadge-err { color: #fca5a5; }
+
+/* ===== drawer layout: toolbar / search / upload (cleanup) ===== */
+.mtx-ss { padding: 2px 0 4px; }
+.mtx-ss-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.mtx-ss-menu .v-list-item__icon { margin-right: 10px !important; }
+.mtx-ss-search { display: flex; align-items: center; }
+.mtx-ss-searchfield { font-size: 13px; }
+.mtx-ss-searchmeta { display: flex; align-items: center; margin: 6px 2px 8px; min-height: 24px; }
+.mtx-ss-isolate-label { font-size: 12px; color: #334155; }
+.mtx-ss-info { cursor: help; color: #7d97ad !important; }
+.mtx-ss-matchcount { font-size: 11px; font-weight: 600; color: #1e6b97; background: #eaf3fa; border-radius: 9px; padding: 1px 8px; }
+.mtx-ss-matchcount--warn { color: #a16207; background: #fef3c7; }
+.mtx-upbox--compact { padding: 6px 12px; gap: 10px; border-width: 1px; border-radius: 10px; margin-top: 8px; }
+.mtx-upbox--compact .mtx-upbox-icon { width: 30px; height: 30px; border-radius: 8px; box-shadow: none; }
+.mtx-upbox--compact .mtx-upbox-icon .v-icon { font-size: 18px !important; }
+.mtx-upbox--compact .mtx-upbox-text { flex-direction: row; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mtx-upbox--compact .mtx-upbox-text strong { font-size: 12.5px; }
+.mtx-upbox--compact .mtx-upbox-text span { font-size: 11.5px; }
+.mtx-upbox--compact .mtx-upbox-text small { display: none; }
+
+/* ===== database pickers in the add/edit dialog ===== */
+.mtx-dbsel-name { font-weight: 600; margin-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mtx-dbsel-state { font-size: 11px; color: #64748b; white-space: nowrap; }
+.mtx-dbopt { min-height: 52px; }
+.mtx-dbopt-title { font-size: 13.5px; font-weight: 600; }
+.mtx-dbopt-sub { font-size: 11.5px !important; white-space: normal !important; line-height: 1.35 !important; }
+.mtx-dbopt-state--ready { color: #15803d; }
+.mtx-dbopt-state--missing { color: #b45309; }
+.mtx-dbopt-state--downloading { color: #1d4ed8; }
+.mtx-dbopt-state--extracting { color: #6d28d9; }
+.mtx-dbopt-state--error { color: #b91c1c; }
+.mtx-db-warn { text-align: left; display: flex; align-items: flex-start; font-size: 12px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 6px 10px; margin-top: 8px; }
+
+/* ===== per-sample / group files popup (data table) ===== */
+.mtx-jp-searchfield { max-width: 340px; font-size: 14px; }
+.mtx-jp-filters { padding: 0 14px 4px; border-bottom: 1px solid #eef2f6; }
+.mtx-jp-chip { font-size: 13px !important; }
+.mtx-jp-chip--on.mtx-jp-chip--all { background: #e0e7ff !important; color: #3730a3 !important; }
+.mtx-jp-chip--on.mtx-jp-chip--running { background: #dbeafe !important; color: #1d4ed8 !important; }
+.mtx-jp-chip--on.mtx-jp-chip--queued { background: #e2e8f0 !important; color: #334155 !important; }
+.mtx-jp-chip--on.mtx-jp-chip--error { background: #ffedd5 !important; color: #c2410c !important; }
+.mtx-jp-chip--on.mtx-jp-chip--done { background: #dcfce7 !important; color: #15803d !important; }
+.mtx-jp-dtable ::v-deep td { font-size: 14px !important; height: 44px !important; }
+.mtx-jp-dtable ::v-deep th { font-size: 12.5px !important; }
+.mtx-jp-idx { color: #64748b; font-variant-numeric: tabular-nums; }
+.mtx-jp-file { display: inline-block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.mtx-jp-acts { display: flex; justify-content: flex-end; gap: 2px; }
+.mtx-jp-dtable .mtx-jp-state { font-size: 13.5px; }
 </style>
 
 <!-- unscoped: Vuetify appends tooltip content to <body>, outside this component -->

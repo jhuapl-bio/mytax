@@ -547,14 +547,23 @@ export  class Orchestrator {
                 return d.key == database
             })
             if (index != -1){
-                try{
-                    this.databases[index].stream.destroy()
-                } catch (err){
-                    console.error(err)
-                } finally {
-                    this.databases[index].downloading = false
-                    await this.checkdatabase(this.databases[index].key)
-                    broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
+                const db = this.databases[index]
+                if (typeof db._cancel === 'function'){
+                    // Aborts the transfer and rejects the pending download; the
+                    // downloadfile() catch block publishes the final state.
+                    logger.info(`Cancelling download of ${database}`)
+                    db._cancel()
+                } else {
+                    try{
+                        if (db.stream) db.stream.destroy()
+                    } catch (err){
+                        console.error(err)
+                    } finally {
+                        db.downloading = false
+                        db.phase = null
+                        await this.checkdatabase(db.key)
+                        broadcastToAllActiveConnections('databaseStatus', { status: db })
+                    }
                 }
                 
             }
@@ -606,19 +615,36 @@ export  class Orchestrator {
             this.databases[index].downloading = true
             this.databases[index].error = null
             this.databases[index].progress = 0
+            // Extra progress fields for the UI: phase ('downloading' then
+            // 'extracting' for archives), bytes so far / total, and the start
+            // time so the browser can show speed and time remaining.
+            this.databases[index].phase = 'downloading'
+            this.databases[index].downloaded = 0
+            this.databases[index].total = 0
+            this.databases[index].startedAt = Date.now()
+            this.databases[index].lastResult = null
 
             broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
             await this.downloader.download(target, (p)=>{
                 // Stream download progress out to the frontend (throttled so a
                 // multi-GB download doesn't flood the socket).
+                if (p.phase) $this.databases[index].phase = p.phase
                 $this.databases[index].progress = p.percent
                 $this.databases[index].downloaded = p.downloaded
                 $this.databases[index].total = p.total
-                broadcastThrottled('databaseStatus', { status: $this.databases[index] }, `dbprogress-${target}`, 300)
+                if (p.phase === 'extracting') {
+                    // phase changes are worth showing immediately
+                    flushThrottled(`dbprogress-${target}`)
+                    broadcastToAllActiveConnections('databaseStatus', { status: $this.databases[index] })
+                } else {
+                    broadcastThrottled('databaseStatus', { status: $this.databases[index] }, `dbprogress-${target}`, 300)
+                }
             })
             // Ensure the final progress frame is delivered, then mark complete.
             flushThrottled(`dbprogress-${target}`)
             $this.databases[index].downloading = false
+            $this.databases[index].phase = null
+            $this.databases[index].lastResult = 'downloaded'
             $this.databases[index].progress = 100
             logger.info("done dwnld")
             await this.checkdatabase(this.databases[index].key)
@@ -626,10 +652,19 @@ export  class Orchestrator {
         } catch (err){
             flushThrottled(`dbprogress-${target}`)
             let message = err && err.message ? err.message : `${err}`
-            logger.error(message)
+            if (err && err.cancelled) logger.info(`Download of ${target} cancelled by user`)
+            else logger.error(message)
             $this.databases[index].downloading = false
+            $this.databases[index].phase = null
             $this.databases[index].progress = null
-            $this.databases[index].error = message
+            // A user cancel is not an error; show it as a neutral result.
+            if (err && err.cancelled) {
+                $this.databases[index].error = null
+                $this.databases[index].lastResult = 'cancelled'
+            } else {
+                $this.databases[index].error = message
+                $this.databases[index].lastResult = 'failed'
+            }
             await this.checkdatabase(this.databases[index].key)
             broadcastToAllActiveConnections('databaseStatus', { status: this.databases[index] })
         }

@@ -111,8 +111,13 @@ export  class Classifier {
     // Pull kraken2's one useful stderr line ("N sequences classified (x%)") out
     // of the noise so the single per-job exit log still says something real.
     captureSummary(text){
-        const m = String(text).match(/([\d,]+)\s+sequences\s+classified\s+\(([\d.]+%)\)/)
+        const str = String(text)
+        const m = str.match(/([\d,]+)\s+sequences\s+classified\s+\(([\d.]+%)\)/)
         if (m) this.summary = `${m[1]} classified (${m[2]})`
+        // kraken2: "N sequences (X Mbp) processed in Ys". Kept for the
+        // sample/run summaries (sequencing yield per file).
+        const y = str.match(/([\d,]+)\s+sequences\s+\(([\d.]+)\s*Mbp\)\s+processed/)
+        if (y) this.processed = { reads: Number(y[1].replace(/,/g, '')), mbp: Number(y[2]) }
     }
     tailLogs(n){
         return this.status.logs.slice(-n).join(' ').replace(/\s+/g, ' ').trim().slice(0, 400)

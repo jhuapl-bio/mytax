@@ -1,37 +1,15 @@
 <template>
-  <div class="mr-4">
-    <v-tooltip  bottom >
-      <template v-slot:activator="{ on }">
-        <v-btn  v-on="on" @click="getRuns()" icon>
-          <v-icon>mdi-refresh</v-icon>
-        </v-btn>
-      </template>
-      Refresh Run List
-    </v-tooltip>
-    <v-tooltip  bottom >
-      <template v-slot:activator="{ on }">
-        <v-btn fab
-            color="primary"
-            dark  x-small @click="dialog = true"
-            class="mx-2"  v-on="on"
-            >
-            <v-icon  >mdi-plus</v-icon>
-        </v-btn>
-      </template>
-      Create and define a new run
-    </v-tooltip>
-    <v-tooltip  bottom v-if="selectedRun">
-      <template v-slot:activator="{ on }">
-        <v-btn fab
-            dark  x-small @click="confirmDelete = true"
-            class="mx-2 warning"  v-on="on"
-            >
-            <v-icon  >mdi-recycle</v-icon>
-
-        </v-btn>
-      </template>
-      Delete CURRENTLY selected run
-    </v-tooltip>
+  <div class="addrun-bar">
+    <v-btn small depressed color="primary" @click="dialog = true" title="Create and define a new run">
+      <v-icon small left>mdi-plus</v-icon>New run
+    </v-btn>
+    <v-btn icon small @click="getRuns()" title="Refresh the run list">
+      <v-icon small>mdi-refresh</v-icon>
+    </v-btn>
+    <v-btn v-if="selectedRun" icon small color="red darken-1" @click="confirmDelete = true"
+      :title="`Delete run ${selectedRun} (its samples and reports)`">
+      <v-icon small>mdi-delete-outline</v-icon>
+    </v-btn>
 
     <!-- Delete confirmation dialog -->
     <v-dialog v-model="confirmDelete" max-width="420px">
@@ -205,4 +183,5 @@ export default {
   min-width: 100%;
 }
 
+.addrun-bar { display: flex; align-items: center; gap: 2px; }
 </style>

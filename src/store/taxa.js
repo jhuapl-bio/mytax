@@ -413,6 +413,89 @@ class TaxaStore {
     return { taxid: -1, name: sample, rank_code: 'R', depth: -1, value: t.total, assigned: 0, pct: 100, children: roots }
   }
 
+  /* -------------------------------------------------------------------------
+   * summary() — headline numbers for the sample overview panels.
+   *
+   * Reads come from the report itself: unclassified (taxid 0) + root (taxid 1)
+   * clade counts. `topN` most abundant taxa at `rank` (species by default) are
+   * hydrated; nothing else is.
+   * ---------------------------------------------------------------------- */
+  summary(sample, opts) {
+    const t = this.tables.get(sample)
+    if (!t) return null
+    const o = opts || {}
+    const d = this.dict
+    const at = (taxid) => {
+      const idx = d.byTaxid.get(String(taxid))
+      return idx !== undefined && t.present[idx] ? t.clade[idx] : 0
+    }
+    const unclassified = at(0)
+    let classified = at(1)
+    if (!classified) {
+      // Reports without a root row: sum the top-level (depth 0) clades.
+      for (let n = 0; n < t.idx.length; n++) {
+        const idx = t.idx[n]
+        if (t.present[idx] && d.depth[idx] === 0 && d.taxid[idx] !== '0') classified += t.clade[idx]
+      }
+    }
+    const reads = classified + unclassified || t.total
+    const rank = o.rank || 'S'
+    let rankCount = 0
+    const ranked = []
+    for (let n = 0; n < t.idx.length; n++) {
+      const idx = t.idx[n]
+      if (!t.present[idx] || d.rank[idx] !== rank) continue
+      rankCount++
+      ranked.push(idx)
+    }
+    ranked.sort((a, b) => t.clade[b] - t.clade[a])
+    const top = ranked.slice(0, o.topN || 5).map((idx) => ({
+      taxid: d.taxid[idx],
+      name: d.name[idx],
+      reads: t.clade[idx],
+      pct: reads ? (100 * t.clade[idx]) / reads : 0
+    }))
+    return {
+      reads,
+      classified,
+      unclassified,
+      pctClassified: reads ? (100 * classified) / reads : null,
+      taxa: t.count,
+      rankCount,
+      top
+    }
+  }
+
+  // Most abundant taxa at `rank` pooled across several samples (clade reads
+  // summed). Numbers only until the final top-N are hydrated.
+  pooledTop(samples, opts) {
+    const o = opts || {}
+    const rank = o.rank || 'S'
+    const d = this.dict
+    const sums = new Map()
+    let reads = 0
+    const present = new Map()
+    for (const name of samples || []) {
+      const t = this.tables.get(name)
+      if (!t) continue
+      const s = this.summary(name)
+      if (s) reads += s.reads || 0
+      for (let n = 0; n < t.idx.length; n++) {
+        const idx = t.idx[n]
+        if (!t.present[idx] || d.rank[idx] !== rank) continue
+        sums.set(idx, (sums.get(idx) || 0) + t.clade[idx])
+        present.set(idx, (present.get(idx) || 0) + 1)
+      }
+    }
+    return Array.from(sums.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, o.topN || 8)
+      .map(([idx, r]) => ({
+        taxid: d.taxid[idx], name: d.name[idx], reads: r,
+        pct: reads ? (100 * r) / reads : 0, samples: present.get(idx) || 0
+      }))
+  }
+
   // -------------------------------------------------------------------------
   // Local (non-server) ingestion: drag-and-dropped or demo kraken2 reports.
   // Parsed with exactly the same rules the server uses so uploads and live

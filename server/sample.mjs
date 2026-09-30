@@ -256,7 +256,7 @@ export  class Sample {
             let st
             try { st = await fs.promises.stat(filepath) } catch (e) { continue }
             if (!st.isFile()) continue
-            if (Date.now() - st.mtimeMs >= STABLE_MS) this.addFile(filepath)
+            if (Date.now() - st.mtimeMs >= STABLE_MS) this.addFile(filepath, st.size)
             else this.addWhenStable(filepath, st.size, STABLE_MS)
             // Yield regularly so a scan of thousands of files never blocks
             // socket traffic (pings, acks) for more than a few ms at a time.
@@ -269,7 +269,7 @@ export  class Sample {
             if (gen !== this._scanGen || this._liveFiles.has(filepath)) return
             let st
             try { st = await fs.promises.stat(filepath) } catch (e) { return }   // removed
-            if (st.size === lastSize && Date.now() - st.mtimeMs >= stableMs) this.addFile(filepath)
+            if (st.size === lastSize && Date.now() - st.mtimeMs >= stableMs) this.addFile(filepath, st.size)
             else { lastSize = st.size; setTimeout(check, pollMs) }
         }
         setTimeout(check, pollMs)
@@ -302,7 +302,9 @@ export  class Sample {
     }
 
     // Method to add a file 
-    addFile(file) {
+    // `size` is passed by the directory scan (it already stat()ed the file);
+    // otherwise it's looked up asynchronously. Used for the input-size summary.
+    addFile(file, size) {
         logger.debug(`File added: ${file} ` );
         // check if file is in the "files" array if not then push it
         // A path currently on disk is only ever queued once. The initial
@@ -312,6 +314,7 @@ export  class Sample {
         // it is re-queued exactly as before.)
         if (this._liveFiles.has(file)) return
         this._liveFiles.add(file)
+        this.recordFileSize(file, size)
         if (!this._fileSet.has(file)){
             this._fileSet.add(file)
             this._files.push(file)
@@ -319,6 +322,17 @@ export  class Sample {
         this.setJob(file, 0, false)
     }
    
+    recordFileSize(file, size){
+        if (!this._fileBytes) this._fileBytes = new Map()
+        const put = (n) => {
+            if (!Number.isFinite(n)) return
+            const prev = this._fileBytes.get(file) || 0
+            this._fileBytes.set(file, n)
+            this._inputBytes = (this._inputBytes || 0) - prev + n
+        }
+        if (Number.isFinite(size)) { put(size); return }
+        fs.promises.stat(file).then((st) => put(st.size)).catch(() => {})
+    }
     getFullReportSample(filepath){
         // Watcher-driven: nobody awaits this, so never let a read error (e.g. the
         // report being replaced mid-read) surface as an unhandled rejection.
@@ -635,6 +649,7 @@ export  class Sample {
         )
         let errored = []
         let logLines = 0
+        let yieldReads = 0, yieldMbp = 0, yieldFiles = 0
         let done = 0
         let runningCount = 0
         let waiting = 0
@@ -646,6 +661,12 @@ export  class Sample {
             if (s.waiting) waiting++
             if (s.success === true || s.success === 0) done++
             if (Array.isArray(s.logs)) logLines += s.logs.length
+            const job = (queued && queued.job) || record
+            if (job && job.processed){
+                yieldReads += job.processed.reads || 0
+                yieldMbp += job.processed.mbp || 0
+                yieldFiles += 1
+            }
             if ((s.success === false || (s.code != null && s.code !== 0)) && s.error) {
                 errored.push({ index, error: String(s.error).slice(-500) })
             }
@@ -674,7 +695,17 @@ export  class Sample {
             truncated: errored.length > MAX_ERRORS_INLINE,
             // watching === real-time watch mode is on AND a live watcher exists,
             // so the frontend can show a pulsing "listening for new reads" light.
-            watching: !!(this.watch && this.watcher)
+            watching: !!(this.watch && this.watcher),
+            // Summary figures for the sample/run overview panels.
+            files: this._files ? this._files.length : 0,
+            inputBytes: this._inputBytes || 0,
+            // Sequencing yield as reported by kraken2 for files classified in
+            // this server session (yieldFiles says how many that covers).
+            yieldReads,
+            yieldMbp: Math.round(yieldMbp * 100) / 100,
+            yieldFiles,
+            classifier: this.classifier,
+            database: this.classifier === 'minimap2' ? (this.minimapDatabase || this.database) : this.database
         }
         if (send){
             const $this = this
@@ -997,6 +1028,8 @@ export  class Sample {
                 this._files = []
                 this._fileSet = new Set()
                 this._liveFiles = new Set()
+                this._fileBytes = new Map()
+                this._inputBytes = 0
                 this._recordIndex = new Map()
                 this._scanGen = (this._scanGen || 0) + 1
                 this._fullCheck = null
