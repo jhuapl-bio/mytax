@@ -2214,7 +2214,22 @@ export default {
               $this.isOnline = true;
               $this.isConnecting = false;
               $this.connectedStatus = 'Connected';
-              
+
+              // RECONNECT: the server side of this socket is a brand-new
+              // Connection (delta cursors at 0) and, if the backend restarted
+              // (nodemon, crash, laptop sleep), a brand-new taxon dictionary
+              // whose indices no longer match ours. Applying fresh frames on
+              // top of the old store mixes the two numbering schemes, so a
+              // rerun after a reconnect could draw old names or never appear.
+              // Start both ends from nothing: drop the store, redo the
+              // handshake and force the viewport to be re-sent.
+              if ($this._listenersBound && $this.frames){
+                try {
+                  $this.frames.selectRun($this.selectedRun || null)
+                  $this.socket.emit('mtx:hello', { v: 1 })
+                } catch (err) { console.error('frame client reset on reconnect failed', err) }
+              }
+
               if ($this.selectedRun){
                 $this.sendMessage({
                   run: $this.selectedRun,

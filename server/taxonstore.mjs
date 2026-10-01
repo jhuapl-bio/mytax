@@ -48,13 +48,27 @@ const DEFAULT_TOP_N = 500
 // ---------------------------------------------------------------------------
 // RunDict — run-level intern table for the immutable half of a taxon row.
 //
-// Assigns each taxid a dense index. Every downstream structure (sample tables,
+// Assigns each taxon a dense index. Every downstream structure (sample tables,
 // deltas, the client store) refers to taxa by that index, never by name.
+//
+// A taxid alone is NOT a stable identity across a run. Two samples (or one
+// sample before and after an edit) can be classified against different
+// kraken2 databases: a newer NCBI taxonomy renames/re-ranks/re-parents taxa,
+// and GTDB or custom databases reuse small integer taxids for entirely
+// different organisms. Keying on the taxid alone meant the FIRST database
+// seen won forever: after "edit sample -> change k2 db -> rerun" the counts
+// changed but names, ranks and the tree stayed those of the old database, so
+// rank-filtered plots/tables looked as if nothing had updated.
+//
+// So each distinct (taxid, rank, depth, name, parent) is its own entry — a
+// "variant". Within one database a taxid always has the same attributes, so a
+// normal run interns each taxon exactly once, as before.
 // ---------------------------------------------------------------------------
 class RunDict {
     constructor(run) {
         this.run = run
-        this.byTaxid = new Map()   // taxid(string) -> idx
+        this.byKey = new Map()     // variant key -> idx
+        this.byTaxid = new Map()   // taxid(string) -> most recently interned idx
         this.taxid = []            // idx -> taxid (string; kraken2 taxids can be non-numeric)
         this.rank = []             // idx -> rank code ('S', 'G', 'S1', ...)
         this.depth = []            // idx -> indentation depth in the report
@@ -66,20 +80,14 @@ class RunDict {
 
     get size() { return this.taxid.length }
 
-    // Intern a taxon. Returns its dense index. Immutable attributes are written
-    // once; later sightings only read. `depth`/`parent` come from the first
-    // report that mentions the taxid, which is authoritative for the run.
+    // Intern a taxon variant. Returns its dense index. Attributes are written
+    // once per variant; later sightings of the same variant only read.
     intern(taxid, rank, depth, name, lineage, parentIdx) {
-        let idx = this.byTaxid.get(taxid)
-        if (idx !== undefined) {
-            // Repair a parent we could not resolve on first sight (can happen if
-            // a child row is seen before its ancestor in a partial report).
-            if (this.parent[idx] === -1 && parentIdx !== -1 && this.depth[idx] > 0) {
-                this.parent[idx] = parentIdx
-            }
-            return idx
-        }
+        const key = `${taxid}\u0001${rank}\u0001${depth}\u0001${lineage || name}\u0001${parentIdx}`
+        let idx = this.byKey.get(key)
+        if (idx !== undefined) return idx
         idx = this.taxid.length
+        this.byKey.set(key, idx)
         this.byTaxid.set(taxid, idx)
         this.taxid.push(taxid)
         this.rank.push(rank)
@@ -320,6 +328,9 @@ class TaxonStore {
         if (sample === undefined) {
             for (const key of Array.from(this.tables.keys())) {
                 if (key.startsWith(`${run}::`)) this.tables.delete(key)
+            }
+            for (const key of Array.from(this.hashes.keys())) {
+                if (key.startsWith(`${run}::`)) this.hashes.delete(key)
             }
             this.dicts.delete(run)
             return

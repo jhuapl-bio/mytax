@@ -57,8 +57,13 @@ class TaxaStore {
     })
 
     // ---- non-reactive bulk storage ---------------------------------------
+    // byTaxid: taxid -> [idx, ...]. One taxid can have several entries
+    // ("variants") when samples were classified against databases whose
+    // taxonomies disagree about its name/rank/parent — see RunDict on the
+    // server. byKey is only used by local (drag-and-drop) ingestion.
     this.dict = {
       byTaxid: new Map(),
+      byKey: new Map(),
       taxid: [],
       rank: [],
       depth: [],
@@ -82,7 +87,7 @@ class TaxaStore {
   // its delta cursors at the same moment, so the two stay in lockstep.
   reset(run) {
     this.dict = {
-      byTaxid: new Map(), taxid: [], rank: [], depth: [],
+      byTaxid: new Map(), byKey: new Map(), taxid: [], rank: [], depth: [],
       name: [], lineage: [], parent: [], size: 0
     }
     this.tables = new Map()
@@ -131,16 +136,44 @@ class TaxaStore {
     const d = this.dict
     for (let i = 0; i < flat.length; i += 7) {
       const idx = flat[i]
+      const prev = d.taxid[idx]
+      if (prev !== undefined && prev !== flat[i + 1]) this._unindexTaxid(prev, idx)
       d.taxid[idx] = flat[i + 1]
       d.rank[idx] = flat[i + 2]
       d.depth[idx] = flat[i + 3]
       d.parent[idx] = flat[i + 4]
       d.name[idx] = flat[i + 5]
       d.lineage[idx] = flat[i + 6]
-      d.byTaxid.set(flat[i + 1], idx)
+      this._indexTaxid(flat[i + 1], idx)
       if (idx + 1 > d.size) d.size = idx + 1
     }
     this.state.dictSize = d.size
+  }
+
+  _indexTaxid(taxid, idx) {
+    const list = this.dict.byTaxid.get(taxid)
+    if (!list) this.dict.byTaxid.set(taxid, [idx])
+    else if (list.indexOf(idx) === -1) list.push(idx)
+  }
+
+  _unindexTaxid(taxid, idx) {
+    const list = this.dict.byTaxid.get(taxid)
+    if (!list) return
+    const at = list.indexOf(idx)
+    if (at !== -1) list.splice(at, 1)
+    if (!list.length) this.dict.byTaxid.delete(taxid)
+  }
+
+  // The dict index this sample actually reports for `taxid` (the variant from
+  // the database it was classified against), or -1.
+  _presentIdx(t, taxid) {
+    const list = this.dict.byTaxid.get(String(taxid))
+    if (!list) return -1
+    for (let i = list.length - 1; i >= 0; i--) {
+      const idx = list[i]
+      if (idx < t.cap && t.present[idx]) return idx
+    }
+    return -1
   }
 
   _table(sample) {
@@ -233,9 +266,7 @@ class TaxaStore {
   hasTaxon(sample, taxid) {
     const t = this.tables.get(sample)
     if (!t || taxid == null) return false
-    const idx = this.dict.byTaxid.get(String(taxid))
-    if (idx === undefined) return false
-    return !!t.present[idx]
+    return this._presentIdx(t, taxid) !== -1
   }
   sampleNames() { return Array.from(this.tables.keys()) }
   version(sample) { const t = this.tables.get(sample); return t ? t.ver : 0 }
@@ -426,8 +457,8 @@ class TaxaStore {
     const o = opts || {}
     const d = this.dict
     const at = (taxid) => {
-      const idx = d.byTaxid.get(String(taxid))
-      return idx !== undefined && t.present[idx] ? t.clade[idx] : 0
+      const idx = this._presentIdx(t, taxid)
+      return idx === -1 ? 0 : t.clade[idx]
     }
     const unclassified = at(0)
     let classified = at(1)
@@ -533,10 +564,12 @@ class TaxaStore {
         if (lastAtDepth[dd] !== undefined && lastAtDepth[dd] !== -1) { parentIdx = lastAtDepth[dd]; break }
       }
 
-      let idx = d.byTaxid.get(taxid)
+      const key = `${taxid}\u0001${rank}\u0001${depth}\u0001${lineage || leaf}\u0001${parentIdx}`
+      let idx = d.byKey.get(key)
       if (idx === undefined) {
         idx = d.size
-        d.byTaxid.set(taxid, idx)
+        d.byKey.set(key, idx)
+        this._indexTaxid(taxid, idx)
         d.taxid[idx] = taxid
         d.rank[idx] = rank
         d.depth[idx] = depth
