@@ -20,6 +20,7 @@ import { exec, spawn } from 'child_process';
 import os from 'os';
 import { logger } from './logger.js';
 import { broadcastToAllActiveConnections } from './messenger.mjs';
+import { resolveTool } from './tools.mjs';
 
 // Run a shell command and resolve a normalized result. Never rejects.
 function run(cmd, timeout = 9000) {
@@ -134,9 +135,9 @@ export const DEPENDENCIES = [
         bin: 'dorado',
         version: 'dorado --version',
         conda: null, // distributed as a standalone binary, not via bioconda
-        manual: 'Download a release binary: https://github.com/nanoporetech/dorado/releases',
+        manual: 'Use "Download dorado" under Basecalling & demultiplexing, or a release binary: https://github.com/nanoporetech/dorado/releases',
         docs: 'https://github.com/nanoporetech/dorado',
-        description: 'Optional ONT basecaller. Only needed for basecalling workflows.',
+        description: 'Optional ONT basecaller + demultiplexer. Needed only for samples set to basecall or demultiplex.',
     },
     {
         key: 'guppy',
@@ -147,22 +148,34 @@ export const DEPENDENCIES = [
         conda: null, // distributed via Oxford Nanopore, not bioconda
         manual: 'Install via Oxford Nanopore (MinKNOW / community.nanoporetech.com).',
         docs: 'https://community.nanoporetech.com',
-        description: 'Optional ONT barcoder used by the barcoding step.',
+        description: 'Optional legacy ONT demultiplexer (discontinued upstream). dorado is preferred.',
     },
 ];
 
 // Probe a single dependency: presence, resolved path, optional version.
 export async function checkDependency(dep) {
-    const found = await run(`command -v ${dep.bin}`);
-    const present = !!(found.ok && found.stdout);
-    let version = null;
+    // dorado / guppy may come from a custom path or an in-app download, not
+    // just $PATH (see tools.mjs), so resolve those the same way the pipeline does.
+    let present = false;
     let binPath = null;
-    if (present) {
-        binPath = found.stdout.split('\n')[0].trim();
-        if (dep.version) {
-            const v = await run(dep.version);
-            version = firstLine(v);
-        }
+    let source = 'path';
+    if (dep.key === 'dorado' || dep.key === 'guppy') {
+        const r = await resolveTool(dep.key);
+        present = !!r.path;
+        binPath = r.path;
+        source = r.source;
+    } else {
+        const found = await run(`command -v ${dep.bin}`);
+        present = !!(found.ok && found.stdout);
+        if (present) binPath = found.stdout.split('\n')[0].trim();
+    }
+    let version = null;
+    if (present && dep.version) {
+        const cmd = binPath && (dep.key === 'dorado' || dep.key === 'guppy')
+            ? `'${binPath.replace(/'/g, `'\\''`)}' --version 2>&1`
+            : dep.version;
+        const v = await run(cmd);
+        version = firstLine(v);
     }
     return {
         key: dep.key,
@@ -171,6 +184,7 @@ export async function checkDependency(dep) {
         present,
         version,
         path: binPath,
+        source,
         installable: !!dep.conda,
         manual: dep.manual,
         docs: dep.docs,

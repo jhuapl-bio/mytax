@@ -140,6 +140,37 @@
                                         <v-icon x-small class="mtx-st-gicon">{{ grp.group ? 'mdi-folder-multiple-outline' : 'mdi-flask-outline' }}</v-icon>
                                         <span class="mtx-st-gname">{{ grp.group || 'Individual samples' }}</span>
                                         <span class="mtx-st-gcount">{{ grp.samples.length }}</span>
+                                        <!-- basecall / demultiplex pipeline feeding this group -->
+                                        <span v-if="!offlineMode && preprocessFor(grp.group)" class="mtx-st-pre"
+                                            :class="'mtx-st-pre--' + preState(grp.group)" @click.stop>
+                                            <v-tooltip bottom max-width="360">
+                                                <template v-slot:activator="{ on }">
+                                                    <span v-on="on" class="mtx-st-pre-main">
+                                                        <v-progress-circular v-if="preState(grp.group) === 'running'" indeterminate size="10" width="2" class="mr-1"></v-progress-circular>
+                                                        <v-icon v-else x-small class="mr-1">{{ ({ error: 'mdi-alert-circle', stopped: 'mdi-stop-circle-outline', idle: 'mdi-radar', done: 'mdi-check-circle' })[preState(grp.group)] }}</v-icon>
+                                                        {{ preLabel(grp.group) }}
+                                                    </span>
+                                                </template>
+                                                <div class="mtx-pre-tip">
+                                                    <b>{{ preprocessFor(grp.group).mode === 'basecall' ? 'Basecalling' : 'Demultiplexing' }}</b>
+                                                    with {{ preprocessFor(grp.group).tool }}
+                                                    <template v-if="preprocessFor(grp.group).kit"> · kit {{ preprocessFor(grp.group).kit }}</template>
+                                                    <template v-if="preprocessFor(grp.group).model"> · model {{ preprocessFor(grp.group).model }}</template>
+                                                    <template v-if="preprocessFor(grp.group).device"> · {{ preprocessFor(grp.group).device }}</template><br>
+                                                    Files: {{ preprocessFor(grp.group).files.done }} done, {{ preprocessFor(grp.group).files.running }} running,
+                                                    {{ preprocessFor(grp.group).files.queued }} queued<template v-if="preprocessFor(grp.group).files.failed">, {{ preprocessFor(grp.group).files.failed }} failed</template><br>
+                                                    Barcodes: {{ preprocessFor(grp.group).barcodes.join(', ') || 'none yet' }}<br>
+                                                    {{ preprocessFor(grp.group).watching ? 'Watching ' : 'Input: ' }}<code>{{ preprocessFor(grp.group).input }}</code>
+                                                    <div v-if="preprocessFor(grp.group).lastError" class="mtx-pre-tip-err">{{ preprocessFor(grp.group).lastError }}</div>
+                                                </div>
+                                            </v-tooltip>
+                                            <v-btn v-if="preprocessFor(grp.group).files.failed" icon x-small title="Retry failed files" @click.stop="retryPreprocess(grp.group)">
+                                                <v-icon x-small>mdi-refresh</v-icon>
+                                            </v-btn>
+                                            <v-btn v-if="!preprocessFor(grp.group).stopped" icon x-small title="Stop basecalling / demultiplexing for this run" @click.stop="stopPreprocess(grp.group)">
+                                                <v-icon x-small>mdi-stop</v-icon>
+                                            </v-btn>
+                                        </span>
                                         <v-tooltip bottom v-if="!offlineMode && isGroupWatched(grp)">
                                             <template v-slot:activator="{ on }">
                                                 <span v-on="on" class="mtx-st-listening" @click.stop>
@@ -380,22 +411,27 @@
                             <v-btn value="paired" small>
                                 <v-icon left small>mdi-file-multiple-outline</v-icon> Paired directory
                             </v-btn>
+                            <v-btn value="preprocess" small>
+                                <v-icon left small>mdi-dna</v-icon> Basecall / demux
+                            </v-btn>
                         </v-btn-toggle>
                         <div class="mtx-hint mb-3">
                             {{ inputMode === 'barcoded'
                                 ? 'Point at a run directory; each matching sub-directory becomes its own sample.'
                                 : inputMode === 'paired'
                                     ? 'Point at a directory of R1/R2 FASTQ files; every matching pair becomes its own paired-end sample.'
-                                    : 'Add one sample from a single file or directory of reads.' }}
+                                    : inputMode === 'preprocess'
+                                        ? 'Point at multiplexed FASTQ (to demultiplex) or POD5/FAST5 signal (to basecall) with dorado or guppy. Each barcode found becomes its own sample, classified as its reads are produced.'
+                                        : 'Add one sample from a single file or directory of reads.' }}
                         </div>
 
                         <!-- ===== 2. Name + inputs ===== -->
-                        <div class="mtx-sec-label">2 · {{ inputMode === 'barcoded' ? 'Run' : inputMode === 'paired' ? 'Paired-read' : 'Sample' }} details</div>
+                        <div class="mtx-sec-label">2 · {{ inputMode === 'barcoded' || inputMode === 'preprocess' ? 'Run' : inputMode === 'paired' ? 'Paired-read' : 'Sample' }} details</div>
                         <v-row dense>
                             <v-col cols="12" :md="inputMode === 'barcoded' ? 6 : 12">
                                 <v-text-field
                                     v-model="editedItem.sample"
-                                    :label="inputMode === 'barcoded' ? 'Run name' : inputMode === 'paired' ? 'Group name (optional)' : 'Sample name'"
+                                    :label="inputMode === 'barcoded' || inputMode === 'preprocess' ? 'Run name' : inputMode === 'paired' ? 'Group name (optional)' : 'Sample name'"
                                     :error-messages="sampleErrors"
                                     :hint="inputMode === 'paired' ? 'Leave blank to name each sample by its shared file prefix' : ''"
                                     :persistent-hint="inputMode === 'paired'"
@@ -419,7 +455,7 @@
                                     :hint="editedItem.path_1 ? `Input: ${editedItem.path_1}` : 'Type a path or browse (file or folder); matches are suggested as you go'"
                                     persistent-hint
                                     :error-messages="pathErrors1"
-                                    :label="inputMode === 'barcoded' ? 'Run directory' : inputMode === 'paired' ? 'Directory of R1/R2 FASTQ files' : 'Reads — R1 (file or directory)'"
+                                    :label="inputMode === 'barcoded' ? 'Run directory' : inputMode === 'paired' ? 'Directory of R1/R2 FASTQ files' : inputMode === 'preprocess' ? (pre.mode === 'basecall' ? 'POD5 / FAST5 — file or directory' : 'Multiplexed FASTQ — file or directory') : 'Reads — R1 (file or directory)'"
                                     prepend-inner-icon="mdi-folder-search-outline"
                                     dense outlined
                                     @keyup="handleInputPath1"
@@ -527,6 +563,53 @@
                                 <v-switch v-model="editedItem.watch" inset hide-details class="ma-0 pa-0"></v-switch>
                             </div>
                         </v-sheet>
+
+                        <!-- ===== Basecall / demultiplex options (preprocess mode) ===== -->
+                        <template v-if="inputMode === 'preprocess'">
+                            <div class="mtx-sec-label">Basecalling / demultiplexing</div>
+                            <v-btn-toggle v-model="pre.mode" mandatory dense class="mb-3 mtx-mode-toggle">
+                                <v-btn value="demux" small><v-icon left small>mdi-call-split</v-icon> Demultiplex FASTQ</v-btn>
+                                <v-btn value="basecall" small><v-icon left small>mdi-waveform</v-icon> Basecall POD5 / FAST5</v-btn>
+                            </v-btn-toggle>
+                            <v-row dense>
+                                <v-col cols="12" md="6">
+                                    <v-select v-model="pre.tool" :items="preToolOptions" item-text="text" item-value="value" item-disabled="disabled"
+                                        label="Tool" prepend-inner-icon="mdi-tools" dense outlined hide-details></v-select>
+                                </v-col>
+                                <v-col cols="12" md="6">
+                                    <v-combobox v-model="pre.kit" :items="kitOptions"
+                                        :label="pre.mode === 'demux' ? 'Barcode kit' : 'Barcode kit (optional)'"
+                                        :hint="pre.mode === 'basecall' ? 'Set a kit to split basecalled reads by barcode' : ''" persistent-hint
+                                        prepend-inner-icon="mdi-barcode" dense outlined hide-details="auto"
+                                        :error-messages="kitErrors"></v-combobox>
+                                </v-col>
+                                <v-col cols="12" md="6" v-if="pre.mode === 'basecall'">
+                                    <v-select v-model="pre.model" :items="modelOptions" item-text="text" item-value="value"
+                                        label="Basecalling model" prepend-inner-icon="mdi-speedometer" dense outlined hide-details></v-select>
+                                </v-col>
+                                <v-col cols="12" md="6">
+                                    <v-select v-model="pre.device" :items="deviceOptions" item-text="text" item-value="value"
+                                        label="Device" prepend-inner-icon="mdi-expansion-card" dense outlined hide-details></v-select>
+                                </v-col>
+                            </v-row>
+                            <v-checkbox v-model="pre.keepUnclassified" dense hide-details class="mt-1"
+                                label="Also classify reads with no barcode (as an 'unclassified' sample)"></v-checkbox>
+                            <div class="mtx-pre-tool" :class="preToolState.ok ? 'mtx-pre-tool--ok' : 'mtx-pre-tool--missing'">
+                                <v-icon small class="mr-2" :color="preToolState.ok ? 'green darken-1' : 'orange darken-2'">
+                                    {{ preToolState.ok ? 'mdi-check-circle' : 'mdi-alert-circle-outline' }}
+                                </v-icon>
+                                <span class="flex-grow-1">{{ preToolState.text }}</span>
+                                <v-btn v-if="!preToolState.ok && preToolState.downloadable" x-small depressed color="primary" class="ml-2"
+                                    :disabled="offlineMode || preToolState.downloading" @click="$emit('sendMessage', { type: 'downloadTool', tool: pre.tool })">
+                                    <v-icon x-small left>mdi-download</v-icon>{{ preToolState.downloading ? 'Downloading…' : 'Download dorado' }}
+                                </v-btn>
+                                <v-btn x-small text class="ml-1" @click="$emit('openTools')">Tools &amp; GPU…</v-btn>
+                            </div>
+                            <div class="mtx-hint mt-1 mb-2">
+                                Each barcode becomes a sample named <code>{{ (editedItem.sample || 'RunName') }}__barcodeNN</code>
+                                and is classified with the settings below as soon as its reads are written.
+                            </div>
+                        </template>
 
                         <!-- ===== 3. Classifier ===== -->
                         <div class="mtx-sec-label">3 · Classifier</div>
@@ -1161,7 +1244,9 @@
         "pathOptionsRef",
         "browsePathResult",
         "sampleMeta",
-        "pairWatches"
+        "pairWatches",
+        "tools",
+        "preprocess"
     ],
     components: {
         VueJsonToCsv,
@@ -1241,6 +1326,9 @@
         if (this.toggleMinimapDb && ref && ref.fullpath && this.editedItem.minimapDatabase !== ref.fullpath){
             this.$set(this.editedItem, 'minimapDatabase', ref.fullpath)
         }
+      },
+      'pre.mode'(m){
+        if (m === 'basecall' && this.pre.tool === 'guppy') this.pre.tool = 'dorado'
       },
       isolationKey(){
         this.applySearchIsolation()
@@ -1373,6 +1461,44 @@
         minimap2Databases() {
             return (this.databases || []).filter((d) => d && d.type === 'minimap2');
         },
+        kitOptions() {
+            return (this.tools && this.tools.kits && this.tools.kits.length) ? this.tools.kits
+                : ['SQK-NBD114-24', 'SQK-NBD114-96', 'SQK-RBK114-24', 'SQK-RBK114-96', 'SQK-16S114-24']
+        },
+        kitErrors() {
+            if (this.inputMode !== 'preprocess') return []
+            if (this.pre.mode === 'demux' && !(this.pre.kit && String(this.pre.kit).trim())) return ['A barcode kit is required to demultiplex']
+            return []
+        },
+        preToolOptions() {
+            const t = (this.tools && this.tools.tools) || {}
+            const tag = (k) => (t[k] && t[k].present) ? `found${t[k].version ? ' · ' + t[k].version : ''}` : 'not installed'
+            return [
+                { value: 'dorado', text: `dorado (${tag('dorado')})` },
+                { value: 'guppy', text: `guppy_barcoder — demux only (${tag('guppy')})`, disabled: this.pre.mode === 'basecall' },
+            ]
+        },
+        // Status line under the options: is the chosen tool usable, and on what.
+        preToolState() {
+            const all = (this.tools && this.tools.tools) || {}
+            const t = all[this.pre.tool] || {}
+            const gpu = (this.tools && this.tools.gpu) || {}
+            const dev = this.pre.device === 'cpu' ? 'CPU'
+                : gpu.cuda ? `CUDA × ${gpu.devices.length}` : gpu.metal ? 'Apple GPU (Metal)' : 'CPU (no GPU detected)'
+            const downloading = !!(t.download && t.download.downloading)
+            if (!this.tools || !this.tools.tools) return { ok: false, text: 'Checking tools on the server…' }
+            if (downloading) return { ok: false, downloading, downloadable: true, text: `Downloading dorado… ${t.download.progress != null ? t.download.progress + '%' : ''}` }
+            if (!t.present) {
+                return {
+                    ok: false, downloadable: !!t.downloadable,
+                    text: this.pre.tool === 'guppy'
+                        ? 'guppy_barcoder was not found on the server. Set its path under Tools & GPU, or use dorado.'
+                        : 'dorado was not found on the server. Download it here, or point at an existing install under Tools & GPU.'
+                }
+            }
+            const warn = this.pre.mode === 'basecall' && dev.startsWith('CPU') ? ' — basecalling on CPU is very slow' : ''
+            return { ok: true, text: `${t.label} ${t.version || ''} (${({ custom: 'custom path', managed: 'downloaded in-app', path: 'from $PATH' })[t.source] || ''}) · runs on ${dev}${warn}` }
+        },
         // Catalogue entries behind the database / reference picked in the dialog.
         selectedDbEntry() {
             return findDbByPath(this.kraken2Databases, this.editedItem && this.editedItem.database)
@@ -1406,6 +1532,7 @@
         isFormValid() {
             // Paired mode only needs the directory; the group name is optional.
             if (this.inputMode === 'paired') return !!this.editedItem.path_1;
+            if (this.inputMode === 'preprocess') return !!(this.editedItem.sample && this.editedItem.path_1 && !this.kitErrors.length);
             return this.editedItem.sample  && this.editedItem.path_1 ;
         },
         numberOfPages () {
@@ -1656,6 +1783,14 @@
                 }
                 map.get(key).samples.push(Object.assign({}, item, { _label: h.label, _group: h.group }))
             })
+            // A basecall/demux pipeline that hasn't produced a barcode yet still
+            // gets its group row (with its progress chip).
+            ;(this.preprocess || []).forEach((p) => {
+                if (!p || !p.group || map.has(p.group)) return
+                if (m && !m.empty && !m.test(p.group)) return
+                const g = { key: p.group, group: p.group, samples: [] }
+                map.set(p.group, g); order.push(g)
+            })
             // natural sort within each group so barcode1, barcode2 ... barcode10 order
             const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
             order.forEach(g => g.samples.sort((a, b) => coll.compare(a._label, b._label)))
@@ -1899,6 +2034,18 @@
           // longer pushed with every status frame, so we request them only for
           // the job the user actually opened.
           jobLogs: {},
+          // basecall / demultiplex options (inputMode === 'preprocess')
+          pre: { mode: 'demux', tool: 'dorado', kit: '', model: 'hac', device: 'auto', keepUnclassified: false },
+          modelOptions: [
+            { text: 'fast — quickest, lowest accuracy', value: 'fast' },
+            { text: 'hac — high accuracy (recommended)', value: 'hac' },
+            { text: 'sup — super accuracy, slowest (GPU strongly advised)', value: 'sup' },
+          ],
+          deviceOptions: [
+            { text: 'Auto — use a GPU when one is found', value: 'auto' },
+            { text: 'GPU (CUDA / Metal)', value: 'gpu' },
+            { text: 'CPU only', value: 'cpu' },
+          ],
           // per-sample/group files popup: state filter + page size
           panelStateFilter: 'all',
           panelPerPage: 50,
@@ -2168,6 +2315,35 @@
             })
         },
         dbStatus,
+        preprocessFor(group){
+            if (!group) return null
+            return (this.preprocess || []).find((p) => p && p.group === group) || null
+        },
+        preState(group){
+            const p = this.preprocessFor(group)
+            if (!p) return 'idle'
+            if (p.stopped) return 'stopped'
+            if (p.files.running || p.files.queued) return 'running'
+            if (p.files.failed || (p.lastError && !p.files.done)) return 'error'
+            if (p.watching) return 'idle'
+            return 'done'
+        },
+        preLabel(group){
+            const p = this.preprocessFor(group)
+            if (!p) return ''
+            const verb = p.mode === 'basecall' ? 'Basecall' : 'Demux'
+            const f = p.files
+            const bc = p.barcodes.length ? ` · ${p.barcodes.length} bc` : ''
+            if (p.stopped) return `${verb} stopped`
+            if (!f.total) return p.lastError ? `${verb}: needs attention` : `${verb}: waiting for reads`
+            return `${verb} ${f.done}/${f.total}${bc}${f.failed ? ` · ${f.failed} failed` : ''}`
+        },
+        stopPreprocess(group){
+            this.$emit('sendMessage', { type: 'stopPreprocess', run: this.selectedRun, group, forget: false })
+        },
+        retryPreprocess(group){
+            this.$emit('sendMessage', { type: 'retryPreprocess', run: this.selectedRun, group })
+        },
         downloadDb(db){
             if (!db || this.offlineMode) return
             this.$emit('sendMessage', { type: 'downloaddb', database: db.key, message: `Download database ${db.key}` })
@@ -2544,7 +2720,7 @@
         deleteGroup(grp){
             if (this.offlineMode) return
             const samples = (grp.samples || []).map(s => s.sample)
-            if (!samples.length) return
+            if (!samples.length && !this.preprocessFor(grp.group)) return
             const run = grp.group || 'Individual samples'
             // Split into local-only (uploaded/demo) vs server samples: locals are
             // removed client-side, server ones go out in a single batch message.
@@ -2560,6 +2736,9 @@
                     }
                 })
                 if (serverSamples.length) this.$emit('deleteEntries', serverSamples)
+                if (this.preprocessFor(grp.group)){
+                    this.$emit('sendMessage', { type: 'stopPreprocess', run: this.selectedRun, group: grp.group, forget: true })
+                }
             }
             // Confirm if SweetAlert is available; otherwise delete directly.
             if (this.$swal){
@@ -2893,6 +3072,14 @@
             } else {
                 this.editedItem.searchPatternBC = null
                 this.editedItem.pairReads = null
+            }
+            // basecall / demux: the entry becomes a Preprocessor on the server;
+            // every barcode it produces is added as its own sample.
+            if (this.inputMode === 'preprocess'){
+                this.$set(this.editedItem, 'preprocess', { ...this.pre, kit: this.pre.kit ? String(this.pre.kit).trim() : '' })
+                this.editedItem.path_2 = null
+            } else if (this.editedItem.preprocess){
+                this.$set(this.editedItem, 'preprocess', null)
             }
             // watch on ⇒ keep watching the directory for new reads in real time
             this.$set(this.editedItem, 'watch', this.editedItem.watch !== false)
@@ -3445,6 +3632,21 @@ code {
 .mtx-jp-file { display: inline-block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .mtx-jp-acts { display: flex; justify-content: flex-end; gap: 2px; }
 .mtx-jp-dtable .mtx-jp-state { font-size: 13.5px; }
+
+/* ===== basecall / demux ===== */
+.mtx-pre-tool { display: flex; align-items: center; font-size: 12px; border-radius: 8px; padding: 6px 10px; margin-top: 8px; text-align: left; }
+.mtx-pre-tool--ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #14532d; }
+.mtx-pre-tool--missing { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.mtx-st-pre { display: inline-flex; align-items: center; margin-left: 6px; font-size: 10.5px; font-weight: 600; border-radius: 9px; padding: 0 4px 0 7px; background: #e0e7ff; color: #3730a3; }
+.mtx-st-pre-main { display: inline-flex; align-items: center; white-space: nowrap; cursor: help; }
+.mtx-st-pre .v-icon { color: inherit !important; }
+.mtx-st-pre--running { background: #dbeafe; color: #1d4ed8; }
+.mtx-st-pre--error { background: #fee2e2; color: #b91c1c; }
+.mtx-st-pre--stopped { background: #f1f5f9; color: #475569; }
+.mtx-st-pre--done { background: #dcfce7; color: #15803d; }
+.mtx-pre-tip { font-size: 12px; line-height: 1.5; text-align: left; }
+.mtx-pre-tip code { font-size: 11px; background: rgba(255,255,255,.15); padding: 0 3px; border-radius: 3px; word-break: break-all; }
+.mtx-pre-tip-err { margin-top: 4px; color: #fecaca; }
 </style>
 
 <!-- unscoped: Vuetify appends tooltip content to <body>, outside this component -->
