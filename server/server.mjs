@@ -801,7 +801,8 @@ export  class Orchestrator {
                 samples: samples,
                 samplesheet: r.samplesheet,
                 config: r.config,
-                pairWatches: typeof r.pairWatchSummary === 'function' ? r.pairWatchSummary() : []
+                pairWatches: typeof r.pairWatchSummary === 'function' ? r.pairWatchSummary() : [],
+                preprocess: typeof r.preprocessSummary === 'function' ? r.preprocessSummary() : []
             }
             // Only the connections actually viewing this run need the bootstrap.
             emitToRunViewers(r.run, 'runBootstrap', payload)
@@ -958,6 +959,11 @@ export  class Orchestrator {
                 try { taxonStore.drop(run) } catch (e) { logger.error(`${e} dropping run taxon store`) }
                 // Close any live paired-read directory watchers so they don't keep
                 // firing (and re-adding samples) after the run is gone.
+                try{
+                    if (typeof r.stopPreprocess === 'function') await r.stopPreprocess(null, { forget: true })
+                } catch (err){
+                    logger.error(`${err} error stopping preprocessing for run ${run}`)
+                }
                 try{
                     if (typeof r.stopPairWatch === 'function') await r.stopPairWatch()
                 } catch (err){

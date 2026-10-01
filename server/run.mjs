@@ -6,6 +6,8 @@ import { writeRun, globFiles, getKrakenConfigDefault, makeSampleId, sanitizeIdPa
 import path from "path"
 import chokidar from 'chokidar'
 import { scheduler } from './scheduler.mjs'
+import { Preprocessor } from './preprocess.mjs'
+import { queueRunMeta } from './messenger.mjs'
 
 import { storage } from './storage.mjs';
 
@@ -52,7 +54,12 @@ export  class Run {
         // land and re-establish the watchers after a run reload / server restart.
         this.pairWatchers = {}
         this.pairWatches = Array.isArray(configuration.pairWatches) ? configuration.pairWatches : []
+        // Basecalling / demultiplexing entries (see preprocess.mjs): persisted
+        // configs + the live Preprocessor per entry, keyed by group name.
+        this.preprocessCfgs = Array.isArray(configuration.preprocess) ? configuration.preprocess : []
+        this.preprocessors = {}
         this.defineSamples()
+        this.restorePreprocess()
         // Re-establish any persisted paired-directory watches (only those left in
         // real-time watch mode). Runs after defineSamples so existing pairs exist
         // first; a fresh scan then picks up anything added while we were offline.
@@ -169,6 +176,7 @@ export  class Run {
                 report: this.outrun,
                 config: this.config,
                 pairWatches: this.pairWatches,
+                preprocess: this.preprocessCfgs,
                 created:   new Date().toLocaleString('en', { timeZone: 'UTC' })
             }
             let filepath = this.filepath
@@ -229,6 +237,7 @@ export  class Run {
                 report: this.outrun,
                 config: getKrakenConfigDefault(),
                 pairWatches: this.pairWatches,
+                preprocess: this.preprocessCfgs,
                 created:   new Date().toLocaleString('en', { timeZone: 'UTC' })
             }
             logger.info(`Writing run information as a save file ${this.run}`)
@@ -539,7 +548,112 @@ export  class Run {
                 group: (w.sample && String(w.sample).trim()) ? String(w.sample).trim() : null
             }))
     }
+    // ---- basecalling / demultiplexing ------------------------------------
+    // The entry itself is not classified; each barcode folder its Preprocessor
+    // produces becomes a normal sample (group = entry name, label = barcode).
+    async startPreprocess(info){
+        const group = String(info.sample || '').trim()
+        if (!group || !info.path_1) return
+        const pre = info.preprocess || {}
+        const cfg = {
+            group,
+            input: info.path_1,
+            mode: pre.mode,
+            tool: pre.tool || 'dorado',
+            kit: pre.kit || info.kits || null,
+            model: pre.model || 'hac',
+            device: pre.device || 'auto',
+            keepUnclassified: !!pre.keepUnclassified,
+            watch: info.watch !== false,
+            // settings every generated barcode sample inherits
+            template: {
+                database: info.database, classifier: info.classifier, fastp: info.fastp,
+                fastpConfig: info.fastpConfig, minimapDatabase: info.minimapDatabase,
+                brackenConfig: info.brackenConfig, platform: 'oxford', lat: info.lat, lon: info.lon
+            }
+        }
+        const i = this.preprocessCfgs.findIndex((c) => c.group === group)
+        if (i > -1) this.preprocessCfgs[i] = cfg
+        else this.preprocessCfgs.push(cfg)
+        await this.saveRunInformation()
+        await this.launchPreprocessor(cfg)
+    }
+    async launchPreprocessor(cfg){
+        if (this.preprocessors[cfg.group]){
+            try { await this.preprocessors[cfg.group].stop() } catch (e) { logger.error(e) }
+        }
+        const outdir = path.join(this.outrun, sanitizeIdPart(cfg.group), '_preprocess')
+        const pp = new Preprocessor(cfg, {
+            outdir,
+            onReads: (label, dir) => this.addPreprocessedSample(cfg, label, dir),
+            onStatus: () => this.emitPreprocessSoon()
+        })
+        this.preprocessors[cfg.group] = pp
+        try { await pp.start() } catch (err) { logger.error(`${err} starting preprocessing for ${cfg.group}`) }
+    }
+    async restorePreprocess(){
+        for (const cfg of (this.preprocessCfgs || [])){
+            try { await this.launchPreprocessor(cfg) } catch (err) { logger.error(`${err} restoring preprocessing for ${cfg.group}`) }
+        }
+    }
+    async addPreprocessedSample(cfg, label, dir){
+        const sample = label === 'all' ? sanitizeIdPart(cfg.group) : makeSampleId(cfg.group, label)
+        if (this.samples[sample]) return
+        const info = {
+            ...(cfg.template || {}),
+            sample,
+            group: label === 'all' ? null : cfg.group,
+            label: label === 'all' ? cfg.group : label,
+            path_1: dir,
+            path_2: null,
+            format: 'directory',
+            watch: true,
+            preprocessedBy: cfg.group
+        }
+        logger.info(`Preprocessing ${cfg.group}: new reads folder ${label} -> sample ${sample}`)
+        await this.addSample(info, { persist: false })
+        this.sendSampleData(sample)
+        // one save + samplesheet broadcast for a burst of new barcodes
+        clearTimeout(this._ppSaveTimer)
+        this._ppSaveTimer = setTimeout(async () => {
+            try { await this.saveRunInformation() } catch (e) { logger.error(e) }
+            broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
+        }, 800)
+    }
+    preprocessSummary(){
+        return Object.values(this.preprocessors).map((p) => p.summary())
+    }
+    emitPreprocessSoon(){
+        if (this._ppEmitTimer) return
+        this._ppEmitTimer = setTimeout(() => {
+            this._ppEmitTimer = null
+            try { queueRunMeta(this.run, { preprocess: this.preprocessSummary() }) } catch (e) { logger.error(e) }
+        }, 400)
+    }
+    async stopPreprocess(group, { forget = true } = {}){
+        const groups = group ? [group] : Object.keys(this.preprocessors)
+        for (const g of groups){
+            const pp = this.preprocessors[g]
+            if (pp){ try { await pp.stop() } catch (e) { logger.error(e) } }
+            if (forget){
+                delete this.preprocessors[g]
+                this.preprocessCfgs = this.preprocessCfgs.filter((c) => c.group !== g)
+            }
+        }
+        if (forget) { try { await this.saveRunInformation() } catch (e) { logger.error(e) } }
+        this.emitPreprocessSoon()
+    }
+    retryPreprocess(group){
+        const pp = this.preprocessors[group]
+        return pp ? pp.retryFailed() : 0
+    }
     async updateSample(info, run, sample){
+        if (info.preprocess && info.preprocess.mode && info.preprocess.mode !== 'none'){
+            logger.info(`Setting up ${info.preprocess.mode} for ${info.sample} (${info.preprocess.tool || 'dorado'})`)
+            await this.startPreprocess(info)
+            broadcastToAllActiveConnections('samplesheet', { samplesheet: this.samplesheet })
+            return
+        }
         if (info.pairReads){
             logger.info("Scanning directory for R1/R2 read pairs........................")
             await this.checkReadPairs(info)

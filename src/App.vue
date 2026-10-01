@@ -2,9 +2,9 @@
   <v-app  style="padding-bottom: 0px;">
       <v-app-bar
         app
-        color="light"
-        dark absolute class=""
-        dense
+        dark absolute
+        dense flat
+        class="mtx-appbar"
       >
         
         <v-tooltip bottom>
@@ -15,30 +15,40 @@
           </template>
           {{ navigation.collapsed ? 'Expand samples panel' : 'Collapse samples panel' }}
         </v-tooltip>
-        <v-toolbar-title>Mytax2: Real Time Nanopore Report Analysis</v-toolbar-title>
-        <v-spacer>
-        </v-spacer>
-        <span style="margin-right: 10px" v-if="!selectedsamples || selectedsamplesAll.length <= 0 ">No Data Loaded</span>
-        <v-spacer></v-spacer>
-        <v-checkbox 
-            v-model="gpu" style="text-align:center"    class="mt-6" v-if="isOnline"
-        >   
-          <template v-slot:label>
-              <v-tooltip bottom>
-                <template v-slot:activator="{ on }">
-                  <div v-on="on">
-                    <v-icon>
-                      mdi-expansion-card
-                    </v-icon>
-                    Enable GPU
-                  </div>
-                </template>
-                If you have a NVIDIA GPU Card with Cuda installed, enable GPU
-              </v-tooltip>
+        <!-- ===== brand ===== -->
+        <div class="mtx-brand">
+          <div class="mtx-brand-name">Mytax<span class="mtx-brand-ver">2</span></div>
+          <div class="mtx-brand-sub">Real-time nanopore taxonomic reporting</div>
+        </div>
+
+        <!-- ===== current run context ===== -->
+        <div class="mtx-bar-context" v-if="isOnline || selectedsamplesAll.length">
+          <template v-if="selectedRun">
+            <v-icon x-small class="mr-1">mdi-flask-outline</v-icon>
+            <span class="mtx-bar-run" :title="selectedRun">{{ selectedRun }}</span>
+            <span class="mtx-bar-sep">·</span>
+            <span>{{ selectedsamplesAll.length }} sample{{ selectedsamplesAll.length === 1 ? '' : 's' }}</span>
+            <template v-if="queueLength > 0">
+              <span class="mtx-bar-sep">·</span>
+              <span class="mtx-bar-busy"><span class="mtx-bar-pulse"></span>{{ queueLength }} in queue</span>
+            </template>
           </template>
-        </v-checkbox>
-        
+          <span v-else-if="!selectedsamplesAll.length" class="mtx-bar-muted">No data loaded</span>
+        </div>
         <v-spacer></v-spacer>
+
+        <!-- ===== compute device (basecalling / demultiplexing) =====
+             Replaces the old "Enable GPU" checkbox, which only stored a
+             preference nothing read. This shows what dorado/guppy will actually
+             use and opens the tools panel to change it. -->
+        <v-tooltip bottom max-width="320" v-if="isOnline">
+          <template v-slot:activator="{ on }">
+            <button class="mtx-bar-chip" :class="deviceChip.cls" v-on="on" @click="openTools">
+              <v-icon x-small class="mr-1">{{ deviceChip.icon }}</v-icon>{{ deviceChip.text }}
+            </button>
+          </template>
+          <span>{{ deviceChip.tip }}</span>
+        </v-tooltip>
 
         <!-- ===== Backend dependency lights ===== -->
         <!-- A compact cluster of pulsing lights, one per backend tool. Green =
@@ -101,6 +111,12 @@
           </template>
           Server &amp; app settings
         </v-tooltip>
+
+        <!-- ===== JHU/APL credit ===== -->
+        <a class="mtx-apl" href="https://www.jhuapl.edu" target="_blank" rel="noopener"
+          title="Developed at the Johns Hopkins University Applied Physics Laboratory">
+          <span class="mtx-apl-clip"><img :src="require('@/assets/img/apl_horizontal_white-web.png')" alt="Johns Hopkins Applied Physics Laboratory" /></span>
+        </a>
 
       </v-app-bar>
 
@@ -250,7 +266,18 @@
 
           <v-divider></v-divider>
 
-          <v-card-text class="mtx-health-body">
+          <v-card-text class="mtx-health-body" ref="healthBody">
+
+            <!-- Basecalling & demultiplexing tools + compute device -->
+            <div class="mtx-tools-sec" ref="toolsSection">
+              <div class="mtx-tools-head">
+                <v-icon small class="mr-1">mdi-dna</v-icon>Basecalling &amp; demultiplexing
+              </div>
+              <ToolsPanel :status="toolsStatus" :online="isOnline" @send="sendMessage" />
+            </div>
+            <div class="mtx-tools-head mt-4">
+              <v-icon small class="mr-1">mdi-package-variant-closed</v-icon>Classification tools
+            </div>
 
             <!-- Offline note -->
             <div v-if="!isOnline" class="mtx-health-offline">
@@ -525,6 +552,9 @@
         :sampleMeta="sampleMeta"
         :autodetectR2Result="autodetectR2Result"
         :pairWatches="pairWatches"
+        :tools="toolsStatus"
+        :preprocess="preprocess"
+        @openTools="openTools"
         @stopPairWatch="stopPairWatch"
         @updateSampleStatus="updateSampleStatus"
         @sendMessage="sendMessage"
@@ -869,6 +899,7 @@ import demoSamples from "@/assets/demoData"
 import taxaStore, { sortRankCodes as sortRanks } from "@/store/taxa"
 import FrameClient from "@/services/frames"
 import DatabaseCard from "@/components/DatabaseCard"
+import ToolsPanel from "@/components/ToolsPanel"
 import { dbStatus, dbOnDisk } from "@/utils/databases"
 // NOTE: lodash's cloneDeep used to be used here to copy parsed report rows.
 // Those copies were the bulk of this tab's memory footprint and are gone; the
@@ -935,6 +966,7 @@ export default {
       Metadata,
       RunStatusWheel,
       DatabaseCard,
+      ToolsPanel,
     },
     beforeDestroy(){ 
       if (this._tickTimer){ clearTimeout(this._tickTimer); this._tickTimer = null }
@@ -1034,6 +1066,23 @@ export default {
         return items
       },
       // Rank selector items with explicit subspecies depth labels (S1, S2, ...).
+      // App-bar chip: what dorado/guppy will run on.
+      deviceChip() {
+        const t = this.toolsStatus || {}
+        const gpu = t.gpu || {}
+        const pref = t.device || 'auto'
+        const hasGpu = !!(gpu.cuda || gpu.metal)
+        const doradoOk = !!(t.tools && t.tools.dorado && t.tools.dorado.present)
+        const tail = doradoOk ? '' : ' dorado is not installed yet — click to set it up.'
+        if (!t.gpu) return { text: 'Device…', icon: 'mdi-expansion-card', cls: '', tip: 'Checking for GPUs…' }
+        if (pref === 'cpu') return { text: 'CPU', icon: 'mdi-cpu-64-bit', cls: 'mtx-bar-chip--muted', tip: 'Basecalling / demultiplexing forced to CPU. Click to change.' + tail }
+        if (gpu.cuda) {
+          const names = Array.from(new Set(gpu.devices.map((d) => d.name))).join(', ')
+          return { text: `CUDA × ${gpu.devices.length}`, icon: 'mdi-expansion-card', cls: 'mtx-bar-chip--ok', tip: `${names} — dorado and guppy run on the GPU (${pref}).` + tail }
+        }
+        if (gpu.metal) return { text: 'Metal GPU', icon: 'mdi-expansion-card', cls: 'mtx-bar-chip--ok', tip: 'Apple silicon GPU — dorado runs on Metal.' + tail }
+        return { text: hasGpu ? 'GPU' : 'CPU only', icon: 'mdi-cpu-64-bit', cls: 'mtx-bar-chip--warn', tip: (gpu.note || 'No GPU detected.') + ' Demultiplexing works on CPU; basecalling will be slow.' + tail }
+      },
       activeDownloads() {
         return (this.databases || []).filter((d) => d && d.downloading)
       },
@@ -1356,6 +1405,10 @@ export default {
             queueList: {},
             // Throttled copy of taxaStore.state.tick; see storeTick.
             displayTick: 0,
+            // dorado / guppy / GPU status from the server (see server/tools.mjs)
+            toolsStatus: {},
+            // live basecall/demux pipelines for the selected run (preprocess.mjs)
+            preprocess: [],
             // Left-panel sections open/closed (remembered per browser).
             secOpen: loadSecOpen(),
             queueBoard: {},
@@ -1437,6 +1490,7 @@ export default {
           this.queueList = {}
           this.queueStatusAgg = Object.create(null)
           this.queueBoard = {}
+          this.preprocess = []
           // The viewport describes the PREVIOUS run's samples. Carrying it over
           // would tell the server about samples that no longer exist and, worse,
           // omit every sample in the run we are switching to.
@@ -1931,6 +1985,15 @@ export default {
           this.healthDialog = true
           this.requestHealth()
         },
+        // Open the dependencies dialog scrolled to basecalling tools / device.
+        openTools() {
+          this.openHealth()
+          this.sendMessage({ type: 'getTools' })
+          this.$nextTick(() => setTimeout(() => {
+            const el = this.$refs.toolsSection
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' })
+          }, 150))
+        },
         requestHealth() {
           this.sendMessage({ type: 'getHealth' })
         },
@@ -2077,6 +2140,12 @@ export default {
           // Bound here (alongside 'databases') rather than inside the guarded
           // 'connect' block so the initial health snapshot the server emits on
           // connection isn't missed.
+          this.socket.on('toolsStatus', (e) => {
+            if (!e) return
+            // kits arrive only with the per-connection snapshot; keep them
+            const kits = e.kits || (this.toolsStatus && this.toolsStatus.kits) || []
+            this.toolsStatus = { ...e, kits }
+          })
           this.socket.on('health', (e) => {
             if (!e) return
             $this.health = e
@@ -2287,6 +2356,7 @@ export default {
                 if (!e || e.run !== $this.selectedRun) return
                 $this.$set($this, 'samplesheet', e.samplesheet || [])
                 $this.$set($this, 'pairWatches', Array.isArray(e.pairWatches) ? e.pairWatches : [])
+                $this.preprocess = Array.isArray(e.preprocess) ? e.preprocess : []
                 // Samples declared in the sheet but not yet classified still get
                 // a row, so a freshly created run shows its barcodes right away.
                 $this.adoptSamplesheet(e.samplesheet)
@@ -2899,6 +2969,7 @@ export default {
           if (!meta) return
           if (meta.samplesheet) this.$set(this, 'samplesheet', meta.samplesheet)
           if (Array.isArray(meta.pairWatches)) this.$set(this, 'pairWatches', meta.pairWatches)
+          if (Array.isArray(meta.preprocess)) this.preprocess = meta.preprocess
         },
 
         // ---------------------------------------------------------------
@@ -3003,6 +3074,56 @@ export default {
 </script>
 
 <style>
+/* ---- app bar (JHU/APL blue, matched to the shield: #092c74) ---- */
+.mtx-appbar.v-app-bar.v-toolbar {
+  background: linear-gradient(90deg, #092c74 0%, #0e3f6a 58%, #1e6b97 100%) !important;
+  box-shadow: 0 2px 10px rgba(9, 44, 116, .25) !important;
+}
+.mtx-appbar .v-toolbar__content { gap: 6px; }
+.mtx-brand { display: flex; flex-direction: column; align-items: flex-start; text-align: left; line-height: 1.1; margin-right: 14px; white-space: nowrap; flex: 0 0 auto; }
+.mtx-brand-name { font-size: 19px; font-weight: 800; letter-spacing: .01em; color: #fff; }
+.mtx-brand-ver { font-size: 12px; font-weight: 700; color: #7cc4ea; margin-left: 1px; vertical-align: super; }
+.mtx-brand-sub { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: #b9d3ea; }
+.mtx-bar-context {
+  display: flex; align-items: center; gap: 5px; min-width: 120px; flex: 0 1 auto; overflow: hidden; white-space: nowrap; font-size: 12.5px; color: #e3eef8;
+  background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 3px 12px;
+}
+.mtx-bar-run { font-weight: 700; max-width: 240px; min-width: 30px; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mtx-bar-sep { opacity: .5; }
+.mtx-bar-muted { opacity: .75; }
+.mtx-bar-busy { display: inline-flex; align-items: center; }
+.mtx-bar-pulse { width: 7px; height: 7px; border-radius: 50%; background: #7dd3fc; margin-right: 5px; animation: mtx-bar-p 1.2s ease-in-out infinite; }
+@keyframes mtx-bar-p { 50% { opacity: .3; } }
+.mtx-bar-chip {
+  display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-weight: 600; color: #fff; cursor: pointer;
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); border-radius: 999px; padding: 3px 11px; margin-right: 10px;
+}
+.mtx-bar-chip:hover { background: rgba(255,255,255,.2); }
+.mtx-bar-chip .v-icon { color: inherit !important; }
+.mtx-bar-chip--ok { border-color: rgba(134, 239, 172, .55); }
+.mtx-bar-chip--ok .v-icon { color: #86efac !important; }
+.mtx-bar-chip--warn .v-icon { color: #fcd34d !important; }
+.mtx-bar-chip--muted { opacity: .85; }
+.mtx-apl { display: flex; align-items: center; flex: 0 0 auto; margin-left: 8px; padding-left: 12px; border-left: 1px solid rgba(255,255,255,.25); height: 34px; }
+/* The PNG's artwork spans x 42–350, y 39–96 of its 360×130 canvas. Show exactly
+   that at 30px tall: scale 30/57 and crop via the clipping box. */
+.mtx-apl-clip { position: relative; width: 162px; height: 30px; overflow: hidden; }
+.mtx-apl img { position: absolute; height: 68.4px; width: auto; left: -22.1px; top: -20.5px; max-width: none; opacity: .95; }
+.mtx-apl:hover img { opacity: 1; }
+/* Respond to the BAR's width (it narrows when the samples panel is open), not the viewport. */
+.mtx-appbar { container-type: inline-size; container-name: appbar; }
+@container appbar (max-width: 1150px) {
+  .mtx-apl-clip { width: 27px; }            /* shield only */
+  .mtx-brand-sub { font-size: 9.5px; }
+}
+@container appbar (max-width: 900px) {
+  .mtx-brand-sub, .mtx-bar-context { display: none; }
+}
+
+/* tools section inside the dependencies dialog */
+.mtx-tools-head { display: flex; align-items: center; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #0e3f6a; margin-bottom: 8px; }
+.mtx-tools-sec { padding-bottom: 6px; }
+
 /* Database pickers render in detached menus, outside the scoped styles. */
 .mtx-db-option, .mtx-dbopt { text-align: left; }
 

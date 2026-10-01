@@ -149,6 +149,7 @@
 <script>
 import * as d3 from 'd3'
 import PlotExportButton from '@/components/PlotExportButton.vue'
+import taxaSource from '@/mixins/taxaSource'
 
 const BASE_RANKS = ['D', 'P', 'C', 'O', 'F', 'G', 'S']
 const PAL = d3.schemeTableau10.concat(d3.schemeSet3)
@@ -157,7 +158,11 @@ const CAT_COLOR = { core: '#1e6b97', shared: '#5aa9c9', unique: '#f0a35e' }
 export default {
   name: 'CrossSample',
   components: { PlotExportButton },
-  props: ['socket', 'sampleData', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
+  // `sampleData` comes from the taxaSource mixin (built from the columnar taxa
+  // store). It used to be a prop that App.vue stopped passing when the store
+  // was introduced, so this tab always read as "No samples loaded yet".
+  mixins: [taxaSource],
+  props: ['socket', 'namesData', 'selectedsamples', 'sampleMeta', 'run', 'bundleconfig', 'fullsize'],
   data() {
     return {
       // Cross-sample comparison needs a wide slice per sample, but still a
@@ -187,8 +192,10 @@ export default {
     }
   },
   computed: {
-    hasData() { return this.sampleData && Object.keys(this.sampleData).length > 0 },
-    sampleKeys() { return Object.keys(this.sampleData || {}) },
+    // Only samples that already have a report count (a sample still waiting
+    // for its first file would otherwise read as "0 taxa" and skew prevalence).
+    sampleKeys() { return Object.keys(this.sampleData || {}).filter((s) => (this.sampleData[s] || []).length) },
+    hasData() { return this.sampleKeys.length > 0 },
     // taxon -> reads per sample, plus taxon -> group, at the selected rank
     profiles() {
       const perSample = {}

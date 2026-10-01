@@ -16,6 +16,8 @@ import { protocol } from './protocol.mjs';
 import { scheduler } from './scheduler.mjs';
 import { getCachedIndex, ensureIndexBuilding } from './phylopic.mjs';
 import { getHealth, installDependency } from './health.mjs';
+import { getToolsStatus, setToolPath, setToolSettings, downloadDorado, cancelToolDownload, detectGpu } from './tools.mjs';
+import { COMMON_KITS } from './preprocess.mjs';
 // Our port
 let port = process.env.NODE_ENV == 'development' ? 7689 : 7689;
 // App and server
@@ -365,6 +367,47 @@ io.on('connection', (ws) => {
       logger.error(err);
     }
   });
+  // --- basecalling / demultiplexing tools (dorado, guppy) + GPU -------------
+  const sendTools = () => getToolsStatus()
+    .then((t) => ws.emit('toolsStatus', { ...t, kits: COMMON_KITS }))
+    .catch((err) => logger.error(`toolsStatus: ${err}`))
+  sendTools()
+  ws.on('getTools', async (msg) => {
+    try { if (msg && msg.refresh) await detectGpu(true) } catch (e) { logger.error(e) }
+    sendTools()
+  })
+  ws.on('setToolPath', async (msg) => {
+    try {
+      const res = await setToolPath(msg && msg.tool, msg && msg.path)
+      if (!res.ok) ws.emit('alert', { message: res.error })
+    } catch (err) { logger.error(err) }
+  })
+  ws.on('setToolSettings', async (msg) => {
+    try { await setToolSettings(msg || {}) } catch (err) { logger.error(err) }
+  })
+  ws.on('downloadTool', (msg) => {
+    try {
+      if ((msg && msg.tool) === 'dorado') downloadDorado().catch((err) => logger.error(err))
+      else ws.emit('alert', { message: `${msg && msg.tool} can't be downloaded automatically.` })
+    } catch (err) { logger.error(err) }
+  })
+  ws.on('cancelToolDownload', (msg) => {
+    try { cancelToolDownload(msg && msg.tool) } catch (err) { logger.error(err) }
+  })
+  // Stop / retry a samplesheet entry's basecall/demux pipeline.
+  ws.on('stopPreprocess', async (msg) => {
+    try {
+      const r = storage.orchestrator.runs.find((x) => x.run === (msg && msg.run))
+      if (r && typeof r.stopPreprocess === 'function') await r.stopPreprocess(msg.group, { forget: msg.forget !== false })
+    } catch (err) { logger.error(err) }
+  })
+  ws.on('retryPreprocess', (msg) => {
+    try {
+      const r = storage.orchestrator.runs.find((x) => x.run === (msg && msg.run))
+      if (r && typeof r.retryPreprocess === 'function') r.retryPreprocess(msg.group)
+    } catch (err) { logger.error(err) }
+  })
+
   ws.on('gpu', (msg) => {
     try {
       const userId = ws.handshake.query.userId;
